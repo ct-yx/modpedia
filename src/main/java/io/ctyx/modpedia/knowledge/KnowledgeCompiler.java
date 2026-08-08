@@ -33,6 +33,7 @@ public final class KnowledgeCompiler {
         Files.createDirectories(cacheRoot);
         clearGenerated(generatedRoot);
 
+        List<String> warnings = new ArrayList<>(scanResult.warnings());
         Map<String, DocumentEntry> documents = new TreeMap<>();
         int generatedCount = 0;
         for (ScannedResource source : scanResult.resources()) {
@@ -45,7 +46,7 @@ public final class KnowledgeCompiler {
             generatedCount++;
         }
 
-        int customCount = loadCustomDocuments(customRoot, knowledgeRoot, documents, scanResult.warnings());
+        int customCount = loadCustomDocuments(customRoot, knowledgeRoot, documents, warnings);
         writeManifest(knowledgeRoot, documents);
         writeKeywordIndex(knowledgeRoot, documents);
         writeState(knowledgeRoot, scanResult, documents);
@@ -56,7 +57,7 @@ public final class KnowledgeCompiler {
                 generatedCount,
                 customCount,
                 documents.size(),
-                scanResult.warnings()
+                warnings
         );
         Files.writeString(cacheRoot.resolve("build-report.json"), GSON.toJson(report), StandardCharsets.UTF_8);
         return new CompileResult(knowledgeRoot, report);
