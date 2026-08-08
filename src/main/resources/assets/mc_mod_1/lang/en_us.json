@@ -1,0 +1,13 @@
+{
+  "itemGroup.mc_mod_1": "MC Mod 1 Tab",
+  "block.mc_mod_1.example_block": "Example Block",
+  "item.mc_mod_1.example_item": "Example Item",
+
+  "mc_mod_1.configuration.title": "MC Mod 1 Configs",
+  "mc_mod_1.configuration.section.mc_mod_1.common.toml": "MC Mod 1 Configs",
+  "mc_mod_1.configuration.section.mc_mod_1.common.toml.title": "MC Mod 1 Configs",
+  "mc_mod_1.configuration.items": "Item List",
+  "mc_mod_1.configuration.logDirtBlock": "Log Dirt Block",
+  "mc_mod_1.configuration.magicNumberIntroduction": "Magic Number Text",
+  "mc_mod_1.configuration.magicNumber": "Magic Number"
+}
