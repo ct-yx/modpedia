@@ -81,6 +81,24 @@ docs/
 └── KNOWLEDGE_BASE.md
 ```
 
+## 第二阶段已实现
+
+- `LocalGuideScanner` 扫描已安装模组 JAR 内的本地资源。
+- 支持 JSON 手册、Markdown 手册和 `zh_cn`/`en_us` 语言文件。
+- `KnowledgeCompiler` 生成统一 Markdown、`manifest.json`、`keyword-index.json`、`state.json` 和扫描报告。
+- 自动生成内容与 `custom/` 手工内容分开保存。
+- 客户端初始化后在后台执行知识库构建。
+
+当前识别的资源路径：
+
+```text
+data/<namespace>/patchouli_books/**/*.json
+assets/<namespace>/patchouli_books/**/*.json
+assets/<namespace>/guides/**/*.md
+assets/<namespace>/ae2guide/**/*.md
+assets/<namespace>/guideme_guides/**/*.json
+```
+
 ## 配置原则
 
 API 地址、模型名称和 API key 只保存在玩家本地配置中。示例配置和文档只使用占位符。

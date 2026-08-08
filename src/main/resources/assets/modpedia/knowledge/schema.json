@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "document_front_matter": {
+    "required": [
+      "id",
+      "source_mod",
+      "source_type",
+      "title",
+      "category",
+      "keywords",
+      "source_version",
+      "source_path"
+    ]
+  },
+  "runtime_directories": {
+    "generated": "config/modpedia/knowledge/generated",
+    "custom": "config/modpedia/knowledge/custom",
+    "cache": "config/modpedia/knowledge/cache"
+  }
+}

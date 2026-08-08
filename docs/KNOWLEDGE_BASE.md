@@ -107,3 +107,49 @@ Markdown → 分块 → 嵌入 → 向量索引 → 可选重排
 ```
 
 普通运行时保留关键词检索，确保没有额外模型时仍可工作。
+
+## 8. 当前实现
+
+第二阶段已经接入以下运行时组件：
+
+```text
+LocalGuideScanner
+  ↓
+MarkdownDocumentConverter / JsonGuideDocumentConverter
+  ↓
+KnowledgeCompiler
+  ↓
+config/modpedia/knowledge/
+```
+
+扫描器读取已安装模组 JAR 内的资源，不在首次启动时联网下载资料。支持：
+
+- `data/<namespace>/patchouli_books/**/*.json`
+- `assets/<namespace>/patchouli_books/**/*.json`
+- `assets/<namespace>/guides/**/*.md`
+- `assets/<namespace>/ae2guide/**/*.md`
+- `assets/<namespace>/guideme_guides/**/*.json`
+- `assets/<namespace>/lang/zh_cn.json`
+- `assets/<namespace>/lang/en_us.json`
+
+`generated/` 每次重新构建时由扫描结果生成；`custom/` 的 Markdown 作为高优先级覆盖内容合并进 manifest 和关键词索引。
+
+Patchouli 书籍页面按每本书独立选择语言：存在 `zh_cn` 时只读取中文页面，否则回退到 `en_us`；其他语言页面不会重复进入知识库。GuideME Markdown 同时识别标准 `guides/`、`guideme_guides/` 和 AE2 使用的 `ae2guide/` 目录。
+
+### 本地样本验证
+
+使用本地提供的两组手册库与代表模组验证：
+
+- Patchouli + PneumaticCraft：237 个 Patchouli JSON 来源。
+- GuideME + Applied Energistics 2：125 个 `ae2guide` Markdown 来源。
+- ModPedia 自带示例与 `custom/`：2 个生成文档、1 个自定义文档。
+- 总计：364 个来源、365 个文档、0 个扫描警告；文档 ID 无重复。
+
+每次构建都会写入：
+
+```text
+manifest.json
+keyword-index.json
+state.json
+cache/build-report.json
+```

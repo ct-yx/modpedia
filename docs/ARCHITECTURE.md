@@ -71,3 +71,18 @@ AssistantScreen
 - AI 只接收检索到的文档片段，不接收整本手册。
 - 每次回答记录来源文档 ID。
 - API key 不进入日志、知识库和提交记录。
+
+## 6. 当前类结构
+
+```text
+io.ctyx.modpedia.knowledge/
+├── LocalGuideScanner
+├── ScannedResource
+├── MarkdownDocumentConverter
+├── JsonGuideDocumentConverter
+├── KeywordExtractor
+├── KnowledgeCompiler
+└── KnowledgeUpdateService
+```
+
+`KnowledgeUpdateService` 只在客户端初始化后启动后台任务；公共 Mod 入口不直接引用客户端类。

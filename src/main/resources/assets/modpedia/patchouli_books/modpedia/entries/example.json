@@ -1,0 +1,14 @@
+{
+  "name": "modpedia.example.title",
+  "category": "modpedia:example",
+  "pages": [
+    {
+      "type": "patchouli:text",
+      "text": "modpedia.example.text"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "$(br)本页面用于验证 JSON 到 Markdown 的转换。"
+    }
+  ]
+}
