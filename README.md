@@ -39,6 +39,8 @@
 ./gradlew runClient
 ```
 
+运行客户端前确保 ModernUI NeoForge JAR 位于 `run/mods/`；它是本地运行依赖，不会被提交。
+
 ## 构建
 
 ```bash
@@ -108,6 +110,60 @@ assets/<namespace>/guideme_guides/**/*.json
 - 客户端按 `F9` 可强制完整转换并重建索引；构建期间重复请求会被忽略。
 
 阶段三验证覆盖首次生成、未变化来源复用、强制重建、指纹变化、玩家自定义文档合并和来源删除清理。
+
+## 第四阶段：可移动、可缩放的助手浮窗（已实现）
+
+助手不是常驻 HUD，而是一个临时的非暂停 Screen：
+
+| 操作 | 行为 |
+| --- | --- |
+| `K` | 打开或关闭助手 |
+| `Esc` | 输入框有焦点时先清除焦点，否则关闭助手；来源预览打开时先关闭预览 |
+| 标题栏拖动 | 移动窗口并保存位置 |
+| 四边/四角 | 调整窗口大小并显示对应系统缩放光标 |
+| 消息区域滚轮 | 只滚动消息列表 |
+| `Enter` | 发送单行问题 |
+| 输入区 `×` | 模拟请求加载时取消 |
+| `F9` | 保留知识库强制重建 |
+
+窗口规则：
+
+- 默认尺寸 `320×400`，最小尺寸 `180×140`；标题栏和输入区采用紧凑高度，输入框只占一行。
+- 最大尺寸为 `720×720`，且宽高分别不超过游戏视口的 `85%`。
+- 位置和尺寸保存在 `config/modpedia/assistant-window.json`，打开和游戏窗口缩放时都会重新约束到 `12` 像素安全边距内。
+- 面板使用可调色的蓝光半透明玻璃表面；ModernUI 可用时只将窗口区域后的画面模糊，窗口外保持清晰，再绘制窗口内容，文字和控件不会进入模糊层；不可用时保留半透明回退。
+- 玻璃配置保存在 `config/modpedia/assistant-glass.json`，可修改 `themeColor`、`backgroundOpacity` 和 `glow`，下次打开助手时生效；旧版 `color`/`opacity` 字段仍可读取。
+- Minecraft 高对比度选项或 `-Dmodpedia.reduceTransparency=true` 会切换到不透明表面，消息气泡、输入区和来源卡片保持高对比度。
+
+客户端代码按职责拆分为：
+
+```text
+client/
+├── AssistantScreen          # 生命周期、拖动、缩放、焦点和快捷键
+├── FloatingAssistantWindow  # 浮窗表面、标题栏和缩放手柄
+├── AssistantInput           # 单行输入组件
+├── AssistantGlassConfig     # 玻璃颜色、透明度和发光配置
+├── MessageList               # 消息布局适配器
+├── MessageBubble             # 消息气泡布局结果
+├── SourceCard                # 来源卡片与点击区域
+├── AssistantSession          # 会话状态接口
+├── MockAssistantSession      # 阶段四确定性模拟会话
+└── SourceNavigator           # 后续 Patchouli/GuideME 跳转适配器
+```
+
+阶段四当前覆盖欢迎、提问、加载、带来源回答、无匹配、错误重试、取消和知识库状态展示；回答仍使用模拟会话，真实 AI 请求属于阶段五。
+
+### ModernUI 依赖
+
+1.21.1 NeoForge 客户端锁定使用 ModernUI 官方发行物中的：
+
+```text
+ModernUI-NeoForge-1.21.1-3.12.0.2-universal.jar
+```
+
+版本固定在 `gradle.properties` 的 `modernui_version=3.12.0.2`，模组元数据以精确版本范围声明客户端必需依赖。JAR 不进入 Git；本地客户端测试时放入 `run/mods/`。
+
+官方项目：[BloCamLimb/ModernUI-MC](https://github.com/BloCamLimb/ModernUI-MC)，对应发行页：[3.12.0.4](https://github.com/BloCamLimb/ModernUI-MC/releases/tag/3.12.0.4)。
 
 ## 配置原则
 

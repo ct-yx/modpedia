@@ -28,7 +28,12 @@ ContextAssembler
 AiClient
     │
     ▼
-AssistantScreen
+AssistantScreen（非暂停客户端 Screen）
+    │
+    ├── FloatingAssistantWindow
+    ├── MessageList / MessageBubble
+    ├── AssistantInput
+    └── SourceCard / SourceNavigator
 ```
 
 ## 2. 模块职责
@@ -47,7 +52,51 @@ AssistantScreen
 
 ### `client`
 
-负责助手窗口、输入框、消息列表、加载状态、错误提示和来源跳转。
+只在物理客户端加载，负责助手窗口、输入框、消息列表、加载状态、错误提示和来源预览。
+
+阶段四的职责边界如下：
+
+```text
+ModPediaClient
+  ├── K        → Minecraft.setScreen(AssistantScreen)
+  ├── F9       → KnowledgeUpdateService.rebuildAsync()
+  └── ClientTickEvent.Post
+
+AssistantScreen
+  ├── WindowBounds          → 尺寸、视口比例、边距和拖拽缩放
+  ├── AssistantWindowConfig → 客户端 JSON 持久化
+  ├── AssistantSession      → 线程安全的会话状态接口
+  ├── KnowledgeUpdateService.status() → 顶部只读状态快照
+  └── ModernUiBridge        → 可选运行时背景模糊入口
+```
+
+界面层不直接读取手册 JAR，也不把知识库构建线程的对象暴露给渲染线程；渲染只读取 `KnowledgeStatus` 和 `AssistantUiState` 快照。
+
+### 客户端浮窗约束
+
+`WindowBounds.clampTo(viewportWidth, viewportHeight)` 同时约束：
+
+```java
+min = 180×140;
+max = min(720×720, viewport×85%);
+safeArea = viewport - 12px;
+```
+
+缩放以鼠标按下时的窗口快照为基准，四边和四角分别改变对应边；每次拖动、游戏窗口缩放、关闭和移除 Screen 都会进行约束或保存。
+
+### 局部玻璃模糊与半透明回退
+
+`ModernUiBridge` 通过反射调用 ModernUI 1.21.1 的 `icyllis.modernui.mc.BlurHandler.INSTANCE.blur(Screen)`。助手每帧先把主帧缓冲复制到 `TextureTarget`，再让 ModernUI 处理模糊，最后用四个裁剪区域把清晰副本恢复到窗口外；窗口区域保留模糊结果，再叠加 `AssistantGlassConfig` 生成的蓝色半透明玻璃。标题、消息、输入框和边框在最后绘制，保持清晰。ModernUI 入口不可用时只使用可调色半透明表面，高对比度或减少透明度模式使用不透明调色板。客户端源码不把第三方类加载到公共或 Dedicated Server 路径。
+
+玻璃配置文件示例：
+
+```json
+{
+  "themeColor": "#4D9CFF",
+  "backgroundOpacity": 0.70,
+  "glow": 0.78
+}
+```
 
 ## 3. 首次启动策略
 
@@ -93,3 +142,5 @@ io.ctyx.modpedia.knowledge/
 ```
 
 `KnowledgeUpdateService` 只在客户端初始化后启动后台任务；公共 Mod 入口不直接引用客户端类。
+
+`KnowledgeUpdateService.status()` 以原子引用发布 `KnowledgeStatus`，浮窗顶部读取来源数、文档数、更新时间及更新/错误状态，不等待后台构建线程。

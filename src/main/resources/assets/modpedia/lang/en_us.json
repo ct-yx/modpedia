@@ -1,6 +1,18 @@
 {
   "key.categories.modpedia": "ModPedia",
+  "key.modpedia.open_assistant": "Open ModPedia Assistant",
   "key.modpedia.rebuild_knowledge": "Rebuild ModPedia Knowledge",
   "message.modpedia.rebuild_busy": "ModPedia knowledge is already updating",
-  "message.modpedia.rebuild_started": "ModPedia knowledge rebuild started"
+  "message.modpedia.rebuild_started": "ModPedia knowledge rebuild started",
+  "screen.modpedia.title": "ModPedia",
+  "screen.modpedia.input_placeholder": "Ask a question about your mods…",
+  "screen.modpedia.input_narration": "ModPedia question input",
+  "screen.modpedia.welcome": "What would you like to learn today?",
+  "screen.modpedia.welcome_hint": "Find answers in the local guides",
+  "screen.modpedia.loading": "Preparing knowledge base content…",
+  "screen.modpedia.no_result": "No matching guide content was found.",
+  "screen.modpedia.retry_hint": "You can try again later.",
+  "screen.modpedia.retry": "Retry",
+  "screen.modpedia.source_preview": "Source document",
+  "screen.modpedia.source_preview_hint": "Direct guide navigation will be added later."
 }

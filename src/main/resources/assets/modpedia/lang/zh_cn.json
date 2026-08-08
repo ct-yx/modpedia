@@ -1,8 +1,20 @@
 {
   "key.categories.modpedia": "ModPedia",
+  "key.modpedia.open_assistant": "打开 ModPedia 助手",
   "key.modpedia.rebuild_knowledge": "重建 ModPedia 知识库",
   "message.modpedia.rebuild_busy": "ModPedia 知识库正在更新",
   "message.modpedia.rebuild_started": "ModPedia 知识库重建已开始",
+  "screen.modpedia.title": "模组百科",
+  "screen.modpedia.input_placeholder": "输入关于模组的问题……",
+  "screen.modpedia.input_narration": "模组百科问题输入框",
+  "screen.modpedia.welcome": "今天想了解什么？",
+  "screen.modpedia.welcome_hint": "从本地手册中查找答案",
+  "screen.modpedia.loading": "正在整理知识库内容……",
+  "screen.modpedia.no_result": "暂时没有找到匹配的手册内容。",
+  "screen.modpedia.retry_hint": "可以稍后重试。",
+  "screen.modpedia.retry": "重试",
+  "screen.modpedia.source_preview": "来源文档",
+  "screen.modpedia.source_preview_hint": "后续版本将支持跳转到原手册页面。",
   "modpedia.example.title": "ModPedia 示例条目",
   "modpedia.example.text": "这是 JSON 手册转换器的测试页面。"
 }

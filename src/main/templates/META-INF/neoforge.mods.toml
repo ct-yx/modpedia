@@ -90,6 +90,14 @@ ModPedia：面向整合包的 AI 模组知识助手。
     ordering="NONE"
     side="BOTH"
 
+# APP UI mod is required only on the physical client.
+[[dependencies.${mod_id}]]
+    modId="modernui"
+    type="required"
+    versionRange="[${modernui_version}]"
+    ordering="AFTER"
+    side="CLIENT"
+
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't
 # stop your mod loading on the server for example.

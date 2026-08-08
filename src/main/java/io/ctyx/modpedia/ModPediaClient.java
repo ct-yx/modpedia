@@ -1,40 +1,54 @@
 package io.ctyx.modpedia;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import io.ctyx.modpedia.client.AssistantScreen;
+import io.ctyx.modpedia.client.AssistantSession;
+import io.ctyx.modpedia.client.MockAssistantSession;
+import io.ctyx.modpedia.client.ModernUiBridge;
+import io.ctyx.modpedia.client.FloatingAssistantWindow;
 import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 
 /** 客户端入口，负责启动知识库构建和注册手动重建入口。 */
-@EventBusSubscriber(modid = ModPedia.MOD_ID, value = Dist.CLIENT)
+@Mod(value = ModPedia.MOD_ID, dist = Dist.CLIENT)
 public final class ModPediaClient {
+    static final KeyMapping OPEN_ASSISTANT = new KeyMapping(
+            "key.modpedia.open_assistant",
+            InputConstants.Type.KEYSYM,
+            InputConstants.KEY_K,
+            "key.categories.modpedia"
+    );
     static final KeyMapping REBUILD_KNOWLEDGE = new KeyMapping(
             "key.modpedia.rebuild_knowledge",
             InputConstants.Type.KEYSYM,
             InputConstants.KEY_F9,
             "key.categories.modpedia"
     );
+    static final AssistantSession ASSISTANT_SESSION = new MockAssistantSession();
 
-    public ModPediaClient(ModContainer modContainer) {
+    public ModPediaClient(IEventBus modEventBus, ModContainer modContainer) {
         ModPedia.LOGGER.info("Loading ModPedia client components");
+        modEventBus.addListener(ModPediaClient::onRegisterKeyMappings);
+        modEventBus.addListener(ModPediaClient::onClientSetup);
         NeoForge.EVENT_BUS.register(ModPediaClientEvents.class);
     }
 
-    @SubscribeEvent
     static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+        event.register(OPEN_ASSISTANT);
         event.register(REBUILD_KNOWLEDGE);
     }
 
-    @SubscribeEvent
     static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(KnowledgeUpdateService::startAsync);
     }
@@ -47,11 +61,23 @@ final class ModPediaClientEvents {
 
     @SubscribeEvent
     static void onClientTick(ClientTickEvent.Post event) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (ModPediaClient.OPEN_ASSISTANT.consumeClick()) {
+            if (minecraft.screen instanceof AssistantScreen assistantScreen) {
+                assistantScreen.onClose();
+            } else {
+                AssistantScreen assistantScreen = new AssistantScreen(minecraft.screen, ModPediaClient.ASSISTANT_SESSION);
+                if (!FloatingAssistantWindow.prefersOpaqueSurface(minecraft)) {
+                    ModernUiBridge.beginAssistantScreen(assistantScreen);
+                }
+                minecraft.setScreen(assistantScreen);
+            }
+            return;
+        }
         if (!ModPediaClient.REBUILD_KNOWLEDGE.consumeClick()) {
             return;
         }
 
-        Minecraft minecraft = Minecraft.getInstance();
         String messageKey = KnowledgeUpdateService.rebuildAsync()
                 ? "message.modpedia.rebuild_started"
                 : "message.modpedia.rebuild_busy";

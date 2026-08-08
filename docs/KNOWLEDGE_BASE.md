@@ -86,6 +86,8 @@ source_version: 1.0.0
 
 每次构建都会更新 `manifest.json`、`keyword-index.json`、`state.json` 和 `cache/build-report.json`。报告包含 `updatedCount`、`reusedCount`、`removedCount` 和警告列表。
 
+助手浮窗顶部通过 `KnowledgeUpdateService.status()` 读取线程安全的 `KnowledgeStatus` 快照，显示来源数量、文档数量、最近更新时间以及更新/错误状态。界面不会阻塞等待扫描线程。
+
 ## 6. 检索规则
 
 第一版按照以下字段建立关键词索引：
