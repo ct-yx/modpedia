@@ -21,7 +21,6 @@
 - 解析语言 key、物品、方块、配方和标签
 - 转换为统一 Markdown
 - 生成 `manifest.json` 和关键词索引
-- 增量更新本地知识库
 - 保留玩家手工编辑的知识文件
 - 使用 AI API 回答模组问题
 - 显示答案引用并跳转到对应百科页面
@@ -81,7 +80,7 @@ docs/
 └── KNOWLEDGE_BASE.md
 ```
 
-## 第二阶段已实现
+## 第二阶段：本地手册知识库（已完成基础版本）
 
 - `LocalGuideScanner` 扫描已安装模组 JAR 内的本地资源。
 - 支持 JSON 手册、Markdown 手册和 `zh_cn`/`en_us` 语言文件。
@@ -98,6 +97,17 @@ assets/<namespace>/guides/**/*.md
 assets/<namespace>/ae2guide/**/*.md
 assets/<namespace>/guideme_guides/**/*.json
 ```
+
+## 第三阶段：知识库增量更新（已完成）
+
+- 使用 `模组 ID + 版本 + 资源路径 + 内容哈希` 生成来源指纹。
+- 启动时只重新转换新增或指纹变化的来源，未变化来源直接复用已有 Markdown。
+- 自动清理已经移除来源对应的生成文件。
+- 每次构建重建 `manifest.json`、`keyword-index.json` 和 `state.json`。
+- 在 `cache/build-report.json` 中记录更新、复用、删除数量及警告。
+- 客户端按 `F9` 可强制完整转换并重建索引；构建期间重复请求会被忽略。
+
+阶段三验证覆盖首次生成、未变化来源复用、强制重建、指纹变化、玩家自定义文档合并和来源删除清理。
 
 ## 配置原则
 

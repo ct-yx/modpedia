@@ -1,1 +1,6 @@
-{}
+{
+  "key.categories.modpedia": "ModPedia",
+  "key.modpedia.rebuild_knowledge": "Rebuild ModPedia Knowledge",
+  "message.modpedia.rebuild_busy": "ModPedia knowledge is already updating",
+  "message.modpedia.rebuild_started": "ModPedia knowledge rebuild started"
+}

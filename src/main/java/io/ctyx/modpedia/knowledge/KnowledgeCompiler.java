@@ -2,6 +2,8 @@ package io.ctyx.modpedia.knowledge;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -9,11 +11,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 
@@ -24,6 +26,19 @@ public final class KnowledgeCompiler {
     private final JsonGuideDocumentConverter jsonConverter = new JsonGuideDocumentConverter();
 
     public CompileResult compile(Path configDirectory, LocalGuideScanner.ScanResult scanResult) throws IOException {
+        return compile(configDirectory, scanResult, false);
+    }
+
+    /**
+     * 构建知识库。
+     *
+     * @param forceRebuild true 时跳过来源指纹复用，但仍会清理已经移除的来源
+     */
+    public CompileResult compile(
+            Path configDirectory,
+            LocalGuideScanner.ScanResult scanResult,
+            boolean forceRebuild
+    ) throws IOException {
         Path knowledgeRoot = configDirectory.resolve("modpedia").resolve("knowledge");
         Path generatedRoot = knowledgeRoot.resolve("generated");
         Path customRoot = knowledgeRoot.resolve("custom");
@@ -31,30 +46,64 @@ public final class KnowledgeCompiler {
         Files.createDirectories(generatedRoot);
         Files.createDirectories(customRoot);
         Files.createDirectories(cacheRoot);
-        clearGenerated(generatedRoot);
 
-        List<String> warnings = new ArrayList<>(scanResult.warnings());
+        List<String> warnings = new ArrayList<>();
+        Map<String, String> previousFingerprints = loadPreviousFingerprints(
+                knowledgeRoot.resolve("state.json"),
+                warnings
+        );
+        Map<String, String> reusableFingerprints = forceRebuild ? Map.of() : previousFingerprints;
         Map<String, DocumentEntry> documents = new TreeMap<>();
+        Map<String, String> currentSources = new TreeMap<>();
         int generatedCount = 0;
+        int updatedCount = 0;
+        int reusedCount = 0;
+
         for (ScannedResource source : scanResult.resources()) {
-            KnowledgeDocument document = convert(source);
-            String relativePath = "generated/" + safeSegment(source.modId()) + "/" + safeDocumentFileName(source.path());
+            String sourceKey = sourceKey(source);
+            currentSources.put(sourceKey, source.fingerprint());
+            String relativePath = generatedRelativePath(source);
             Path output = knowledgeRoot.resolve(relativePath);
-            Files.createDirectories(output.getParent());
-            Files.writeString(output, document.body(), StandardCharsets.UTF_8);
+            KnowledgeDocument document;
+
+            if (source.fingerprint().equals(reusableFingerprints.get(sourceKey)) && Files.isRegularFile(output)) {
+                try {
+                    document = loadGeneratedDocument(source, output);
+                    reusedCount++;
+                } catch (IOException | RuntimeException exception) {
+                    warnings.add("读取缓存知识失败，重新转换：" + source.path());
+                    document = convert(source);
+                    writeDocument(output, document);
+                    updatedCount++;
+                }
+            } else {
+                document = convert(source);
+                writeDocument(output, document);
+                updatedCount++;
+            }
+
             documents.put(document.id(), new DocumentEntry(document, relativePath));
             generatedCount++;
         }
 
-        int customCount = loadCustomDocuments(customRoot, knowledgeRoot, documents, warnings);
+        int removedCount = removeRemovedGenerated(
+                knowledgeRoot,
+                previousFingerprints.keySet(),
+                currentSources.keySet(),
+                warnings
+        );
+        int customCount = loadCustomDocuments(customRoot, documents, warnings);
         writeManifest(knowledgeRoot, documents);
         writeKeywordIndex(knowledgeRoot, documents);
-        writeState(knowledgeRoot, scanResult, documents);
+        writeState(knowledgeRoot, currentSources, documents);
 
         BuildReport report = new BuildReport(
                 Instant.now().toString(),
                 scanResult.resources().size(),
                 generatedCount,
+                updatedCount,
+                reusedCount,
+                removedCount,
                 customCount,
                 documents.size(),
                 warnings
@@ -69,9 +118,28 @@ public final class KnowledgeCompiler {
                 : jsonConverter.convert(source);
     }
 
+    private KnowledgeDocument loadGeneratedDocument(ScannedResource source, Path output) throws IOException {
+        String content = Files.readString(output, StandardCharsets.UTF_8);
+        ScannedResource cachedSource = new ScannedResource(
+                source.modId(),
+                source.modName(),
+                source.version(),
+                source.path(),
+                source.sourceType(),
+                content,
+                source.fingerprint(),
+                source.translations()
+        );
+        return markdownConverter.convert(cachedSource);
+    }
+
+    private void writeDocument(Path output, KnowledgeDocument document) throws IOException {
+        Files.createDirectories(output.getParent());
+        Files.writeString(output, document.body(), StandardCharsets.UTF_8);
+    }
+
     private int loadCustomDocuments(
             Path customRoot,
-            Path knowledgeRoot,
             Map<String, DocumentEntry> documents,
             List<String> warnings
     ) throws IOException {
@@ -84,7 +152,7 @@ public final class KnowledgeCompiler {
                     String relativePath = "custom/" + customRoot.relativize(path).toString().replace('\\', '/');
                     documents.put(document.id(), new DocumentEntry(document, relativePath));
                     count++;
-                } catch (RuntimeException exception) {
+                } catch (IOException | RuntimeException exception) {
                     warnings.add("解析自定义知识失败：" + customRoot.relativize(path));
                 }
             }
@@ -131,30 +199,101 @@ public final class KnowledgeCompiler {
         writeJson(root.resolve("keyword-index.json"), index);
     }
 
-    private void writeState(Path root, LocalGuideScanner.ScanResult scanResult, Map<String, DocumentEntry> documents) throws IOException {
+    private void writeState(
+            Path root,
+            Map<String, String> currentSources,
+            Map<String, DocumentEntry> documents
+    ) throws IOException {
         Map<String, Object> state = new LinkedHashMap<>();
-        state.put("schema_version", 1);
+        state.put("schema_version", 2);
         state.put("updated_at", Instant.now().toString());
         state.put("document_count", documents.size());
-        state.put("sources", scanResult.resources().stream().collect(LinkedHashMap::new,
-                (map, source) -> map.put(source.modId() + ":" + source.path(), source.fingerprint()),
-                Map::putAll));
+        state.put("source_count", currentSources.size());
+        state.put("sources", currentSources);
         writeJson(root.resolve("state.json"), state);
+    }
+
+    private Map<String, String> loadPreviousFingerprints(Path statePath, List<String> warnings) {
+        if (!Files.isRegularFile(statePath)) {
+            return Map.of();
+        }
+
+        try {
+            JsonElement parsed = JsonParser.parseString(Files.readString(statePath, StandardCharsets.UTF_8));
+            if (!parsed.isJsonObject() || !parsed.getAsJsonObject().has("sources")
+                    || !parsed.getAsJsonObject().get("sources").isJsonObject()) {
+                throw new IllegalStateException("sources 不是对象");
+            }
+
+            Map<String, String> result = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> entry : parsed.getAsJsonObject().getAsJsonObject("sources").entrySet()) {
+                JsonElement value = entry.getValue();
+                if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+                    result.put(entry.getKey(), value.getAsString());
+                } else if (value.isJsonObject() && value.getAsJsonObject().has("fingerprint")) {
+                    JsonElement fingerprint = value.getAsJsonObject().get("fingerprint");
+                    if (fingerprint.isJsonPrimitive() && fingerprint.getAsJsonPrimitive().isString()) {
+                        result.put(entry.getKey(), fingerprint.getAsString());
+                    }
+                }
+            }
+            return result;
+        } catch (IOException | RuntimeException exception) {
+            warnings.add("读取知识库状态失败，将重新转换全部来源");
+            return Map.of();
+        }
+    }
+
+    private int removeRemovedGenerated(
+            Path knowledgeRoot,
+            Set<String> previousSources,
+            Set<String> currentSources,
+            List<String> warnings
+    ) {
+        int removedCount = 0;
+        for (String sourceKey : previousSources) {
+            if (currentSources.contains(sourceKey)) {
+                continue;
+            }
+            Path output = generatedPath(knowledgeRoot, sourceKey);
+            if (output == null) {
+                continue;
+            }
+            try {
+                if (Files.deleteIfExists(output)) {
+                    removedCount++;
+                }
+            } catch (IOException exception) {
+                warnings.add("删除已移除知识失败：" + sourceKey);
+            }
+        }
+        return removedCount;
+    }
+
+    private Path generatedPath(Path knowledgeRoot, String sourceKey) {
+        int separator = sourceKey.indexOf(':');
+        if (separator <= 0 || separator == sourceKey.length() - 1) {
+            return null;
+        }
+        String modId = sourceKey.substring(0, separator);
+        String sourcePath = sourceKey.substring(separator + 1);
+        return knowledgeRoot.resolve(generatedRelativePath(modId, sourcePath));
+    }
+
+    private String generatedRelativePath(ScannedResource source) {
+        return generatedRelativePath(source.modId(), source.path());
+    }
+
+    private String generatedRelativePath(String modId, String sourcePath) {
+        return "generated/" + safeSegment(modId) + "/" + safeDocumentFileName(sourcePath);
+    }
+
+    private String sourceKey(ScannedResource source) {
+        return source.modId() + ":" + source.path();
     }
 
     private void writeJson(Path path, Object value) throws IOException {
         Files.writeString(path, GSON.toJson(value), StandardCharsets.UTF_8);
-    }
-
-    private void clearGenerated(Path generatedRoot) throws IOException {
-        try (Stream<Path> paths = Files.walk(generatedRoot)) {
-            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                if (!path.equals(generatedRoot)) {
-                    Files.deleteIfExists(path);
-                }
-            }
-        }
-        Files.createDirectories(generatedRoot);
     }
 
     private boolean isMarkdown(Path path) {
@@ -184,6 +323,9 @@ public final class KnowledgeCompiler {
             String generatedAt,
             int sourceCount,
             int generatedCount,
+            int updatedCount,
+            int reusedCount,
+            int removedCount,
             int customCount,
             int documentCount,
             List<String> warnings

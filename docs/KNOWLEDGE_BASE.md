@@ -76,13 +76,15 @@ source_version: 1.0.0
 
 ## 5. 更新方式
 
-默认仅在以下情况触发增量更新：
+启动时读取 `state.json` 中的来源指纹：
 
-- 新增模组。
-- 删除模组。
-- 模组版本变化。
-- 手册资源发生变化。
-- 玩家手动点击“重新建立索引”。
+- 新增模组或手册来源：转换并写入新的 Markdown。
+- 模组版本或手册内容变化：只重新转换变化的来源。
+- 已删除的来源：删除对应的 `generated/` 文件。
+- 没有变化的来源：复用已有 Markdown，不重复执行格式转换。
+- 玩家按 `F9`：强制重新转换所有来源并重建索引。
+
+每次构建都会更新 `manifest.json`、`keyword-index.json`、`state.json` 和 `cache/build-report.json`。报告包含 `updatedCount`、`reusedCount`、`removedCount` 和警告列表。
 
 ## 6. 检索规则
 

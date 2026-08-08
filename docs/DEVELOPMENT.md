@@ -34,14 +34,17 @@ fix: preserve custom knowledge files
 - [x] 生成 manifest 和关键词索引。
 - [x] 合并 `custom/` 手工知识。
 - [ ] 接入更多页面类型的专用渲染。
-- [ ] 完成资源指纹驱动的增量更新。
 
-### 阶段三：增量更新
+### 阶段三：增量更新（已完成）
 
-- 保存资源指纹。
-- 只更新变化的来源。
-- 生成扫描报告。
-- 提供手动重建入口。
+- [x] 保存资源指纹，并兼容阶段二的旧版 `state.json`。
+- [x] 只重新转换新增或指纹变化的来源。
+- [x] 清理已经移除的来源文件。
+- [x] 生成更新、复用、删除数量和警告报告。
+- [x] 提供 `F9` 手动完整重建入口。
+
+实现约束：每次构建都会重建 `manifest.json`、`keyword-index.json` 和 `state.json`；
+`cache/build-report.json` 保存本次构建报告，`state.json` 使用 schema version 2。
 
 ### 阶段四：助手界面
 

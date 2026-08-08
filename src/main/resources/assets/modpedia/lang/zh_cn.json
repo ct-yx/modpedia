@@ -1,4 +1,8 @@
 {
+  "key.categories.modpedia": "ModPedia",
+  "key.modpedia.rebuild_knowledge": "重建 ModPedia 知识库",
+  "message.modpedia.rebuild_busy": "ModPedia 知识库正在更新",
+  "message.modpedia.rebuild_started": "ModPedia 知识库重建已开始",
   "modpedia.example.title": "ModPedia 示例条目",
   "modpedia.example.text": "这是 JSON 手册转换器的测试页面。"
 }
