@@ -2,8 +2,8 @@ package io.ctyx.modpedia.client;
 
 /** 浮窗位置和尺寸，以及视口边界约束。 */
 public record WindowBounds(int x, int y, int width, int height) {
-    public static final int MIN_WIDTH = 180;
-    public static final int MIN_HEIGHT = 140;
+    public static final int MIN_WIDTH = 160;
+    public static final int MIN_HEIGHT = 110;
     public static final int DEFAULT_WIDTH = 320;
     public static final int DEFAULT_HEIGHT = 400;
     public static final int MAX_WIDTH = 720;

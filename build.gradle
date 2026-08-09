@@ -186,6 +186,12 @@ def manualSourceNavigatorSelfTest = tasks.register('manualSourceNavigatorSelfTes
     mainClass = 'io.ctyx.modpedia.client.ManualSourceNavigatorSelfTest'
 }
 
+def assistantSecondaryLayoutSelfTest = tasks.register('assistantSecondaryLayoutSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.AssistantSecondaryLayoutSelfTest'
+}
+
 def appGuideAdapterSelfTest = tasks.register('appGuideAdapterSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -271,6 +277,7 @@ def localSearchMessageFormatterSelfTest = tasks.register('localSearchMessageForm
 tasks.named('test', Test) {
     dependsOn searchSelfTest
     dependsOn manualSourceNavigatorSelfTest
+    dependsOn assistantSecondaryLayoutSelfTest
     dependsOn appGuideAdapterSelfTest
     dependsOn localizedSearchSelfTest
     dependsOn knowledgeDatabaseSelfTest

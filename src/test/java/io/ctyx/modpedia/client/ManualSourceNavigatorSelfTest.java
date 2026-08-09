@@ -22,6 +22,33 @@ public final class ManualSourceNavigatorSelfTest {
                 candidates.stream().noneMatch(candidate -> candidate.equals("ae2:items-blocks-machines/controller")),
                 "GuideME 页面候选不能使用去掉 .md 的 ID"
         );
+        List<String> localizedCandidates = ManualSourceNavigator.guidePageCandidatePaths(
+                "appliedpneumatics",
+                "ae2guide/_zh_cn/me_pressure_interface_block.md",
+                "ae2guide/_zh_cn/me_pressure_interface_block",
+                "ae2guide"
+        );
+        check(
+                localizedCandidates.contains("appliedpneumatics:me_pressure_interface_block.md"),
+                "GuideME 本地化页面跳转必须回退到不带语言目录的页面 ID"
+        );
+        List<String> bookNamespaceCandidates = ManualSourceNavigator.guidePageCandidatePaths(
+                "ae2",
+                "ae2guide/_zh_cn/me_pressure_interface_block.md",
+                "ae2guide/_zh_cn/me_pressure_interface_block",
+                "ae2guide"
+        );
+        check(
+                bookNamespaceCandidates.contains("ae2:me_pressure_interface_block.md"),
+                "GuideME 扩展页面还应尝试书籍 namespace"
+        );
+        check(
+                ManualSourceNavigator.guideFolderMatches(
+                        "ae2guide/_zh_cn/me_pressure_interface_block.md",
+                        "ae2guide"
+                ),
+                "GuideME 扩展页面应按书籍文件夹匹配注册书籍"
+        );
         SourceReference appSource = new SourceReference(
                 "content:app/book/basics/pressure",
                 "压力说明",

@@ -136,7 +136,7 @@ RetrievalService.reload()
 `WindowBounds.clampTo(viewportWidth, viewportHeight)` 同时约束：
 
 ```java
-min = 180×140;
+min = 160×110;
 max = min(720×720, viewport×85%);
 safeArea = viewport - 12px;
 ```
