@@ -37,7 +37,8 @@ jobs:
         run: |
           jar_file="$(find build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort | head -n 1)"
           test -n "$jar_file"
-          sha256sum "$jar_file" > SHA256SUMS
+          jar_name="$(basename "$jar_file")"
+          printf '%s  %s\n' "$(sha256sum "$jar_file" | awk '{print $1}')" "$jar_name" > SHA256SUMS
           printf '%s\n' "$jar_file" > release-jar-path.txt
 
       - name: Publish GitHub pre-release

@@ -4,6 +4,19 @@
 
 它在本地读取整合包中已安装模组的手册资源，将 JSON/Markdown 内容转换为统一格式，导入 SQLite 派生搜索库，再把相关资料交给 AI API 生成带来源的回答。
 
+[![Build](https://github.com/ct-yx/modpedia/actions/workflows/build.yml/badge.svg)](https://github.com/ct-yx/modpedia/actions/workflows/build.yml)
+[![Beta Release](https://img.shields.io/github/v/release/ct-yx/modpedia?include_prereleases&label=beta)](https://github.com/ct-yx/modpedia/releases)
+
+## 快速开始
+
+1. 安装 Minecraft `1.21.1`、NeoForge `21.1.x` 和 Java `21`。
+2. 从[首个 Beta 发布页](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1)下载 `modpedia-1.0.0-beta.1.jar`，放入实例的 `mods/` 目录。
+3. 安装客户端必需的 [ModernUI NeoForge](https://github.com/BloCamLimb/ModernUI-MC/releases/tag/3.12.0.4)，文件名应为 `ModernUI-NeoForge-1.21.1-3.12.0.2-universal.jar`。
+4. 启动游戏进入世界，按 `K` 打开助手；首次使用等待知识库构建完成，或按 `F9` 手动重建。
+5. 不使用 AI 时，在“设置 → 工作模式”选择“仅搜索”；需要模型回答时选择“AI 回答”并填写 API 地址和模型名称。
+
+安装包、SHA-256 校验、安装说明和已知限制都在[发布页资产](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1)中提供。
+
 ## 当前定位
 
 当前版本为首个公开测试版 `v1.0.0-beta.1`，目标链路已经跑通：
@@ -13,6 +26,17 @@
 ```
 
 主工程不预置几百个模组的完整百科，只内置转换适配器、提示词资源和最小示例。首次启动时，ModPedia 从本地已安装模组的资源中生成知识库。
+
+## 手册框架与内容模组
+
+Patchouli、GuideME 和 Modonomicon 是手册框架适配对象，不等于实际手册正文。它们可能只是前置库；可检索内容来自依赖这些框架的内容模组 JAR。ModPedia 会：
+
+- 扫描已安装 JAR 的实际手册资源，并按内容模组的 namespace 归属来源；
+- 对 Patchouli、GuideME、Modonomicon 分别保留来源类型、原始路径和页面锚点；
+- 在框架 JAR 没有正文时记录为“依赖型 JAR”，不把它当作扫描失败；
+- 框架未安装或公开跳转 API 不存在时，仍保留 Markdown 搜索结果和来源预览。
+
+因此，测试搜索时应同时放入手册框架和真正提供手册内容的模组；只安装三个框架库通常只能验证加载兼容性，正文覆盖率仍不会体现。
 
 ## 已实现能力
 
@@ -53,6 +77,25 @@
 ```text
 build/libs/
 ```
+
+## 开发者快速验证
+
+修改代码后按顺序运行：
+
+```bash
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+./gradlew test
+./gradlew build
+git diff --check
+```
+
+需要验证知识库规模时运行：
+
+```bash
+./gradlew knowledgeBenchmark
+```
+
+图形环境可用时运行 `./gradlew runClient`；无显示器的 CI/执行环境只能完成纯 Java、构建和 Dedicated Server 检查，窗口缩放、文字层级和来源跳转仍需在实际游戏客户端回归。
 
 ## 知识库目录
 
@@ -297,7 +340,7 @@ API 地址、模型名称和 API key 只保存在玩家本地配置中。示例�
 ## 文档
 
 - [架构设计](docs/ARCHITECTURE.md)
-- [开发流程](docs/DEVELOPMENT.md)
+- [Mod 开发清单](docs/DEVELOPMENT.md)
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
 
 ## 作者

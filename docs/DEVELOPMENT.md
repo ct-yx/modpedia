@@ -1,187 +1,232 @@
 # ModPedia 开发流程
 
-## 1. 分支与提交
+> 这份文档同时是 ModPedia 的 Mod 开发清单。每完成一项就勾选对应复选框；
+> `[~]` 表示代码已具备但仍需要真实游戏或整合包人工回归，`[ ]` 表示后续工作。
 
-推荐分支命名：
+## 0. 当前版本快照
+
+| 项目 | 当前值 |
+| --- | --- |
+| 发布版本 | `v1.0.0-beta.1` |
+| Minecraft | `1.21.1` |
+| NeoForge | `21.1.244` |
+| Java | `21` |
+| Mod ID | `modpedia` |
+| 包名 | `io.ctyx.modpedia` |
+| 作者 | `ctyx` |
+| 客户端 UI 依赖 | ModernUI `3.12.0.2`（客户端必需） |
+| 默认快捷键 | `K` 助手、`F9` 重建；`F8` 保留原版电影视角 |
+
+发布资产与校验文件位于：
 
 ```text
-codex/<feature-name>
+https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1
 ```
 
-提交信息保持简短并说明实际变化，例如：
+## 1. Mod 工程基础清单
 
-```text
-feat: add local guide scanner
-docs: describe knowledge cache
-fix: preserve custom knowledge files
-```
+- [x] `mod_id=modpedia`、显示名 `ModPedia · 模组百科`、作者 `ctyx` 全部一致。
+- [x] 基础包名固定为 `io.ctyx.modpedia`，技术标识不随显示名调整。
+- [x] Minecraft、NeoForge、Java 和 ModernUI 版本写入 `gradle.properties` 并锁定。
+- [x] `neoforge.mods.toml` 声明 Minecraft、NeoForge 和客户端 ModernUI 依赖。
+- [x] 客户端入口与服务端入口隔离；Dedicated Server 不解析 `client/` UI 类。
+- [x] `./gradlew build` 能生成独立的 Mod JAR。
+- [ ] 每次升级 Minecraft/NeoForge 后重新核对对应版本官方 API 和映射。
 
-## 2. 开发顺序
+## 2. 手册适配清单
 
-### 阶段一：工程改名
+- [x] Patchouli 书籍、分类、条目和页面扫描。
+- [x] GuideME 页面扫描、语言目录回退和来源跳转候选修复。
+- [x] Modonomicon/APP 书籍 JSON、分类、条目和页面展开。
+- [x] 框架 JAR 与内容模组 JAR 分离统计；框架本身没有正文时标记为依赖型 JAR。
+- [x] `zh_cn → en_us → neutral` 语言回退和多语言去重。
+- [x] 保留 `sourceType`、`sourcePath`、页面锚点和内容模组 namespace。
+- [x] 书籍框架缺失或公开跳转 API 不存在时保留来源预览。
+- [~] 用大型真实整合包复核更多自定义页面节点和第三方改版路径。
+- [ ] 增加更多页面类型的专用渲染适配。
 
-- 使用 `modpedia` 作为 Mod ID。
-- 使用 `io.ctyx.modpedia` 作为基础包名。
-- 移除模板示例内容。
-- 保留可构建的最小 Mod。
+## 3. 知识库与检索清单
 
-### 阶段二：知识库扫描（已完成基础版本）
+- [x] 自动手册转换为完整 Markdown，并保留标题、列表、代码块和未知节点。
+- [x] SQLite 保存完整 Markdown、段落索引、标题路径和 FTS 数据。
+- [x] `custom/*.md` 按稳定 ID、语言和 SHA-256 指纹启动增量导入。
+- [x] 新增、修改、删除自定义文档均在事务内同步 SQLite、段落和 FTS。
+- [x] 自定义文档优先级高于自动手册，原始 Markdown 保持为事实源。
+- [x] 支持中文双字词、英文大小写、ID、标题、关键词、路径和同义词匹配。
+- [x] 搜索结果按完整段落返回，每篇文档保留一个最高分段落。
+- [x] `reload()` 原子替换快照，并兼容旧版 Markdown/JSON 索引。
+- [x] 双语 10× 基准记录 p50/p95/p99，搜索 p95 目标为 `≤50 ms`。
+- [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
+- [ ] 只有基准证明必要时才引入段落预索引或向量检索。
 
-- [x] 实现 JSON 手册扫描器。
-- [x] 实现 Markdown 手册扫描器。
-- [x] 适配 APP 书籍 JSON，按内容模组 namespace 归属来源并展开多条目文档。
-- [x] 解析 `zh_cn`/`en_us` 语言 key。
-- [x] 输出统一文档格式。
-- [x] 生成 manifest 和关键词索引。
-- [x] 合并 `custom/` 手工知识。
-- [ ] 接入更多页面类型的专用渲染。
+## 4. 客户端 UI 清单
 
-### 阶段三：增量更新（已完成）
+- [x] 助手关闭时完全隐藏，不常驻 HUD；`AssistantScreen` 为唯一 Screen。
+- [x] 标题栏拖动、四边/四角缩放、位置尺寸持久化和视口边界约束。
+- [x] 最小 `160×110`、最大 `720×720`、视口占比 `85%` 和安全边距约束。
+- [x] 历史与设置作为同层 `SecondaryPanel` 绘制，不创建第二个 Minecraft Screen。
+- [x] 二级页面背景、文字、控件和页脚通过 scissor 限制在父窗口内。
+- [x] 设置页滚动时，标签和控件只有在完整可见时才绘制，避免半截文字和输入框重叠。
+- [x] 设置和历史按钮统一使用助手自定义按钮材质。
+- [x] 游戏背景保持清晰；只绘制蓝光半透明面板，支持透明度、主题色和高对比度回退。
+- [x] 折叠输入只保留右下角紧凑入口，展开后使用单行输入。
+- [~] 在 GUI Scale `4` 的最小窗口、普通窗口和最大窗口分别截图回归。
+- [~] 在窗口拖动、缩放和游戏视口变化过程中人工检查鼠标命中区域。
 
-- [x] 保存资源指纹，并兼容阶段二的旧版 `state.json`。
-- [x] 只重新转换新增或指纹变化的来源。
-- [x] 清理已经移除的来源文件。
-- [x] 生成更新、复用、删除数量和警告报告。
-- [x] 提供 `F9` 手动完整重建入口。
+## 5. AI、历史与仅搜索清单
 
-实现约束：每次构建都会重建 `manifest.json`、`keyword-index.json` 和 `state.json`；
-`cache/build-report.json` 保存本次构建报告，`state.json` 使用 schema version 2。
+- [x] 使用 LangChain4j 管理 Chat Memory、工具调用轮次、上下文窗口和流式响应。
+- [x] `search_knowledge` 返回完整 Markdown 段落、来源、匹配分、`returned_count` 和 `has_more`。
+- [x] 证据不足时支持改写查询、跨语言补搜和已返回文档排除。
+- [x] 快速、标准、深入和自定义搜索预算可配置。
+- [x] 历史会话保存用户/助手消息、来源卡片和 SearchTrace，不复制知识正文。
+- [x] API Key 仅用于认证，不写入日志和会话；支持环境变量覆盖。
+- [x] 设置页支持 `AI` / `SEARCH_ONLY`；仅搜索模式跳过 API 配置和网络请求。
+- [x] Mock 会话与真实 AI 会话接口兼容，支持离线 UI/搜索测试。
+- [~] 使用真实模型回归多问题补搜、流式输出、取消、超时和历史恢复。
 
-### #4：规则搜索后端（已完成）
-
-- [x] 读取 `manifest.json`、`keyword-index.json` 和生成/自定义 Markdown。
-- [x] 实现中文双字词、ID、标题、关键词、分类和路径匹配。
-- [x] 按完整 Markdown 段落返回结果，并保留标题路径和来源元数据。
-- [x] 支持结果评分、组合命中、同文档去重、稳定排序和 `1–20` 条限制。
-- [x] 支持 `reload()`、索引更新时间自动刷新和可选同义词配置。
-- [x] 使用纯 Java 搜索回归测试覆盖索引状态、段落边界、代码块和同义词。
-
-### #5：自定义 Markdown 自动导入 SQLite（已完成）
-
-- [x] 启动扫描 `config/modpedia/knowledge/custom/*.md`，读取稳定 `id`、语言和 SHA-256 指纹。
-- [x] 新增/修改文档按 `(id, language)` 增量替换，未变化文档复用已解析的 SQLite 记录。
-- [x] 删除文件同步删除文档、段落和 FTS 记录；自定义优先级高于自动手册。
-- [x] 保存完整 Markdown，原始 `.md` 继续作为事实源；数据库只作为派生搜索库。
-- [x] Front Matter 错误保留上一份有效记录，SQLite 同步失败回滚，损坏数据库全量重建。
-- [x] 支持 `zh_cn`、`en_us` 和 `neutral` 语言选择与回退。
-- [x] 使用可复用只读连接、批量元数据加载和精确 ID 索引控制搜索延迟。
-
-对应回归任务：
+## 6. 每次修改后的自动检查
 
 ```bash
-./gradlew knowledgeDatabaseSelfTest
-```
-
-### 阶段四：助手界面（已完成）
-
-- [x] 关闭时完全隐藏，不常驻 HUD。
-- [x] `K` 打开/关闭，`Esc` 按输入焦点优先级关闭。
-- [x] 默认居中偏右，标题栏拖动，四边和四角缩放。
-- [x] `160×110` 最小值、`720×720` 固定上限和视口 `85%` 上限。
-- [x] 游戏窗口缩放后自动修正尺寸和位置；客户端 JSON 保存最后状态。
-- [x] 紧凑标题栏/输入区、半透明玻璃表面和无额外背景模糊层。
-- [x] 高对比度/减少透明度不透明表面回退。
-- [x] 消息滚动、自动定位、单行输入、发送、取消和关闭。
-- [x] 欢迎、提问、加载、来源回答、无结果、错误重试和知识库状态。
-- [x] 来源预览卡片和“打开原手册”按钮。
-- [x] 历史和设置使用同一 `AssistantScreen` 的二级页面状态；小窗口下页面、滚动和按钮仍限制在主窗口内。
-- [x] `MockAssistantSession` 接入 `RetrievalService`，可在游戏内测试完整段落、匹配分数和来源跳转。
-- [x] 通过反射适配 Patchouli `openBookGUI/openBookEntry` 与 GuideME `GuidesCommon.openGuide`，第三方手册模组保持可选。
-- [x] 通过反射适配 APP 书籍/条目入口；框架 JAR 与实际手册内容分离统计。
-
-默认会话实现是 `AiAssistantSession`；`MockAssistantSession` 仍用于不联网的确定性 UI/搜索验证，会用 `error`/“错误”触发错误状态，用 `unknown`/“不存在”触发无结果状态。启动客户端时加 `-Dmodpedia.ai.mock=true` 可切换到模拟会话。
-
-### 知识库规模基准
-
-- [x] 增加 `knowledgeBenchmark` 测试专用任务。
-- [x] 分别装载 `zh_cn` 与 `en_us` 语料，验证双语数据规模和搜索延迟。
-- [x] 覆盖当前基线、额外 JAR 实际扩展集和 10× 唯一文档集。
-- [x] 统计 JAR、模组、来源、文档、关键词、posting、段落、构建和搜索 p50/p95/p99。
-- [x] 将无手册资源的前置模组记录为依赖型 JAR，不把它们误报为扫描失败。
-- [x] 默认把搜索 p95 预算设为 `50 ms`，为后续大语言模型请求保留时间。
-
-运行：
-
-```bash
-./gradlew knowledgeBenchmark
-```
-
-可通过 `-PbenchmarkSearchSamples=N` 和 `-PbenchmarkWarmupSamples=N` 调整采样次数。报告写入 `build/reports/modpedia/`，基准转换结果使用临时目录，不改动 `run/config/modpedia/knowledge/`。
-
-### 阶段五：AI 对话、历史、上下文和仅搜索（已接入）
-
-- [x] 使用 LangChain4j `1.18.1`（Apache-2.0）复用 `AiServices`、`@Tool`、工具调用轮数、`TokenStream` 和 `TokenWindowChatMemory`。
-- [x] 使用 OpenAI Chat Completions 兼容接口；配置保存到 `config/modpedia/ai.json`。
-- [x] `search_knowledge` 返回完整 Markdown 段落、标题路径、匹配分、来源和 `has_more`。
-- [x] 证据不足时允许模型改写查询继续搜索；同一文档只在实际返回后加入排除集合。
-- [x] 使用 `ChatMessageSerializer` 和 `PersistentChatMemoryStore` 保存模型上下文；不手写 token 裁剪和 SSE 分段协议。
-- [x] 保存 UI 消息、来源卡片和 `SearchTrace` 到 `config/modpedia/conversations/`，不复制 SQLite 中的知识正文。
-- [x] 支持中文/英文/neutral 搜索切换、快速/标准/深入/自定义预算、流式取消和 API Key 脱敏输入。
-- [x] 历史抽屉支持新建、切换、重命名和删除；设置页支持保存、连接测试和恢复默认。
-- [x] `-Dmodpedia.ai.mock=true` 可切回不联网的规则搜索模拟会话。
-- [x] 设置页支持 `AI` / `SEARCH_ONLY` 工作模式；仅搜索不读取 API 配置，直接返回 SQLite 完整段落并保存来源轨迹。
-
-默认预算：
-
-| 档位 | 最大搜索轮数 | 每轮结果 | 上下文上限 |
-| --- | ---: | ---: | ---: |
-| 快速 | 1 | 4 | 8,000 字符 |
-| 标准 | 3 | 8 | 16,000 字符 |
-| 深入 | 5 | 12 | 28,000 字符 |
-
-AI 相关纯 Java 回归任务：
-
-```bash
-./gradlew conversationStoreSelfTest
-./gradlew aiSettingsSelfTest
-./gradlew promptBuilderSelfTest
-./gradlew searchKnowledgeToolSelfTest
-./gradlew appGuideAdapterSelfTest
-```
-
-当前不引入向量数据库或自定义 SSE 解析器：SQLite 负责本地规则检索，LangChain4j 负责模型上下文和流式协议，后续只在基准数据证明必要时增加检索增强。
-
-## 3. 每次修改后的检查
-
-```bash
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+./gradlew test
 ./gradlew build
 git diff --check
 ```
 
-涉及客户端界面时，再运行：
+按改动范围补充：
 
 ```bash
-./gradlew runClient
+./gradlew assistantSecondaryLayoutSelfTest
+./gradlew manualSourceNavigatorSelfTest
+./gradlew knowledgeDatabaseSelfTest
+./gradlew runClient       # 需要可用图形环境
+./gradlew runServer       # Dedicated Server 隔离回归
 ```
 
-手动回归顺序：
+每次检查都要确认：
 
-1. 进入单人世界，确认世界继续运行；按 `K` 打开，再按 `K`/`Esc` 关闭。
-2. 拖动标题栏，关闭后重新打开，确认位置保留。
-3. 依次拖动四边和四角，确认尺寸始终在 `160×110`、`720×720`、`85%` 视口约束内。
-4. 缩放游戏窗口，确认浮窗仍完整可见；滚轮只影响消息区域。
-5. 输入一行普通问题并按 `Enter` 发送；加载时点击 `×` 取消。
-6. 输入 `error` 测试错误与“重试”，输入 `unknown` 测试无匹配，点击来源卡片测试预览。
-7. 确认 ModPedia 不额外绘制底层背景模糊，窗口和游戏画面均保持清晰；修改 `config/modpedia/assistant-glass.json` 的 `themeColor`/`backgroundOpacity`/`glow` 后重新打开助手确认样式变化；打开高对比度选项，确认面板切换为不透明。
-8. 点击历史抽屉，确认新建、切换、重命名、删除；重启游戏确认消息、来源卡片和搜索轨迹恢复。
-9. 点击标题栏设置入口，确认设置以右侧同层抽屉打开，不切换到新 Screen；确认抽屉打开时底层输入框不抢焦点，填写兼容 API 地址和模型，API Key 输入显示圆点，测试连接不阻塞界面，保存后提问。
-   在窗口缩到最小时，历史和设置页面仍完整位于浮窗内；设置字段可滚动，底部按钮不与状态文字重叠。
-10. 提问同时包含配方、步骤和前置条件的问题，确认首次资料不足时模型继续调用 `search_knowledge`，补搜不重复已返回来源，最终回答只引用本轮来源。
-11. 确认 `F8` 仍为原版电影视角，`F9` 仍触发知识库重建。
+- [ ] 日志中没有 API Key、完整请求头或模型密钥。
+- [ ] `run/config/modpedia/knowledge/`、SQLite 数据库和本地 JAR 没有被误提交。
+- [ ] `git diff --check` 无空白错误。
+- [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-Dedicated Server 回归：
+## 7. Beta 发布清单
+
+- [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
+- [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
+- [x] 构建产物 `build/libs/modpedia-1.0.0-beta.1.jar` 已生成。
+- [x] `SHA256SUMS` 与发布 JAR 校验一致。
+- [x] GitHub `main` 已推送，标签 `v1.0.0-beta.1` 已推送。
+- [x] GitHub 预发布资产包含 JAR、校验、更新日志、安装说明和已知限制。
+- [~] 在真实图形客户端完成小窗口 UI、三种手册跳转和完整整合包回归。
+- [ ] Beta 反馈收集后决定是否发布 `beta.2` 或进入稳定版准备。
+
+## 8. 后续开发清单
+
+- [ ] 增加大型整合包实测报告和扫描覆盖率报告。
+- [ ] 补充更多自定义手册格式和页面节点适配器。
+- [ ] 在规则检索基准不达标时增加预构建段落索引。
+- [ ] 评估向量检索；只有 SQLite 规则检索和段落索引仍不足时再引入。
+- [ ] 增加设置导入/导出和更细粒度的主题配置界面。
+- [ ] 补充客户端截图自动化或可重复的图形回归环境。
+
+## 9. 分支、提交与评审规范
+
+- 功能分支使用 `codex/<feature-name>`；发布提交可以直接合并到 `main`。
+- 提交作者使用登录的 GitHub 账号 `ct-yx`，不要使用本地电脑用户名。
+- 提交信息保持简短并说明实际变化：
+
+```text
+feat: add local guide scanner
+fix: repair compact settings layout
+docs: update mod development checklist
+```
+
+- 每次提交只包含当前功能相关文件；运行目录、JAR、SQLite 数据库、API 配置和会话记录不进入 Git。
+- 客户端 UI 改动必须同时更新纯 Java 几何测试或手动回归步骤。
+- 手册适配改动必须同时更新来源跳转测试、语言回退测试和大型数据基准说明。
+
+## 10. 新增手册适配器清单
+
+新增 Patchouli、GuideME、Modonomicon 或其它手册格式时，按以下顺序完成：
+
+- [ ] 先确认 Minecraft/NeoForge 版本和实际资源目录，不凭框架名称猜正文位置。
+- [ ] 在扫描器中只匹配该格式的专用目录，避免普通 JSON/Markdown 被误收录。
+- [ ] 记录稳定 `documentId`、`sourceType`、`sourcePath`、内容模组 namespace 和版本。
+- [ ] 实现 `zh_cn → en_us → neutral` 回退，并对多语言页面去重。
+- [ ] 将书籍、分类、条目、页面和未知节点转换成完整 Markdown。
+- [ ] 在 `ManualSourceNavigator` 中增加客户端反射适配；框架缺失时仍保留来源预览。
+- [ ] 增加合成 JAR 夹具，覆盖标题、列表、代码块、配方、未知节点和页级跳转。
+- [ ] 用真实内容模组 JAR 做只读回归；前置框架 JAR 单独统计，不与正文覆盖率混淆。
+- [ ] 更新 `README.md`、`docs/ARCHITECTURE.md` 和 `docs/KNOWLEDGE_BASE.md`。
+
+## 11. 手动回归清单
+
+### UI 与窗口
+
+- [ ] 在 GUI Scale `4` 下测试 `160×110`、普通尺寸和最大尺寸。
+- [ ] `K` 打开/关闭助手；关闭时游戏画面完全恢复，世界继续运行。
+- [ ] 拖动标题栏后关闭并重新打开，确认位置保存。
+- [ ] 拖动四边和四角，确认宽高始终满足 `160×110`、`720×720` 和 `85%` 视口限制。
+- [ ] 缩放游戏窗口，确认浮窗和二级页面同步约束在可见范围内。
+- [ ] 历史、设置只在原 `AssistantScreen` 的父窗口内绘制；底层文字和输入框不穿透。
+- [ ] 设置页滚动到每个字段，确认标签、输入框、按钮和状态文字没有重叠。
+- [ ] 折叠输入只显示紧凑入口，点击后展开单行输入；`Enter` 发送，`Esc` 按焦点优先级处理。
+- [ ] 确认背景清晰、面板半透明蓝光可见；修改主题色/透明度后重新打开助手验证。
+- [ ] 确认高对比度或减少透明度时回退为不透明面板。
+- [ ] `F8` 保留原版电影视角，`F9` 继续触发知识库重建。
+
+### 搜索与跳转
+
+- [ ] 使用中文名称、英文名称、模组 ID、物品 ID 和模糊关键词分别搜索。
+- [ ] 确认结果返回完整 Markdown 段落、标题路径、分数和来源卡片。
+- [ ] 分别测试 Patchouli、GuideME、Modonomicon 三种来源；来源卡片可预览并跳转。
+- [ ] 只安装手册框架时确认加载正常；安装内容模组后确认正文数量增加。
+- [ ] 删除或更新 JAR 后按 `F9` 重建，确认生成文档、SQLite 和来源记录同步变化。
+- [ ] 新增、修改、删除 `config/modpedia/knowledge/custom/*.md` 后重启游戏，确认 ID/语言更新正确。
+
+### AI、历史与服务端
+
+- [ ] 仅搜索模式在空 API 配置下直接返回本地结果。
+- [ ] AI 模式测试首次搜索不足时的补搜、跨语言查询、`has_more` 和重复查询抑制。
+- [ ] 测试流式输出、取消、超时、错误重试和历史会话恢复。
+- [ ] 检查日志和会话文件中没有 API Key。
+- [ ] 启动 Dedicated Server，确认不解析 ModernUI、AssistantScreen 和第三方客户端反射类。
+
+## 12. 发布流程
+
+发布前执行：
 
 ```bash
-./gradlew runServer
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+./gradlew test
+./gradlew build
+git diff --check
+jar_file="$(find build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' \
+  ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort | head -n 1)"
+printf '%s  %s\n' "$(shasum -a 256 "$jar_file" | awk '{print $1}')" "$(basename "$jar_file")" > SHA256SUMS
 ```
 
-服务端不需要 ModernUI；`ModPediaClient`、`AssistantScreen` 和第三方 UI 反射入口均通过客户端入口与 `Dist.CLIENT` 隔离。
+发布资产至少包含：
 
-## 4. 发布检查
+```text
+modpedia-<version>.jar
+SHA256SUMS
+CHANGELOG.md
+INSTALL.md
+KNOWN_LIMITATIONS.md
+```
 
-- 检查 Mod ID 和版本号。
-- 检查 JAR 内资源路径。
-- 检查日志中没有 API key。
-- 检查生成的知识缓存未被误提交。
-- 检查构建产物可以被加载。
-- `v1.0.0-beta.1` 通过 GitHub Actions 的测试、构建和差异检查后，以公开预发布形式发布。
+推送版本标签后，`.github/workflows/release.yml` 会在 GitHub Actions 中重新测试、构建、生成校验并创建预发布。发布完成后从远端下载 JAR，执行：
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+最后确认：
+
+- [ ] 发布页为预发布状态，版本号与 JAR 文件名一致。
+- [ ] 发布资产可下载，SHA-256 校验通过。
+- [ ] 安装说明与当前最小尺寸、依赖版本和快捷键一致。
+- [ ] 已知限制明确说明手册覆盖率、AI API 和图形客户端回归范围。
