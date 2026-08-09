@@ -15,6 +15,7 @@ public final class AiSettingsSelfTest {
             Path file = root.resolve("ai.json");
             AiSettingsStore store = new AiSettingsStore(file);
             AiSettings settings = new AiSettings(
+                    AssistantMode.AI,
                     " https://example.invalid/v1 ",
                     " test-model ",
                     "secret-value",
@@ -36,6 +37,13 @@ public final class AiSettingsSelfTest {
             check(restored.effectiveMaxRounds() == 8, "自定义搜索预算应使用自定义轮数");
             check("secret-value".equals(restored.apiKey()),
                     "设置文件应保存 API Key，读取日志时由调用层排除");
+            check(restored.mode() == AssistantMode.AI, "旧版默认设置应使用 AI 模式");
+
+            Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\"}");
+            check(store.load().mode() == AssistantMode.AI, "缺少 mode 的旧配置应默认使用 AI 模式");
+
+            store.save(restored.withMode(AssistantMode.SEARCH_ONLY));
+            check(store.load().mode() == AssistantMode.SEARCH_ONLY, "仅搜索模式应可持久化");
 
             AiSettings standard = restored.withIntensity(SearchIntensity.STANDARD);
             check(standard.effectiveMaxRounds() == 3, "标准档位应使用 3 轮预算");

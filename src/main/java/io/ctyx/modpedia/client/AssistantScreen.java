@@ -5,6 +5,8 @@ import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
@@ -46,14 +48,17 @@ public final class AssistantScreen extends Screen {
     private SourceReference previewSource;
     private String previewStatus = "";
     private Bounds retryBounds;
-    private boolean historyOpen;
+    private SecondaryPanel secondaryPanel = SecondaryPanel.NONE;
     private Bounds historyDrawerBounds;
+    private Bounds historyListBounds;
     private Bounds historyNewBounds;
     private Bounds historyRenameBounds;
     private Bounds historyDeleteBounds;
     private List<HistoryHit> historyHits = List.of();
-    private boolean settingsOpen;
+    private double historyScrollOffset;
     private AiSettingsPanel settingsPanel;
+    private final List<AbstractWidget> settingsContentWidgets = new ArrayList<>();
+    private final List<AbstractWidget> settingsFooterWidgets = new ArrayList<>();
     private WindowBounds.ResizeEdge cursorEdge = WindowBounds.ResizeEdge.NONE;
     private long cursorHandle;
 
@@ -81,6 +86,8 @@ public final class AssistantScreen extends Screen {
         }
         bounds = bounds.clampTo(width, height);
         clearWidgets();
+        settingsContentWidgets.clear();
+        settingsFooterWidgets.clear();
 
         Bounds inputBounds = inputFieldBounds();
         input = new AssistantInput(
@@ -96,19 +103,18 @@ public final class AssistantScreen extends Screen {
         input.setValueListener(value -> {
             // 保持输入组件的状态更新，不提前触发模拟会话。
         });
-        // 抽屉打开时不把底层输入框加入控件列表，避免它在设置抽屉上方
-        // 绘制或抢走鼠标焦点；关闭抽屉后 rebuildWidgets() 会将它恢复。
-        if (!settingsOpen) {
+        // 二级页面打开时，主页面输入框只保留为底层状态，不参与绘制和事件分发。
+        if (secondaryPanel == SecondaryPanel.NONE) {
             addRenderableWidget(input);
         }
-        if (settingsOpen) {
+        if (secondaryPanel == SecondaryPanel.SETTINGS) {
             if (settingsPanel == null) {
                 settingsPanel = new AiSettingsPanel();
             }
-            Bounds settings = settingsDrawerBounds();
+            Bounds settings = secondaryPageBounds();
             settingsPanel.init(this, font, settings.left(), settings.top(), settings.width(), settings.bottom());
             setInitialFocus(settingsPanel.initialFocus());
-        } else {
+        } else if (secondaryPanel == SecondaryPanel.NONE) {
             setInitialFocus(input);
         }
 
@@ -129,7 +135,7 @@ public final class AssistantScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
-        if (input != null && input.isFocused()) {
+        if (secondaryPanel == SecondaryPanel.NONE && input != null && input.isFocused()) {
             input.setFocused(true);
         }
     }
@@ -137,13 +143,14 @@ public final class AssistantScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderWindow(graphics, mouseX, mouseY);
-        // 不调用 super.render，避免 Screen 的底层背景再次覆盖浮窗；控件最后绘制，
-        // 保持游戏画面 -> 蓝光半透明面板 -> 面板文字 -> 输入控件的层级。
-        for (var renderable : renderables) {
-            renderable.render(graphics, mouseX, mouseY, partialTick);
-        }
-        if (historyOpen) {
-            renderHistoryDrawer(graphics, mouseX, mouseY);
+        // 不调用 super.render，避免 Screen 的底层背景再次覆盖浮窗。
+        // 二级页面控件单独在自己的裁剪区域内绘制，避免脱离原窗口。
+        if (secondaryPanel == SecondaryPanel.SETTINGS) {
+            renderSettingsWidgets(graphics, mouseX, mouseY, partialTick);
+        } else if (secondaryPanel == SecondaryPanel.NONE) {
+            for (var renderable : renderables) {
+                renderable.render(graphics, mouseX, mouseY, partialTick);
+            }
         }
         if (previewSource != null) {
             renderSourcePreview(graphics);
@@ -156,12 +163,12 @@ public final class AssistantScreen extends Screen {
             previewSource = null;
             return true;
         }
-        if (settingsOpen && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+        if (secondaryPanel == SecondaryPanel.SETTINGS && keyCode == GLFW.GLFW_KEY_ESCAPE) {
             closeSettingsPanel();
             return true;
         }
-        if (historyOpen && keyCode == GLFW.GLFW_KEY_ESCAPE) {
-            historyOpen = false;
+        if (secondaryPanel == SecondaryPanel.HISTORY && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            closeSecondaryPanel();
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
@@ -172,7 +179,7 @@ public final class AssistantScreen extends Screen {
             onClose();
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_ENTER && !hasShiftDown()) {
+        if (secondaryPanel == SecondaryPanel.NONE && keyCode == GLFW.GLFW_KEY_ENTER && !hasShiftDown()) {
             if (input != null && input.isFocused()) {
                 submitInput();
                 return true;
@@ -205,42 +212,57 @@ public final class AssistantScreen extends Screen {
             return true;
         }
         if (historyBounds().contains(mouseX, mouseY)) {
-            if (settingsOpen) {
-                closeSettingsPanel();
-            }
-            historyOpen = !historyOpen;
+            toggleSecondaryPanel(SecondaryPanel.HISTORY);
             return true;
         }
         if (settingsBounds().contains(mouseX, mouseY)) {
-            if (settingsOpen) {
-                closeSettingsPanel();
-            } else {
-                openSettingsPanel();
-            }
+            toggleSecondaryPanel(SecondaryPanel.SETTINGS);
             return true;
         }
-        // 主窗口关闭按钮优先于抽屉的“点击外部关闭”逻辑，避免设置抽屉打开时
-        // 第一次点击 × 只收起抽屉而不是关闭助手。
+        // 主窗口关闭按钮优先于二级页面的点击外部逻辑。
         if (closeBounds().contains(mouseX, mouseY)) {
             onClose();
             return true;
         }
-        if (settingsOpen) {
+
+        // 二级页面打开时仍允许拖动和缩放原始窗口；二级页面会随 WindowBounds 同步重排。
+        WindowBounds.ResizeEdge edge = resizeEdgeAt(mouseX, mouseY);
+        if (edge != WindowBounds.ResizeEdge.NONE) {
+            resizing = true;
+            resizeEdge = edge;
+            dragStartBounds = bounds;
+            dragStartX = (int) mouseX;
+            dragStartY = (int) mouseY;
+            return true;
+        }
+        if (titleBounds().contains(mouseX, mouseY)) {
+            dragging = true;
+            dragStartBounds = bounds;
+            dragStartX = (int) mouseX;
+            dragStartY = (int) mouseY;
+            return true;
+        }
+
+        if (secondaryPanel == SecondaryPanel.SETTINGS) {
             if (settingsPanel != null && settingsPanel.closeContains(mouseX, mouseY)) {
                 closeSettingsPanel();
                 return true;
             }
-            if (settingsPanel != null && settingsPanel.contains(mouseX, mouseY)) {
+            if (settingsPanel != null && settingsPanel.pageContains(mouseX, mouseY)) {
                 return super.mouseClicked(mouseX, mouseY, button);
             }
             closeSettingsPanel();
             return true;
         }
-        if (historyOpen) {
+        if (secondaryPanel == SecondaryPanel.HISTORY) {
             if (historyDrawerBounds != null && historyDrawerBounds.contains(mouseX, mouseY)) {
+                if (secondaryPageCloseBounds().contains(mouseX, mouseY)) {
+                    closeSecondaryPanel();
+                    return true;
+                }
                 if (historyNewBounds != null && historyNewBounds.contains(mouseX, mouseY)) {
                     session.newConversation();
-                    historyOpen = false;
+                    closeSecondaryPanel();
                     scrollToEnd = true;
                     return true;
                 }
@@ -266,14 +288,15 @@ public final class AssistantScreen extends Screen {
                 for (HistoryHit hit : historyHits) {
                     if (hit.bounds().contains(mouseX, mouseY)) {
                         session.selectConversation(hit.summary().id());
-                        historyOpen = false;
+                        closeSecondaryPanel();
                         scrollToEnd = true;
                         return true;
                     }
                 }
                 return true;
             }
-            historyOpen = false;
+            closeSecondaryPanel();
+            return true;
         }
         if (sendBounds().contains(mouseX, mouseY)) {
             if (session.isLoading()) {
@@ -302,22 +325,6 @@ public final class AssistantScreen extends Screen {
             }
         }
 
-        WindowBounds.ResizeEdge edge = resizeEdgeAt(mouseX, mouseY);
-        if (edge != WindowBounds.ResizeEdge.NONE) {
-            resizing = true;
-            resizeEdge = edge;
-            dragStartBounds = bounds;
-            dragStartX = (int) mouseX;
-            dragStartY = (int) mouseY;
-            return true;
-        }
-        if (titleBounds().contains(mouseX, mouseY)) {
-            dragging = true;
-            dragStartBounds = bounds;
-            dragStartX = (int) mouseX;
-            dragStartY = (int) mouseY;
-            return true;
-        }
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
@@ -363,8 +370,19 @@ public final class AssistantScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (settingsOpen && settingsPanel != null && settingsPanel.contains(mouseX, mouseY)) {
-            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        if (secondaryPanel == SecondaryPanel.SETTINGS && settingsPanel != null) {
+            if (settingsPanel.contentContains(mouseX, mouseY)) {
+                settingsPanel.scrollBy(scrollY);
+                return true;
+            }
+            return true;
+        }
+        if (secondaryPanel == SecondaryPanel.HISTORY) {
+            if (historyListBounds != null && historyListBounds.contains(mouseX, mouseY)) {
+                historyScrollOffset = Math.max(0, historyScrollOffset - scrollY * 24.0);
+                return true;
+            }
+            return true;
         }
         if (messageBounds().contains(mouseX, mouseY)) {
             scrollOffset -= scrollY * 24.0;
@@ -426,9 +444,13 @@ public final class AssistantScreen extends Screen {
         );
         renderHeaderActions(graphics, mouseX, mouseY);
 
+        // 二级页面是原助手窗口内容之上的一层；底层消息和输入栏仍先绘制，
+        // 页面背景再用不透明表面覆盖，避免两个 Screen/交互层互相穿透。
         drawMessages(graphics);
         drawInputChrome(graphics);
-        if (settingsOpen && settingsPanel != null) {
+        if (secondaryPanel == SecondaryPanel.HISTORY) {
+            renderHistoryPage(graphics, mouseX, mouseY);
+        } else if (secondaryPanel == SecondaryPanel.SETTINGS && settingsPanel != null) {
             settingsPanel.render(
                     graphics,
                     glassStyle,
@@ -666,9 +688,9 @@ public final class AssistantScreen extends Screen {
 
     private void renderHeaderActions(GuiGraphics graphics, int mouseX, int mouseY) {
         drawHeaderAction(graphics, historyBounds(), Component.translatable("screen.modpedia.history"),
-                historyOpen, mouseX, mouseY);
+                secondaryPanel == SecondaryPanel.HISTORY, mouseX, mouseY);
         drawHeaderAction(graphics, settingsBounds(), Component.translatable("screen.modpedia.settings"),
-                settingsOpen, mouseX, mouseY);
+                secondaryPanel == SecondaryPanel.SETTINGS, mouseX, mouseY);
     }
 
     private void drawHeaderAction(
@@ -692,49 +714,58 @@ public final class AssistantScreen extends Screen {
         );
     }
 
-    private void renderHistoryDrawer(GuiGraphics graphics, int mouseX, int mouseY) {
-        int drawerWidth = Math.min(Math.max(132, bounds.width() * 38 / 100), bounds.width() - 8);
-        int left = bounds.x() + bounds.width() - drawerWidth;
-        int top = bounds.y() + HEADER_HEIGHT;
-        int bottom = bounds.y() + bounds.height() - INPUT_HEIGHT;
-        historyDrawerBounds = new Bounds(left, top, drawerWidth, Math.max(1, bottom - top));
-        int right = bounds.x() + bounds.width();
-        graphics.fill(left, top, right, bottom, glassStyle.opaquePanelColor());
-        graphics.renderOutline(left, top, drawerWidth, bottom - top, glassStyle.outlineColor());
-        graphics.drawString(font, Component.translatable("screen.modpedia.history"), left + 12, top + 10, TEXT_COLOR, false);
+    private void renderHistoryPage(GuiGraphics graphics, int mouseX, int mouseY) {
+        Bounds page = secondaryPageBounds();
+        historyDrawerBounds = page;
+        graphics.fill(page.left(), page.top(), page.right(), page.bottom(), glassStyle.opaquePanelColor());
+        graphics.renderOutline(page.left(), page.top(), page.width(), page.height(), glassStyle.outlineColor());
+        graphics.drawString(font, Component.translatable("screen.modpedia.history"), page.left() + 12, page.top() + 10, TEXT_COLOR, false);
+        graphics.drawString(font, Component.literal("×"), page.right() - 22, page.top() + 8, TEXT_COLOR, false);
 
-        historyNewBounds = new Bounds(left + 10, top + 26, drawerWidth - 20, 20);
+        historyNewBounds = new Bounds(page.left() + 10, page.top() + 30, Math.max(1, page.width() - 20), 20);
         drawDrawerButton(graphics, historyNewBounds, Component.translatable("screen.modpedia.new_conversation"), mouseX, mouseY);
 
         historyHits = new ArrayList<>();
         List<ConversationSummary> summaries = session.conversations();
-        int y = historyNewBounds.bottom() + 8;
-        int listBottom = bottom - 34;
+        Bounds list = new Bounds(
+                page.left() + 8,
+                historyNewBounds.bottom() + 8,
+                Math.max(1, page.width() - 16),
+                Math.max(1, page.bottom() - 36 - (historyNewBounds.bottom() + 8))
+        );
+        historyListBounds = list;
+        int rowStep = 31;
+        int contentHeight = Math.max(list.height(), summaries.size() * rowStep);
+        double maxScroll = Math.max(0, contentHeight - list.height());
+        historyScrollOffset = Math.max(0, Math.min(maxScroll, historyScrollOffset));
+        graphics.enableScissor(list.left(), list.top(), list.right(), list.bottom());
         if (summaries.isEmpty()) {
-            graphics.drawString(font, Component.translatable("screen.modpedia.no_conversations"), left + 12, y + 4, SUBTLE_TEXT_COLOR, false);
+            graphics.drawString(font, Component.translatable("screen.modpedia.no_conversations"), list.left() + 4, list.top() + 4, SUBTLE_TEXT_COLOR, false);
         } else {
-            for (ConversationSummary summary : summaries) {
-                if (y + 28 > listBottom) {
-                    break;
-                }
-                Bounds row = new Bounds(left + 8, y, drawerWidth - 16, 28);
+            for (int index = 0; index < summaries.size(); index++) {
+                ConversationSummary summary = summaries.get(index);
+                int y = list.top() + index * rowStep - (int) historyScrollOffset;
+                Bounds row = new Bounds(list.left(), y, list.width(), 28);
                 boolean selected = summary.id().equals(session.activeConversationId());
                 if (selected || row.contains(mouseX, mouseY)) {
                     graphics.fill(row.left(), row.top(), row.right(), row.bottom(), glassStyle.glowInnerColor());
                 }
-                String title = font.plainSubstrByWidth(summary.title(), row.width() - 12);
+                String title = font.plainSubstrByWidth(summary.title(), Math.max(1, row.width() - 12));
                 graphics.drawString(font, Component.literal(title), row.left() + 6, row.top() + 4,
                         selected ? TEXT_COLOR : SUBTLE_TEXT_COLOR, false);
                 graphics.drawString(font, Component.translatable("screen.modpedia.message_count", summary.messageCount()),
                         row.left() + 6, row.top() + 16, SUBTLE_TEXT_COLOR, false);
-                historyHits.add(new HistoryHit(row, summary));
-                y += 31;
+                if (row.bottom() > list.top() && row.top() < list.bottom()) {
+                    historyHits.add(new HistoryHit(row, summary));
+                }
             }
         }
+        graphics.disableScissor();
 
-        historyRenameBounds = new Bounds(left + 8, bottom - 27, Math.max(48, drawerWidth / 2 - 12), 20);
-        historyDeleteBounds = new Bounds(historyRenameBounds.right() + 8, bottom - 27,
-                Math.max(48, drawerWidth - historyRenameBounds.width() - 24), 20);
+        historyRenameBounds = new Bounds(page.left() + 8, page.bottom() - 28,
+                Math.max(1, (page.width() - 24) / 2), 20);
+        historyDeleteBounds = new Bounds(historyRenameBounds.right() + 8, page.bottom() - 28,
+                Math.max(1, page.width() - historyRenameBounds.width() - 24), 20);
         drawDrawerButton(graphics, historyRenameBounds, Component.translatable("screen.modpedia.rename"), mouseX, mouseY);
         drawDrawerButton(graphics, historyDeleteBounds, Component.translatable("screen.modpedia.delete"), mouseX, mouseY);
     }
@@ -812,16 +843,37 @@ public final class AssistantScreen extends Screen {
         scrollToEnd = true;
     }
 
-    void addSettingsWidget(net.minecraft.client.gui.components.EditBox widget) {
+    void addSettingsContentWidget(AbstractWidget widget) {
         addRenderableWidget(widget);
+        settingsContentWidgets.add(widget);
     }
 
-    void addSettingsWidget(net.minecraft.client.gui.components.CycleButton<?> widget) {
+    void addSettingsFooterWidget(AbstractWidget widget) {
         addRenderableWidget(widget);
+        settingsFooterWidgets.add(widget);
     }
 
-    void addSettingsWidget(net.minecraft.client.gui.components.Button widget) {
-        addRenderableWidget(widget);
+    private void renderSettingsWidgets(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        if (settingsPanel == null) {
+            return;
+        }
+        Bounds content = new Bounds(
+                settingsPanel.contentLeft(),
+                settingsPanel.contentTop(),
+                settingsPanel.contentWidth(),
+                settingsPanel.contentHeight()
+        );
+        graphics.enableScissor(content.left(), content.top(), content.right(), content.bottom());
+        for (AbstractWidget widget : settingsContentWidgets) {
+            widget.render(graphics, mouseX, mouseY, partialTick);
+        }
+        graphics.disableScissor();
+        Bounds page = secondaryPageBounds();
+        graphics.enableScissor(page.left(), page.top(), page.right(), page.bottom());
+        for (AbstractWidget widget : settingsFooterWidgets) {
+            widget.render(graphics, mouseX, mouseY, partialTick);
+        }
+        graphics.disableScissor();
     }
 
     void rebuildAssistantWidgets() {
@@ -829,20 +881,33 @@ public final class AssistantScreen extends Screen {
     }
 
     boolean settingsPanelOpen() {
-        return settingsOpen;
+        return secondaryPanel == SecondaryPanel.SETTINGS;
     }
 
     void closeSettingsPanel() {
-        settingsOpen = false;
-        rebuildWidgets();
+        if (secondaryPanel == SecondaryPanel.SETTINGS) {
+            closeSecondaryPanel();
+        }
     }
 
     private void openSettingsPanel() {
-        historyOpen = false;
-        settingsOpen = true;
+        secondaryPanel = SecondaryPanel.SETTINGS;
         if (settingsPanel == null) {
             settingsPanel = new AiSettingsPanel();
         }
+        rebuildWidgets();
+    }
+
+    private void toggleSecondaryPanel(SecondaryPanel panel) {
+        secondaryPanel = secondaryPanel == panel ? SecondaryPanel.NONE : panel;
+        if (secondaryPanel == SecondaryPanel.HISTORY) {
+            historyScrollOffset = 0;
+        }
+        rebuildWidgets();
+    }
+
+    private void closeSecondaryPanel() {
+        secondaryPanel = SecondaryPanel.NONE;
         rebuildWidgets();
     }
 
@@ -922,14 +987,24 @@ public final class AssistantScreen extends Screen {
         return new Bounds(bounds.x() + bounds.width() - 76, bounds.y() + 4, 38, HEADER_HEIGHT - 8);
     }
 
-    private Bounds settingsDrawerBounds() {
-        int drawerWidth = Math.min(Math.max(230, bounds.width() * 78 / 100), bounds.width() - 8);
+    private Bounds secondaryPageBounds() {
+        // 二级页面使用原窗口的完整内容宽度，而不是另开一个可能越界的 Screen。
+        // 这样在窄窗口和缩放过程中，所有控件都天然锁定在主窗口内部。
+        int innerPadding = Math.min(6, Math.max(2, bounds.width() / 24));
+        int pageWidth = Math.max(1, bounds.width() - innerPadding * 2);
+        int top = bounds.y() + HEADER_HEIGHT;
+        int bottom = bounds.y() + bounds.height() - innerPadding;
         return new Bounds(
-                bounds.x() + bounds.width() - drawerWidth,
-                bounds.y() + HEADER_HEIGHT,
-                drawerWidth,
-                Math.max(1, bounds.height() - HEADER_HEIGHT - INPUT_HEIGHT)
+                bounds.x() + innerPadding,
+                top,
+                pageWidth,
+                Math.max(1, bottom - top)
         );
+    }
+
+    private Bounds secondaryPageCloseBounds() {
+        Bounds page = secondaryPageBounds();
+        return new Bounds(page.right() - 32, page.top(), 32, HEADER_HEIGHT);
     }
 
     private Bounds closeBounds() {
@@ -1025,5 +1100,11 @@ public final class AssistantScreen extends Screen {
     }
 
     private record HistoryHit(Bounds bounds, ConversationSummary summary) {
+    }
+
+    private enum SecondaryPanel {
+        NONE,
+        HISTORY,
+        SETTINGS
     }
 }

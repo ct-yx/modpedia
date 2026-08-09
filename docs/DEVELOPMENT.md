@@ -84,6 +84,7 @@ fix: preserve custom knowledge files
 - [x] 消息滚动、自动定位、单行输入、发送、取消和关闭。
 - [x] 欢迎、提问、加载、来源回答、无结果、错误重试和知识库状态。
 - [x] 来源预览卡片和“打开原手册”按钮。
+- [x] 历史和设置使用同一 `AssistantScreen` 的二级页面状态；小窗口下页面、滚动和按钮仍限制在主窗口内。
 - [x] `MockAssistantSession` 接入 `RetrievalService`，可在游戏内测试完整段落、匹配分数和来源跳转。
 - [x] 通过反射适配 Patchouli `openBookGUI/openBookEntry` 与 GuideME `GuidesCommon.openGuide`，第三方手册模组保持可选。
 - [x] 通过反射适配 APP 书籍/条目入口；框架 JAR 与实际手册内容分离统计。
@@ -107,7 +108,7 @@ fix: preserve custom knowledge files
 
 可通过 `-PbenchmarkSearchSamples=N` 和 `-PbenchmarkWarmupSamples=N` 调整采样次数。报告写入 `build/reports/modpedia/`，基准转换结果使用临时目录，不改动 `run/config/modpedia/knowledge/`。
 
-### 阶段五：AI 对话、历史和上下文（基础版本已接入）
+### 阶段五：AI 对话、历史、上下文和仅搜索（已接入）
 
 - [x] 使用 LangChain4j `1.18.1`（Apache-2.0）复用 `AiServices`、`@Tool`、工具调用轮数、`TokenStream` 和 `TokenWindowChatMemory`。
 - [x] 使用 OpenAI Chat Completions 兼容接口；配置保存到 `config/modpedia/ai.json`。
@@ -118,6 +119,7 @@ fix: preserve custom knowledge files
 - [x] 支持中文/英文/neutral 搜索切换、快速/标准/深入/自定义预算、流式取消和 API Key 脱敏输入。
 - [x] 历史抽屉支持新建、切换、重命名和删除；设置页支持保存、连接测试和恢复默认。
 - [x] `-Dmodpedia.ai.mock=true` 可切回不联网的规则搜索模拟会话。
+- [x] 设置页支持 `AI` / `SEARCH_ONLY` 工作模式；仅搜索不读取 API 配置，直接返回 SQLite 完整段落并保存来源轨迹。
 
 默认预算：
 
@@ -163,6 +165,7 @@ git diff --check
 7. 确认 ModPedia 不额外绘制底层背景模糊，窗口和游戏画面均保持清晰；修改 `config/modpedia/assistant-glass.json` 的 `themeColor`/`backgroundOpacity`/`glow` 后重新打开助手确认样式变化；打开高对比度选项，确认面板切换为不透明。
 8. 点击历史抽屉，确认新建、切换、重命名、删除；重启游戏确认消息、来源卡片和搜索轨迹恢复。
 9. 点击标题栏设置入口，确认设置以右侧同层抽屉打开，不切换到新 Screen；确认抽屉打开时底层输入框不抢焦点，填写兼容 API 地址和模型，API Key 输入显示圆点，测试连接不阻塞界面，保存后提问。
+   在窗口缩到最小时，历史和设置页面仍完整位于浮窗内；设置字段可滚动，底部按钮不与状态文字重叠。
 10. 提问同时包含配方、步骤和前置条件的问题，确认首次资料不足时模型继续调用 `search_knowledge`，补搜不重复已返回来源，最终回答只引用本轮来源。
 11. 确认 `F8` 仍为原版电影视角，`F9` 仍触发知识库重建。
 
@@ -181,3 +184,4 @@ Dedicated Server 回归：
 - 检查日志中没有 API key。
 - 检查生成的知识缓存未被误提交。
 - 检查构建产物可以被加载。
+- `v1.0.0-beta.1` 通过 GitHub Actions 的测试、构建和差异检查后，以公开预发布形式发布。

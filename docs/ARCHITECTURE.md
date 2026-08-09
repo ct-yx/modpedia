@@ -80,6 +80,8 @@ PersistentChatMemoryStore → ConversationStore → conversations/*.json
 
 历史会话的 UI 消息、来源卡片和 `SearchTrace` 保存到 `config/modpedia/conversations/`；知识正文不复制到会话文件。API Key 只从设置或 `MODPEDIA_API_KEY` 读取，不进入搜索轨迹和错误日志。
 
+`AiSettings.mode` 支持 `AI` 和 `SEARCH_ONLY`。仅搜索模式复用相同的 `RetrievalService` 和会话持久化，但跳过模型初始化、API Key 读取和连接测试；`LocalSearchMessageFormatter` 将完整段落转换为带来源卡片的助手消息。
+
 ### `client`
 
 只在物理客户端加载，负责助手窗口、输入框、消息列表、加载状态、错误提示、来源预览和可选手册跳转。
@@ -101,6 +103,11 @@ AssistantScreen
   ├── KnowledgeUpdateService.status() → 顶部只读状态快照
   └── AssistantGlassConfig  → 可调色半透明玻璃与高对比度回退
 ```
+
+历史和设置不创建新的 Minecraft `Screen`。`AssistantScreen.SecondaryPanel` 只有
+`NONE`、`HISTORY`、`SETTINGS` 三种状态；二级页面在主窗口内容之后、控件之前绘制，
+通过 scissor 和 `secondaryPageBounds()` 将页面和滚动控件限制在原始 `WindowBounds` 内。
+打开二级页面时底层输入框从事件列表移除，只保留为背景状态；标题栏、关闭按钮和缩放边框仍位于最上层。
 
 界面层不直接读取手册 JAR，也不把知识库构建线程的对象暴露给渲染线程；渲染只读取 `KnowledgeStatus` 和 `AssistantUiState` 快照。
 
@@ -211,7 +218,8 @@ io.ctyx.modpedia.search/
 io.ctyx.modpedia.ai/
 ├── AiAssistantSession
 ├── AiClient
-├── AiSettings / AiSettingsStore
+├── AiSettings / AiSettingsStore / AssistantMode
+├── LocalSearchMessageFormatter
 ├── SearchIntensity / SearchKnowledgeTool
 ├── PromptBuilder
 ├── ConversationRecord / ConversationStore

@@ -2,6 +2,7 @@ package io.ctyx.modpedia.ai;
 
 /** AI 客户端设置；密钥只在请求构造时读取。 */
 public record AiSettings(
+        AssistantMode mode,
         String endpoint,
         String model,
         String apiKey,
@@ -13,6 +14,7 @@ public record AiSettings(
         int timeoutSeconds
 ) {
     public AiSettings {
+        mode = mode == null ? AssistantMode.AI : mode;
         endpoint = endpoint == null ? "" : endpoint.strip();
         model = model == null ? "" : model.strip();
         apiKey = apiKey == null ? "" : apiKey;
@@ -26,6 +28,7 @@ public record AiSettings(
     public static AiSettings defaults() {
         SearchIntensity intensity = SearchIntensity.STANDARD;
         return new AiSettings(
+                AssistantMode.AI,
                 "",
                 "",
                 "",
@@ -62,6 +65,7 @@ public record AiSettings(
     public AiSettings withIntensity(SearchIntensity next) {
         SearchIntensity actual = next == null ? SearchIntensity.STANDARD : next;
         return new AiSettings(
+                mode,
                 endpoint,
                 model,
                 apiKey,
@@ -70,6 +74,21 @@ public record AiSettings(
                 actual == SearchIntensity.CUSTOM ? maxRounds : actual.rounds(),
                 actual == SearchIntensity.CUSTOM ? maxResults : actual.results(),
                 actual == SearchIntensity.CUSTOM ? maxContextChars : actual.contextChars(),
+                timeoutSeconds
+        );
+    }
+
+    public AiSettings withMode(AssistantMode next) {
+        return new AiSettings(
+                next == null ? AssistantMode.AI : next,
+                endpoint,
+                model,
+                apiKey,
+                streaming,
+                intensity,
+                maxRounds,
+                maxResults,
+                maxContextChars,
                 timeoutSeconds
         );
     }

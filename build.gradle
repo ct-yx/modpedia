@@ -262,6 +262,12 @@ def searchKnowledgeToolSelfTest = tasks.register('searchKnowledgeToolSelfTest', 
     mainClass = 'io.ctyx.modpedia.ai.SearchKnowledgeToolSelfTest'
 }
 
+def localSearchMessageFormatterSelfTest = tasks.register('localSearchMessageFormatterSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.LocalSearchMessageFormatterSelfTest'
+}
+
 tasks.named('test', Test) {
     dependsOn searchSelfTest
     dependsOn manualSourceNavigatorSelfTest
@@ -273,6 +279,7 @@ tasks.named('test', Test) {
     dependsOn aiSettingsSelfTest
     dependsOn promptBuilderSelfTest
     dependsOn searchKnowledgeToolSelfTest
+    dependsOn localSearchMessageFormatterSelfTest
     failOnNoDiscoveredTests = false
 }
 

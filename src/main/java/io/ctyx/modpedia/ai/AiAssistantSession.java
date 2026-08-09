@@ -21,6 +21,10 @@ import io.ctyx.modpedia.client.MessageRole;
 import io.ctyx.modpedia.client.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
+import io.ctyx.modpedia.search.SearchQuery;
+import io.ctyx.modpedia.search.SearchResponse;
+import io.ctyx.modpedia.search.SearchResult;
+import io.ctyx.modpedia.search.SearchStatus;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -96,14 +100,6 @@ public final class AiAssistantSession implements AssistantSession {
             return;
         }
         AiSettings settings = settingsStore.load();
-        if (!settings.configured()) {
-            publish(new AssistantUiState.Error(
-                    conversationStore.active().messages(),
-                    "请先打开助手设置，填写 API 地址和模型名称。"
-            ));
-            return;
-        }
-
         String conversationId = conversationStore.activeId();
         long request = requestSequence.incrementAndGet();
         lastPrompt = normalized;
@@ -120,6 +116,19 @@ public final class AiAssistantSession implements AssistantSession {
 
         SearchLanguage language = currentLanguage();
         retrievalService.setLanguage(language);
+        if (settings.mode() == AssistantMode.SEARCH_ONLY) {
+            publishLoading(conversationId, PHASE_SEARCHING, "");
+            startLocalSearch(request, conversationId, normalized, settings, language);
+            return;
+        }
+        if (!settings.configured()) {
+            publish(new AssistantUiState.Error(
+                    conversationStore.active().messages(),
+                    "请先打开助手设置，填写 API 地址和模型名称。"
+            ));
+            return;
+        }
+
         int rounds = settings.effectiveMaxRounds();
         int results = settings.effectiveMaxResults();
         int contextChars = settings.effectiveMaxContextChars();
@@ -137,6 +146,99 @@ public final class AiAssistantSession implements AssistantSession {
         } else {
             startBlocking(request, conversationId, normalized, settings, language, rounds, searchTool);
         }
+    }
+
+    private void startLocalSearch(
+            long request,
+            String conversationId,
+            String prompt,
+            AiSettings settings,
+            SearchLanguage language
+    ) {
+        EXECUTOR.execute(() -> {
+            SearchResponse response;
+            try {
+                response = retrievalService.search(new SearchQuery(
+                        prompt,
+                        settings.effectiveMaxResults(),
+                        language
+                ));
+            } catch (Throwable throwable) {
+                response = new SearchResponse(
+                        SearchStatus.INDEX_ERROR,
+                        prompt,
+                        List.of(),
+                        throwable.getMessage() == null
+                                ? throwable.getClass().getSimpleName()
+                                : throwable.getMessage()
+                );
+            }
+            SearchResponse result = response;
+            try {
+                Minecraft.getInstance().execute(() -> finishLocalSearch(
+                        request, conversationId, prompt, language, result
+                ));
+            } catch (Throwable ignored) {
+                finishLocalSearch(request, conversationId, prompt, language, result);
+            }
+        });
+    }
+
+    private void finishLocalSearch(
+            long request,
+            String conversationId,
+            String prompt,
+            SearchLanguage language,
+            SearchResponse response
+    ) {
+        if (request != requestSequence.get()) {
+            return;
+        }
+        List<SourceReference> sources = response.results().stream()
+                .map(this::sourceOf)
+                .toList();
+        conversationStore.appendTrace(conversationId, new SearchTrace(
+                prompt,
+                language.code(),
+                "identify",
+                1,
+                response.status().name(),
+                false,
+                sources,
+                System.currentTimeMillis()
+        ));
+
+        if (response.status() == SearchStatus.INDEX_NOT_READY
+                || response.status() == SearchStatus.INDEX_ERROR) {
+            publish(new AssistantUiState.Error(
+                    conversationStore.get(conversationId) == null
+                            ? List.of()
+                            : conversationStore.get(conversationId).messages(),
+                    response.status() == SearchStatus.INDEX_NOT_READY
+                            ? "本地知识库尚未生成，请先等待启动扫描完成，或按 F9 重建后重试。"
+                            : "本地知识库索引读取失败："
+                            + (response.error().isBlank() ? "请按 F9 重建后重试。" : response.error())
+            ));
+            return;
+        }
+
+        if (response.status() == SearchStatus.READY) {
+            conversationStore.appendMessage(
+                    conversationId,
+                    LocalSearchMessageFormatter.format(prompt, response)
+            );
+        }
+        if (conversationId.equals(conversationStore.activeId())) {
+            publish(new AssistantUiState.Conversation(
+                    conversationStore.active().messages(),
+                    response.status() == SearchStatus.NO_MATCH
+            ));
+        }
+    }
+
+    private SourceReference sourceOf(SearchResult result) {
+        String title = result.title().isBlank() ? result.documentId() : result.title();
+        return new SourceReference(result.documentId(), title, result.sourceMod(), result.sourcePath());
     }
 
     @Override
@@ -494,7 +596,8 @@ public final class AiAssistantSession implements AssistantSession {
     }
 
     private String sanitize(String message) {
-        return message.replace(settingsStore.load().effectiveApiKey(), "[已隐藏密钥]");
+        String key = settingsStore.load().effectiveApiKey();
+        return key.isBlank() ? message : message.replace(key, "[已隐藏密钥]");
     }
 
     private SearchLanguage currentLanguage() {

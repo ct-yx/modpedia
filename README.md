@@ -6,23 +6,24 @@
 
 ## 当前定位
 
-项目处于基础工程阶段，第一版目标是跑通：
+当前版本为首个公开测试版 `v1.0.0-beta.1`，目标链路已经跑通：
 
 ```text
 玩家提问 → 本地手册扫描 → Markdown 知识库 → SQLite 规则检索 → AI 回答 → 来源跳转
 ```
 
-主工程不预置几百个模组的完整百科，只内置转换格式、提示词模板和最小示例。首次启动时，ModPedia 从本地已安装模组的资源中生成知识库。
+主工程不预置几百个模组的完整百科，只内置转换适配器、提示词资源和最小示例。首次启动时，ModPedia 从本地已安装模组的资源中生成知识库。
 
-## 计划功能
+## 已实现能力
 
-- 读取 JSON 手册页面
+- 读取 JSON 手册页面（Patchouli、GuideME、Modonomicon）
 - 读取 Markdown 手册页面
 - 解析语言 key、物品、方块、配方和标签
 - 转换为统一 Markdown
 - 生成 `manifest.json` 和关键词索引
 - 保留玩家手工编辑的知识文件
-- 使用 AI API 回答模组问题
+- 使用 AI API 回答模组问题，资料不足时允许继续检索
+- 在没有 API 配置时切换到“仅搜索”模式
 - 显示答案引用并跳转到对应百科页面
 - 将向量检索作为整合包制作阶段的可选增强
 
@@ -222,7 +223,7 @@ client/
 
 阶段四当前覆盖欢迎、提问、加载、带来源回答、无匹配、错误重试、取消、知识库状态展示和来源跳转。浮窗标题栏还提供历史抽屉和 AI 设置入口。
 
-## #4 后半部分：AI 对话与上下文管理（已接入）
+## #4 后半部分：AI 对话、历史与仅搜索模式（已接入）
 
 通用 AI 编排不在项目中重复实现，使用 Apache-2.0 许可的 [LangChain4j](https://github.com/langchain4j/langchain4j)：
 
@@ -244,6 +245,13 @@ ModPedia 自己保留的部分只有知识库工具、UI 历史摘要/来源轨�
 ```
 
 设置页面保存到 `config/modpedia/ai.json`，API Key 输入框只显示圆点，也支持 `MODPEDIA_API_KEY` 环境变量覆盖。默认搜索强度为标准：最多 3 轮、每轮 8 条、上下文 16000 字符。开发时可用 `-Dmodpedia.ai.mock=true` 切换回不联网的规则搜索模拟会话。
+
+设置中的“工作模式”提供：
+
+- **AI 回答**：调用兼容 Chat Completions 的模型，并由 LangChain4j 管理工具循环和上下文窗口。
+- **仅搜索**：跳过 API 地址、模型和 API Key，直接从 SQLite 返回完整 Markdown 段落、标题路径、匹配分和来源卡片；搜索结果和轨迹仍保存到历史会话。
+
+历史和设置都在同一个 `AssistantScreen` 内作为二级页面绘制。页面背景、控件和滚动区域使用 `GuiGraphics.enableScissor` 锁定在当前浮窗的 `WindowBounds` 内，不会创建全屏 Screen 或穿出底部输入区。
 
 模型引用会与本轮 `SearchTrace` 交叉校验，只生成实际检索过的来源卡片；知识正文仍只保存在 SQLite，历史会话不复制整段 Markdown。
 
@@ -281,6 +289,10 @@ build/reports/modpedia/knowledge-benchmark.md
 ## 配置原则
 
 API 地址、模型名称和 API key 只保存在玩家本地配置中。示例配置和文档只使用占位符。
+
+## Beta 安装与已知限制
+
+安装说明见 [`INSTALL.md`](INSTALL.md)，已知限制见 [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md)。Beta 发布资产包含 ModPedia JAR、SHA-256 校验文件和这两份说明。
 
 ## 文档
 

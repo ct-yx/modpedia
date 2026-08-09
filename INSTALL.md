@@ -1,0 +1,31 @@
+# ModPedia Beta 安装说明
+
+## 运行环境
+
+- Minecraft `1.21.1`
+- NeoForge `21.1.244` 或兼容的 `21.1.x`
+- Java `21`
+
+## 安装
+
+1. 安装目标整合包对应的 NeoForge 客户端。
+2. 将 `modpedia-1.0.0-beta.1.jar` 放入该实例的 `mods/` 目录。
+3. 启动游戏并进入世界；ModPedia 会在后台扫描已安装模组的本地手册。
+4. 按 `K` 打开助手，按 `F9` 手动重建知识库。
+
+ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。手册框架是可选适配对象，实际手册正文来自对应内容模组的 JAR。
+
+## 工作模式
+
+- **仅搜索**：打开设置，选择“仅搜索”，无需填写 API 配置即可使用本地 SQLite 知识库。
+- **AI 回答**：选择“AI 回答”，填写兼容 Chat Completions 的 API 地址和模型名称；API Key 可填写在设置中，也可通过 `MODPEDIA_API_KEY` 提供。
+
+## 校验
+
+在下载目录执行：
+
+```bash
+shasum -a 256 modpedia-1.0.0-beta.1.jar
+```
+
+将结果与 `SHA256SUMS` 对比。
