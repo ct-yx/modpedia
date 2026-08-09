@@ -12,9 +12,14 @@
       "source_path"
     ]
   },
+  "custom_document_front_matter": {
+    "required": ["id"],
+    "optional": ["language", "title", "category", "keywords", "source_type"]
+  },
   "runtime_directories": {
     "generated": "config/modpedia/knowledge/generated",
     "custom": "config/modpedia/knowledge/custom",
-    "cache": "config/modpedia/knowledge/cache"
+    "cache": "config/modpedia/knowledge/cache",
+    "database": "config/modpedia/knowledge/knowledge.db"
   }
 }

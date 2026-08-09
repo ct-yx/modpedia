@@ -116,6 +116,41 @@ configurations {
 }
 
 dependencies {
+    // SQLite is the derived runtime search index. The driver is embedded into the mod JAR.
+    jarJar(implementation("org.xerial:sqlite-jdbc:3.53.2.1")) {
+        version {
+            strictly '[3.53.2.1, 3.54)'
+        }
+    }
+    additionalRuntimeClasspath "org.xerial:sqlite-jdbc:3.53.2.1"
+
+    // LangChain4j 负责 ChatMemory、上下文窗口、工具调用和流式响应；ModPedia 只实现
+    // 本地文件持久化适配器与知识库工具，避免重复实现通用 AI 编排逻辑。
+    jarJar(implementation("dev.langchain4j:langchain4j:${langchain4j_version}")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly "[${langchain4j_version}, 1.19)"
+        }
+    }
+    jarJar(implementation("dev.langchain4j:langchain4j-open-ai:${langchain4j_version}")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly "[${langchain4j_version}, 1.19)"
+        }
+    }
+    jarJar(implementation("dev.langchain4j:langchain4j-http-client-jdk:${langchain4j_version}")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly "[${langchain4j_version}, 1.19)"
+        }
+    }
+    additionalRuntimeClasspath "dev.langchain4j:langchain4j:${langchain4j_version}"
+    additionalRuntimeClasspath "dev.langchain4j:langchain4j-open-ai:${langchain4j_version}"
+    additionalRuntimeClasspath "dev.langchain4j:langchain4j-http-client-jdk:${langchain4j_version}"
+
+    // 基准报告和测试夹具直接读取 JSON；运行时 Gson 由 NeoForge 提供，测试侧显式声明编译路径。
+    testImplementation "com.google.code.gson:gson:2.11.0"
+
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"
@@ -139,6 +174,108 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 }
 
+def searchSelfTest = tasks.register('searchSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.RetrievalServiceSelfTest'
+}
+
+def manualSourceNavigatorSelfTest = tasks.register('manualSourceNavigatorSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.ManualSourceNavigatorSelfTest'
+}
+
+def appGuideAdapterSelfTest = tasks.register('appGuideAdapterSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.AppGuideAdapterSelfTest'
+}
+
+def localizedSearchSelfTest = tasks.register('localizedSearchSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.LocalizedSearchSelfTest'
+}
+
+def knowledgeDatabaseSelfTest = tasks.register('knowledgeDatabaseSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.KnowledgeDatabaseSelfTest'
+}
+
+def knowledgeBenchmark = tasks.register('knowledgeBenchmark', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.KnowledgeBenchmarkSelfTest'
+    workingDir project.projectDir
+    if (project.hasProperty('benchmarkKnowledgeRoot')) {
+        systemProperty 'modpedia.benchmark.knowledgeRoot', project.property('benchmarkKnowledgeRoot')
+    }
+    if (project.hasProperty('benchmarkRunMods')) {
+        systemProperty 'modpedia.benchmark.runMods', project.property('benchmarkRunMods')
+    }
+    if (project.hasProperty('benchmarkDownloads')) {
+        systemProperty 'modpedia.benchmark.downloads', project.property('benchmarkDownloads')
+    }
+    if (project.hasProperty('benchmarkReportDirectory')) {
+        systemProperty 'modpedia.benchmark.reportDirectory', project.property('benchmarkReportDirectory')
+    }
+    if (project.hasProperty('benchmarkSearchBudgetMs')) {
+        systemProperty 'modpedia.benchmark.searchBudgetMs', project.property('benchmarkSearchBudgetMs')
+    }
+    if (project.hasProperty('benchmarkWarmupSamples')) {
+        systemProperty 'modpedia.benchmark.warmupSamples', project.property('benchmarkWarmupSamples')
+    }
+    if (project.hasProperty('benchmarkSearchSamples')) {
+        systemProperty 'modpedia.benchmark.searchSamples', project.property('benchmarkSearchSamples')
+    }
+}
+
+def knowledgeBenchmarkFixtureSelfTest = tasks.register('knowledgeBenchmarkFixtureSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.KnowledgeBenchmarkFixtureSelfTest'
+}
+
+def conversationStoreSelfTest = tasks.register('conversationStoreSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.ConversationStoreSelfTest'
+}
+
+def aiSettingsSelfTest = tasks.register('aiSettingsSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiSettingsSelfTest'
+}
+
+def promptBuilderSelfTest = tasks.register('promptBuilderSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.PromptBuilderSelfTest'
+}
+
+def searchKnowledgeToolSelfTest = tasks.register('searchKnowledgeToolSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.SearchKnowledgeToolSelfTest'
+}
+
+tasks.named('test', Test) {
+    dependsOn searchSelfTest
+    dependsOn manualSourceNavigatorSelfTest
+    dependsOn appGuideAdapterSelfTest
+    dependsOn localizedSearchSelfTest
+    dependsOn knowledgeDatabaseSelfTest
+    dependsOn knowledgeBenchmarkFixtureSelfTest
+    dependsOn conversationStoreSelfTest
+    dependsOn aiSettingsSelfTest
+    dependsOn promptBuilderSelfTest
+    dependsOn searchKnowledgeToolSelfTest
+    failOnNoDiscoveredTests = false
+}
+
 // This block of code expands all declared replace properties in the specified resource targets.
 // A missing property will result in an error. Properties are expanded using ${} Groovy notation.
 var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
@@ -147,6 +284,7 @@ var generateModMetadata = tasks.register("generateModMetadata", ProcessResources
             minecraft_version_range: minecraft_version_range,
             neo_version            : neo_version,
             modernui_version       : modernui_version,
+            langchain4j_version    : langchain4j_version,
             loader_version_range   : loader_version_range,
             mod_id                 : mod_id,
             mod_name               : mod_name,

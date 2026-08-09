@@ -37,10 +37,10 @@ public final class FloatingAssistantWindow {
         int top = bounds.y();
         int right = left + bounds.width();
         int bottom = top + bounds.height();
-        // 两层蓝光边缘代替黑色阴影，玻璃表面仍保持单层半透明。
+        // 两层蓝光边缘提供发光轮廓；不再绘制底部黑色叠层，避免出现无意义的
+        // 模糊/阴影带，玻璃主体保持单层半透明。
         graphics.fill(left - 3, top - 2, right + 3, bottom + 2, style.glowOuterColor());
         graphics.fill(left - 1, top - 1, right + 1, bottom + 1, style.glowInnerColor());
-        graphics.fill(left + 4, top + 5, right + 4, bottom + 5, 0x30000000);
         graphics.fill(left, top, right, bottom, opaque ? style.opaquePanelColor() : style.panelColor());
         graphics.fill(left, top, right, top + HEADER_HEIGHT, opaque ? style.opaqueHeaderColor() : style.headerColor());
         graphics.fill(left, bottom - INPUT_HEIGHT, right, bottom, opaque ? style.opaqueInputColor() : style.inputColor());

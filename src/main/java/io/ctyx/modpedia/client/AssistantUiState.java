@@ -12,9 +12,15 @@ public sealed interface AssistantUiState
         }
     }
 
-    record Loading(List<ChatMessage> messages) implements AssistantUiState {
+    record Loading(List<ChatMessage> messages, String phase, String assistantDraft) implements AssistantUiState {
+        public Loading(List<ChatMessage> messages) {
+            this(messages, "", "");
+        }
+
         public Loading {
             messages = List.copyOf(messages);
+            phase = phase == null ? "" : phase;
+            assistantDraft = assistantDraft == null ? "" : assistantDraft;
         }
     }
 

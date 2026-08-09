@@ -7,13 +7,20 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /** 将 JSON 手册页面转换成可检索的 Markdown，同时保留无法识别的原始结构。 */
-public final class JsonGuideDocumentConverter {
+public final class JsonGuideDocumentConverter implements GuideDocumentConverter {
     private static final GsonBuilder JSON = new GsonBuilder().setPrettyPrinting();
+
+    @Override
+    public List<KnowledgeDocument> convertAll(ScannedResource source) {
+        return List.of(convert(source));
+    }
 
     public KnowledgeDocument convert(ScannedResource source) {
         String title = fileTitle(source.path());
@@ -26,7 +33,9 @@ public final class JsonGuideDocumentConverter {
             body = "解析失败，保留原始 JSON：\n\n```json\n" + source.content().trim() + "\n```";
         }
 
-        List<String> keywords = KeywordExtractor.extract(title, source.modId(), source.path(), body);
+        Set<String> keywordSet = new LinkedHashSet<>(KeywordExtractor.extract(title, source.modId(), source.path(), body));
+        keywordSet.addAll(LocalizedKeywordExtractor.extract(source));
+        List<String> keywords = List.copyOf(keywordSet);
         String id = source.modId() + ":" + normalizeId(removeExtension(documentSourcePath(source)));
         String category = categoryOf(source.path());
         String markdown = frontMatter(id, source, title, category, keywords) + "\n" + body.trim() + "\n";

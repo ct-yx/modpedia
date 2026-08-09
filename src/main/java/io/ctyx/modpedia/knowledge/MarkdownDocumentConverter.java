@@ -9,7 +9,31 @@ import java.util.Map;
 import java.util.Set;
 
 /** 将 Markdown 来源整理为 ModPedia 的统一文档格式。 */
-public final class MarkdownDocumentConverter {
+public final class MarkdownDocumentConverter implements GuideDocumentConverter {
+    /** 自定义 Markdown 的轻量元数据，供启动同步在解析前判断是否可复用。 */
+    public record CustomMetadata(boolean validFrontMatter, String id, String language, String sourceType) {
+        public CustomMetadata {
+            id = id == null ? "" : id.trim();
+            language = language == null || language.isBlank() ? "neutral" : language.trim();
+            sourceType = sourceType == null || sourceType.isBlank() ? "custom_markdown" : sourceType.trim();
+        }
+    }
+
+    public CustomMetadata inspectCustom(String content) {
+        FrontMatter frontMatter = FrontMatter.parse(content);
+        return new CustomMetadata(
+                frontMatter.valid(),
+                frontMatter.value("id"),
+                frontMatter.value("language"),
+                frontMatter.value("source_type")
+        );
+    }
+
+    @Override
+    public List<KnowledgeDocument> convertAll(ScannedResource source) {
+        return List.of(convert(source));
+    }
+
     public KnowledgeDocument convert(ScannedResource source) {
         FrontMatter frontMatter = FrontMatter.parse(source.content());
         String title = firstNonBlank(
@@ -20,20 +44,35 @@ public final class MarkdownDocumentConverter {
         String category = firstNonBlank(frontMatter.value("category"), categoryOf(source.path()), "guide");
         List<String> keywords = mergeKeywords(
                 frontMatter.keywords(),
-                KeywordExtractor.extract(title, category, source.modId(), source.path())
+                KeywordExtractor.extract(title, category, source.modId(), source.path()),
+                LocalizedKeywordExtractor.extract(source)
         );
         String id = firstNonBlank(frontMatter.value("id"), documentId(source));
+        String sourceMod = firstNonBlank(frontMatter.value("source_mod"), source.modId());
+        String sourceType = firstNonBlank(frontMatter.value("source_type"), source.sourceType());
+        String sourceVersion = firstNonBlank(frontMatter.value("source_version"), source.version());
+        String sourcePath = firstNonBlank(frontMatter.value("source_path"), source.path());
+        ScannedResource normalizedSource = new ScannedResource(
+                sourceMod,
+                source.modName(),
+                sourceVersion,
+                sourcePath,
+                sourceType,
+                source.content(),
+                source.fingerprint(),
+                source.translations()
+        );
 
         return new KnowledgeDocument(
                 id,
-                source.modId(),
-                source.sourceType(),
+                sourceMod,
+                sourceType,
                 title,
                 category,
                 keywords,
-                source.version(),
-                source.path(),
-                frontMatter.toMarkdown(id, source, title, category, keywords)
+                sourceVersion,
+                sourcePath,
+                frontMatter.toMarkdown(id, normalizedSource, title, category, keywords)
         );
     }
 
@@ -43,15 +82,17 @@ public final class MarkdownDocumentConverter {
         String category = firstNonBlank(frontMatter.value("category"), "custom");
         List<String> keywords = mergeKeywords(
                 frontMatter.keywords(),
-                KeywordExtractor.extract(title, category, relativePath.toString())
+                KeywordExtractor.extract(title, category, relativePath.toString()),
+                List.of()
         );
-        String id = firstNonBlank(frontMatter.value("id"), "custom:" + normalizeId(relativePath.toString()));
+        String id = frontMatter.value("id").trim();
+        String sourceType = firstNonBlank(frontMatter.value("source_type"), "custom_markdown");
         ScannedResource source = new ScannedResource(
                 "custom",
                 "ModPedia custom",
                 "local",
                 relativePath.toString().replace('\\', '/'),
-                "custom_markdown",
+                sourceType,
                 content,
                 "local",
                 Map.of()
@@ -65,14 +106,21 @@ public final class MarkdownDocumentConverter {
                 keywords,
                 source.version(),
                 source.path(),
-                frontMatter.toMarkdown(id, source, title, category, keywords)
+                // custom Markdown 是人工维护的事实源；保留原文（包括自定义
+                // Front Matter 字段和 Markdown 格式），不要为了入库再次改写。
+                content == null ? "" : content.replace("\r\n", "\n").replace('\r', '\n')
         );
     }
 
-    private static List<String> mergeKeywords(List<String> first, List<String> second) {
+    private static List<String> mergeKeywords(
+            List<String> first,
+            List<String> second,
+            List<String> third
+    ) {
         Set<String> merged = new LinkedHashSet<>();
         merged.addAll(first);
         merged.addAll(second);
+        merged.addAll(third);
         return List.copyOf(merged);
     }
 
@@ -140,11 +188,11 @@ public final class MarkdownDocumentConverter {
         return "未命名文档";
     }
 
-    private record FrontMatter(Map<String, String> values, List<String> keywords, String body) {
+    private record FrontMatter(Map<String, String> values, List<String> keywords, String body, boolean valid) {
         static FrontMatter parse(String content) {
             String normalized = content.replace("\r\n", "\n").replace('\r', '\n');
             if (!normalized.startsWith("---\n")) {
-                return new FrontMatter(Map.of(), List.of(), normalized);
+                return new FrontMatter(Map.of(), List.of(), normalized, false);
             }
 
             String[] lines = normalized.split("\n", -1);
@@ -156,7 +204,7 @@ public final class MarkdownDocumentConverter {
                 }
             }
             if (end < 0) {
-                return new FrontMatter(Map.of(), List.of(), normalized);
+                return new FrontMatter(Map.of(), List.of(), normalized, false);
             }
 
             Map<String, String> values = new java.util.LinkedHashMap<>();
@@ -194,7 +242,7 @@ public final class MarkdownDocumentConverter {
                     body.append('\n');
                 }
             }
-            return new FrontMatter(values, keywords, body.toString().trim());
+            return new FrontMatter(values, keywords, body.toString().trim(), true);
         }
 
         String value(String key) {
@@ -202,6 +250,17 @@ public final class MarkdownDocumentConverter {
         }
 
         String toMarkdown(String id, ScannedResource source, String title, String category, List<String> keywords) {
+            return toMarkdown(id, source, title, category, keywords, "");
+        }
+
+        String toMarkdown(
+                String id,
+                ScannedResource source,
+                String title,
+                String category,
+                List<String> keywords,
+                String language
+        ) {
             StringBuilder result = new StringBuilder();
             result.append("---\n");
             result.append("id: ").append(escape(id)).append('\n');
@@ -210,6 +269,9 @@ public final class MarkdownDocumentConverter {
             result.append("title: ").append(escape(title)).append('\n');
             result.append("category: ").append(escape(category)).append('\n');
             result.append("keywords: [").append(String.join(", ", keywords.stream().map(FrontMatter::escape).toList())).append("]\n");
+            if (language != null && !language.isBlank()) {
+                result.append("language: ").append(escape(language)).append('\n');
+            }
             result.append("source_version: ").append(escape(source.version())).append('\n');
             result.append("source_path: ").append(escape(source.path())).append('\n');
             result.append("---\n\n");

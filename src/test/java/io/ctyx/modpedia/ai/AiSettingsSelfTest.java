@@ -1,0 +1,63 @@
+package io.ctyx.modpedia.ai;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+
+/** AI 设置的边界归一化、持久化和搜索预算回归测试。 */
+public final class AiSettingsSelfTest {
+    private AiSettingsSelfTest() {
+    }
+
+    public static void main(String[] args) throws Exception {
+        Path root = Files.createTempDirectory("modpedia-ai-settings-");
+        try {
+            Path file = root.resolve("ai.json");
+            AiSettingsStore store = new AiSettingsStore(file);
+            AiSettings settings = new AiSettings(
+                    " https://example.invalid/v1 ",
+                    " test-model ",
+                    "secret-value",
+                    false,
+                    SearchIntensity.CUSTOM,
+                    99,
+                    0,
+                    100_000,
+                    1
+            );
+            store.save(settings);
+            AiSettings restored = store.load();
+            check("https://example.invalid/v1".equals(restored.endpoint()), "API 地址应去除首尾空白");
+            check("test-model".equals(restored.model()), "模型名称应去除首尾空白");
+            check(restored.maxRounds() == 8, "最大轮数应限制到 8");
+            check(restored.maxResults() == 1, "每轮结果应限制到 1");
+            check(restored.maxContextChars() == 64_000, "上下文字符数应限制到 64000");
+            check(restored.timeoutSeconds() == 10, "超时应限制到 10 秒");
+            check(restored.effectiveMaxRounds() == 8, "自定义搜索预算应使用自定义轮数");
+            check("secret-value".equals(restored.apiKey()),
+                    "设置文件应保存 API Key，读取日志时由调用层排除");
+
+            AiSettings standard = restored.withIntensity(SearchIntensity.STANDARD);
+            check(standard.effectiveMaxRounds() == 3, "标准档位应使用 3 轮预算");
+            check(standard.effectiveMaxResults() == 8, "标准档位应使用 8 条结果预算");
+            check(standard.effectiveMaxContextChars() == 16_000, "标准档位应使用 16000 字符预算");
+            System.out.println("ModPedia AI settings self-test passed");
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) {
+            throw new AssertionError(message);
+        }
+    }
+
+    private static void deleteTree(Path root) throws Exception {
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
+}

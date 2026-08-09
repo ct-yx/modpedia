@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -37,6 +38,15 @@ public final class LocalGuideScanner {
     private static final Pattern PATCHOULI_LOCALE_PATH = Pattern.compile(
             "^(assets|data)/([^/]+)/patchouli_books/([^/]+)/(zh_cn|en_us|[a-z]{2}_[a-z]{2})/(.+\\.(json|md))$",
             Pattern.CASE_INSENSITIVE
+    );
+    /**
+     * These mods provide the book runtime only. A book resource is owned by the
+     * namespace that contains the resource, not by the runtime framework.
+     */
+    private static final Set<String> MANUAL_FRAMEWORK_MOD_IDS = Set.of(
+            "patchouli",
+            "guideme",
+            "modonomicon"
     );
 
     public ScanResult scan() {
@@ -105,7 +115,8 @@ public final class LocalGuideScanner {
         }
         String lowerPath = path.toLowerCase(Locale.ROOT);
         return (lowerPath.contains("/patchouli_books/") || lowerPath.contains("/guideme_guides/")
-                || lowerPath.contains("/guides/") || lowerPath.contains("/ae2guide/"))
+                || lowerPath.contains("/guides/") || lowerPath.contains("/ae2guide/")
+                || potentialAppPath(lowerPath))
                 && (lowerPath.endsWith(".json") || lowerPath.endsWith(".md"));
     }
 
@@ -171,10 +182,19 @@ public final class LocalGuideScanner {
             }
             byte[] bytes = Files.readAllBytes(absolutePath);
             String content = new String(bytes, StandardCharsets.UTF_8);
+            String sourceType = sourceTypeOf(relativePath, content);
+            if (sourceType == null && !LANGUAGE_PATH.matcher(relativePath).matches()) {
+                return;
+            }
+            if (sourceType != null && isFrameworkNamespace(namespace, metadata)) {
+                // 三个手册框架只提供运行时 API；手册内容属于依赖它们的模组，
+                // 不把框架自身的示例或资源误当成知识来源。
+                return;
+            }
             rawResources.add(new RawResource(
                     namespace,
                     relativePath,
-                    sourceTypeOf(relativePath),
+                    sourceType,
                     content,
                     sha256(bytes),
                     metadata.getOrDefault(namespace, new SourceMetadata(namespace, "unknown"))
@@ -230,7 +250,7 @@ public final class LocalGuideScanner {
         return parts.length >= 2 && ("assets".equals(parts[0]) || "data".equals(parts[0])) ? parts[1] : null;
     }
 
-    private String sourceTypeOf(String path) {
+    private String sourceTypeOf(String path, String content) {
         String lowerPath = path.toLowerCase(Locale.ROOT);
         if (lowerPath.contains("/patchouli_books/") && lowerPath.endsWith(".json")) {
             return "patchouli_json";
@@ -242,7 +262,22 @@ public final class LocalGuideScanner {
                 && lowerPath.endsWith(".md")) {
             return "guideme_markdown";
         }
+        if (potentialAppPath(lowerPath) && lowerPath.endsWith(".json")) {
+            return "app_json";
+        }
         return null;
+    }
+
+    private boolean potentialAppPath(String lowerPath) {
+        // Do not classify every arbitrary books/entries JSON as a manual. The
+        // format has a dedicated resource root; content mods own everything
+        // below that root.
+        return lowerPath.contains("/modonomicon/books/");
+    }
+
+    private boolean isFrameworkNamespace(String namespace, Map<String, SourceMetadata> metadata) {
+        return MANUAL_FRAMEWORK_MOD_IDS.contains(namespace.toLowerCase(Locale.ROOT))
+                && metadata.containsKey(namespace);
     }
 
     private String sha256(byte[] bytes) {

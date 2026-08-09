@@ -1,7 +1,14 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.search.RetrievalService;
+import io.ctyx.modpedia.search.SearchResponse;
+import io.ctyx.modpedia.search.SearchResult;
+import io.ctyx.modpedia.search.SearchStatus;
+import io.ctyx.modpedia.search.SearchLanguage;
 import net.minecraft.client.Minecraft;
+import net.neoforged.fml.loading.FMLPaths;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -12,7 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-/** 阶段四的确定性模拟会话，后续替换为 AI 会话实现。 */
+/** 阶段四的确定性模拟会话：用本地规则搜索代替 AI，方便在游戏内联调 UI。 */
 public final class MockAssistantSession implements AssistantSession {
     private static final ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "modpedia-mock-assistant");
@@ -22,8 +29,17 @@ public final class MockAssistantSession implements AssistantSession {
 
     private final CopyOnWriteArrayList<Consumer<AssistantUiState>> listeners = new CopyOnWriteArrayList<>();
     private final AtomicLong requestSequence = new AtomicLong();
+    private final RetrievalService retrievalService;
     private volatile AssistantUiState state = new AssistantUiState.Conversation(List.of(), false);
     private volatile String lastPrompt;
+
+    public MockAssistantSession() {
+        this(new RetrievalService(defaultKnowledgeRoot()));
+    }
+
+    MockAssistantSession(RetrievalService retrievalService) {
+        this.retrievalService = retrievalService;
+    }
 
     @Override
     public AssistantUiState state() {
@@ -42,7 +58,8 @@ public final class MockAssistantSession implements AssistantSession {
         List<ChatMessage> messages = new ArrayList<>(state.messages());
         messages.add(new ChatMessage(MessageRole.USER, normalized, List.of()));
         publish(new AssistantUiState.Loading(messages));
-        EXECUTOR.schedule(() -> Minecraft.getInstance().execute(() -> finish(request, normalized)), 450, TimeUnit.MILLISECONDS);
+        SearchLanguage language = SearchLanguage.fromMinecraft(Minecraft.getInstance().options.languageCode);
+        EXECUTOR.schedule(() -> searchAndFinish(request, normalized, language), 450, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -85,7 +102,31 @@ public final class MockAssistantSession implements AssistantSession {
         listeners.remove(listener);
     }
 
-    private void finish(long request, String prompt) {
+    private void searchAndFinish(long request, String prompt, SearchLanguage language) {
+        if (request != requestSequence.get()) {
+            return;
+        }
+
+        SearchResponse response;
+        try {
+            response = retrievalService.search(new io.ctyx.modpedia.search.SearchQuery(
+                    prompt,
+                    io.ctyx.modpedia.search.SearchQuery.DEFAULT_LIMIT,
+                    language
+            ));
+        } catch (RuntimeException exception) {
+            response = new SearchResponse(
+                    SearchStatus.INDEX_ERROR,
+                    prompt,
+                    List.of(),
+                    exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage()
+            );
+        }
+        SearchResponse result = response;
+        Minecraft.getInstance().execute(() -> finish(request, prompt, result));
+    }
+
+    private void finish(long request, String prompt, SearchResponse response) {
         if (request != requestSequence.get()) {
             return;
         }
@@ -101,17 +142,56 @@ public final class MockAssistantSession implements AssistantSession {
             return;
         }
 
-        messages.add(new ChatMessage(
-                MessageRole.ASSISTANT,
-                "这是阶段四的模拟回答。\n\n我会根据本地手册知识库整理步骤，并在回答底部列出相关来源。\n\n你的问题是：**" + prompt + "**",
-                List.of(new SourceReference(
-                        "modpedia:bootstrap/knowledge-update",
-                        "知识库更新说明",
-                        "modpedia",
-                        "assets/modpedia/knowledge/bootstrap/knowledge-update.md"
-                ))
-        ));
-        publish(new AssistantUiState.Conversation(messages, false));
+        switch (response.status()) {
+            case READY -> {
+                messages.add(toAssistantMessage(prompt, response));
+                publish(new AssistantUiState.Conversation(messages, false));
+            }
+            case NO_MATCH, EMPTY_QUERY -> publish(new AssistantUiState.Conversation(messages, true));
+            case INDEX_NOT_READY -> publish(new AssistantUiState.Error(
+                    messages,
+                    "本地知识库尚未生成，请先等待启动扫描完成，或按 F9 重建后重试。"
+            ));
+            case INDEX_ERROR -> publish(new AssistantUiState.Error(
+                    messages,
+                    "本地知识库索引读取失败：" + (response.error().isBlank() ? "请按 F9 重建后重试。" : response.error())
+            ));
+        }
+    }
+
+    private ChatMessage toAssistantMessage(String prompt, SearchResponse response) {
+        StringBuilder markdown = new StringBuilder()
+                .append("本地规则搜索命中 ")
+                .append(response.results().size())
+                .append(" 条结果。\n\n")
+                .append("查询：**")
+                .append(prompt)
+                .append("**\n\n");
+        List<SourceReference> sources = new ArrayList<>();
+        for (int index = 0; index < response.results().size(); index++) {
+            SearchResult result = response.results().get(index);
+            String title = result.title().isBlank() ? result.documentId() : result.title();
+            markdown.append("### ").append(index + 1).append(". ").append(title).append("\n");
+            if (!result.headingPath().isBlank()) {
+                markdown.append("位置：").append(result.headingPath()).append("\n");
+            }
+            markdown.append("匹配分：").append(result.score());
+            if (!result.matchedTerms().isEmpty()) {
+                markdown.append(" · 命中：").append(String.join(", ", result.matchedTerms()));
+            }
+            markdown.append("\n\n").append(result.segmentMarkdown()).append("\n\n");
+            sources.add(new SourceReference(
+                    result.documentId(),
+                    title,
+                    result.sourceMod(),
+                    result.sourcePath()
+            ));
+        }
+        return new ChatMessage(MessageRole.ASSISTANT, markdown.toString().trim(), sources);
+    }
+
+    private static Path defaultKnowledgeRoot() {
+        return FMLPaths.CONFIGDIR.get().resolve("modpedia").resolve("knowledge");
     }
 
     private void publish(AssistantUiState next) {

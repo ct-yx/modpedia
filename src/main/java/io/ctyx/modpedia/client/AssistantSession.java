@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 public interface AssistantSession {
@@ -16,6 +17,32 @@ public interface AssistantSession {
     void addListener(Consumer<AssistantUiState> listener);
 
     void removeListener(Consumer<AssistantUiState> listener);
+
+    /** 历史会话接口由真实 AI 会话实现；模拟会话保留默认空实现。 */
+    default List<ConversationSummary> conversations() {
+        return List.of();
+    }
+
+    default String activeConversationId() {
+        return "";
+    }
+
+    default String activeConversationTitle() {
+        return "";
+    }
+
+    default void newConversation() {
+        clear();
+    }
+
+    default void selectConversation(String conversationId) {
+    }
+
+    default void renameConversation(String conversationId, String title) {
+    }
+
+    default void deleteConversation(String conversationId) {
+    }
 
     default boolean isLoading() {
         return state() instanceof AssistantUiState.Loading;

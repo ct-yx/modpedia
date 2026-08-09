@@ -1,10 +1,11 @@
 package io.ctyx.modpedia;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import io.ctyx.modpedia.ai.AiAssistantSession;
 import io.ctyx.modpedia.client.AssistantScreen;
 import io.ctyx.modpedia.client.AssistantSession;
+import io.ctyx.modpedia.client.ManualSourceNavigator;
 import io.ctyx.modpedia.client.MockAssistantSession;
-import io.ctyx.modpedia.client.ModernUiBridge;
 import io.ctyx.modpedia.client.FloatingAssistantWindow;
 import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
 import net.minecraft.client.KeyMapping;
@@ -35,7 +36,9 @@ public final class ModPediaClient {
             InputConstants.KEY_F9,
             "key.categories.modpedia"
     );
-    static final AssistantSession ASSISTANT_SESSION = new MockAssistantSession();
+    static final AssistantSession ASSISTANT_SESSION = Boolean.getBoolean("modpedia.ai.mock")
+            ? new MockAssistantSession()
+            : new AiAssistantSession();
 
     public ModPediaClient(IEventBus modEventBus, ModContainer modContainer) {
         ModPedia.LOGGER.info("Loading ModPedia client components");
@@ -66,10 +69,11 @@ final class ModPediaClientEvents {
             if (minecraft.screen instanceof AssistantScreen assistantScreen) {
                 assistantScreen.onClose();
             } else {
-                AssistantScreen assistantScreen = new AssistantScreen(minecraft.screen, ModPediaClient.ASSISTANT_SESSION);
-                if (!FloatingAssistantWindow.prefersOpaqueSurface(minecraft)) {
-                    ModernUiBridge.beginAssistantScreen(assistantScreen);
-                }
+                AssistantScreen assistantScreen = new AssistantScreen(
+                        minecraft.screen,
+                        ModPediaClient.ASSISTANT_SESSION,
+                        new ManualSourceNavigator()
+                );
                 minecraft.setScreen(assistantScreen);
             }
             return;

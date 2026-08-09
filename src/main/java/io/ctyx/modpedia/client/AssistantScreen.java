@@ -44,13 +44,23 @@ public final class AssistantScreen extends Screen {
     private List<SourceCard> sourceCards = List.of();
     private List<SuggestionHit> suggestionHits = List.of();
     private SourceReference previewSource;
+    private String previewStatus = "";
     private Bounds retryBounds;
+    private boolean historyOpen;
+    private Bounds historyDrawerBounds;
+    private Bounds historyNewBounds;
+    private Bounds historyRenameBounds;
+    private Bounds historyDeleteBounds;
+    private List<HistoryHit> historyHits = List.of();
+    private boolean settingsOpen;
+    private AiSettingsPanel settingsPanel;
     private WindowBounds.ResizeEdge cursorEdge = WindowBounds.ResizeEdge.NONE;
     private long cursorHandle;
 
     public AssistantScreen(Screen previousScreen, AssistantSession session) {
         this(previousScreen, session, source -> {
-            // 阶段四先在当前浮窗内预览；后续可注入 Patchouli/GuideME 跳转适配器。
+            // 默认构造器保留给纯 UI 测试，不绑定可选手册模组。
+            return false;
         });
     }
 
@@ -86,8 +96,21 @@ public final class AssistantScreen extends Screen {
         input.setValueListener(value -> {
             // 保持输入组件的状态更新，不提前触发模拟会话。
         });
-        addRenderableWidget(input);
-        setInitialFocus(input);
+        // 抽屉打开时不把底层输入框加入控件列表，避免它在设置抽屉上方
+        // 绘制或抢走鼠标焦点；关闭抽屉后 rebuildWidgets() 会将它恢复。
+        if (!settingsOpen) {
+            addRenderableWidget(input);
+        }
+        if (settingsOpen) {
+            if (settingsPanel == null) {
+                settingsPanel = new AiSettingsPanel();
+            }
+            Bounds settings = settingsDrawerBounds();
+            settingsPanel.init(this, font, settings.left(), settings.top(), settings.width(), settings.bottom());
+            setInitialFocus(settingsPanel.initialFocus());
+        } else {
+            setInitialFocus(input);
+        }
 
         if (!listening) {
             session.addListener(stateListener);
@@ -113,17 +136,14 @@ public final class AssistantScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        if (!FloatingAssistantWindow.prefersOpaqueSurface(minecraft)) {
-            // 只将模糊副本裁剪到窗口区域，窗口外恢复原始清晰画面。
-            ModernUiBridge.renderLocalizedBackdrop(graphics, bounds, width, height);
-        }
         renderWindow(graphics, mouseX, mouseY);
-        // 不调用 super.render：Screen.render 会再次绘制背景。ModernUI 的第二次
-        // 背景绘制会把刚画好的标题、消息和边框一起送进模糊链，只有最后的
-        // EditBox 仍然清晰。这里直接绘制已注册的控件，保持层级为：
-        // 游戏视角 -> 背景模糊 -> 浮窗 -> 浮窗文字 -> 输入控件。
+        // 不调用 super.render，避免 Screen 的底层背景再次覆盖浮窗；控件最后绘制，
+        // 保持游戏画面 -> 蓝光半透明面板 -> 面板文字 -> 输入控件的层级。
         for (var renderable : renderables) {
             renderable.render(graphics, mouseX, mouseY, partialTick);
+        }
+        if (historyOpen) {
+            renderHistoryDrawer(graphics, mouseX, mouseY);
         }
         if (previewSource != null) {
             renderSourcePreview(graphics);
@@ -134,6 +154,14 @@ public final class AssistantScreen extends Screen {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (previewSource != null && keyCode == GLFW.GLFW_KEY_ESCAPE) {
             previewSource = null;
+            return true;
+        }
+        if (settingsOpen && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            closeSettingsPanel();
+            return true;
+        }
+        if (historyOpen && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            historyOpen = false;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
@@ -163,14 +191,89 @@ public final class AssistantScreen extends Screen {
                 previewSource = null;
                 return true;
             }
+            if (previewOpenBounds().contains(mouseX, mouseY)) {
+                boolean opened = sourceNavigator.open(previewSource);
+                previewStatus = opened ? "opened" : "unavailable";
+                if (opened) {
+                    previewSource = null;
+                }
+                return true;
+            }
             if (!previewBounds().contains(mouseX, mouseY)) {
                 previewSource = null;
             }
             return true;
         }
+        if (historyBounds().contains(mouseX, mouseY)) {
+            if (settingsOpen) {
+                closeSettingsPanel();
+            }
+            historyOpen = !historyOpen;
+            return true;
+        }
+        if (settingsBounds().contains(mouseX, mouseY)) {
+            if (settingsOpen) {
+                closeSettingsPanel();
+            } else {
+                openSettingsPanel();
+            }
+            return true;
+        }
+        // 主窗口关闭按钮优先于抽屉的“点击外部关闭”逻辑，避免设置抽屉打开时
+        // 第一次点击 × 只收起抽屉而不是关闭助手。
         if (closeBounds().contains(mouseX, mouseY)) {
             onClose();
             return true;
+        }
+        if (settingsOpen) {
+            if (settingsPanel != null && settingsPanel.closeContains(mouseX, mouseY)) {
+                closeSettingsPanel();
+                return true;
+            }
+            if (settingsPanel != null && settingsPanel.contains(mouseX, mouseY)) {
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            closeSettingsPanel();
+            return true;
+        }
+        if (historyOpen) {
+            if (historyDrawerBounds != null && historyDrawerBounds.contains(mouseX, mouseY)) {
+                if (historyNewBounds != null && historyNewBounds.contains(mouseX, mouseY)) {
+                    session.newConversation();
+                    historyOpen = false;
+                    scrollToEnd = true;
+                    return true;
+                }
+                if (historyRenameBounds != null && historyRenameBounds.contains(mouseX, mouseY)) {
+                    String id = session.activeConversationId();
+                    if (!id.isBlank()) {
+                        minecraft.setScreen(new ConversationRenameScreen(
+                                this,
+                                session,
+                                id,
+                                session.activeConversationTitle()
+                        ));
+                    }
+                    return true;
+                }
+                if (historyDeleteBounds != null && historyDeleteBounds.contains(mouseX, mouseY)) {
+                    String id = session.activeConversationId();
+                    if (!id.isBlank()) {
+                        session.deleteConversation(id);
+                    }
+                    return true;
+                }
+                for (HistoryHit hit : historyHits) {
+                    if (hit.bounds().contains(mouseX, mouseY)) {
+                        session.selectConversation(hit.summary().id());
+                        historyOpen = false;
+                        scrollToEnd = true;
+                        return true;
+                    }
+                }
+                return true;
+            }
+            historyOpen = false;
         }
         if (sendBounds().contains(mouseX, mouseY)) {
             if (session.isLoading()) {
@@ -260,6 +363,9 @@ public final class AssistantScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (settingsOpen && settingsPanel != null && settingsPanel.contains(mouseX, mouseY)) {
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        }
         if (messageBounds().contains(mouseX, mouseY)) {
             scrollOffset -= scrollY * 24.0;
             scrollToEnd = false;
@@ -273,7 +379,6 @@ public final class AssistantScreen extends Screen {
         if (bounds != null) {
             windowConfig.save(bounds);
         }
-        ModernUiBridge.endAssistantScreen();
         resetCursor();
         minecraft.setScreen(previousScreen);
     }
@@ -319,9 +424,19 @@ public final class AssistantScreen extends Screen {
                 TEXT_COLOR,
                 SUBTLE_TEXT_COLOR
         );
+        renderHeaderActions(graphics, mouseX, mouseY);
 
         drawMessages(graphics);
         drawInputChrome(graphics);
+        if (settingsOpen && settingsPanel != null) {
+            settingsPanel.render(
+                    graphics,
+                    glassStyle,
+                    FloatingAssistantWindow.prefersOpaqueSurface(minecraft),
+                    mouseX,
+                    mouseY
+            );
+        }
         WindowBounds.ResizeEdge edge = resizeEdgeAt(mouseX, mouseY);
         FloatingAssistantWindow.renderResizeHandles(graphics, bounds, edge, glassStyle);
         updateCursor(edge);
@@ -345,8 +460,9 @@ public final class AssistantScreen extends Screen {
 
     private void drawMessages(GuiGraphics graphics) {
         Bounds area = messageBounds();
+        List<ChatMessage> visibleMessages = visibleMessages();
         List<MessageBubble> layouts = MessageList.layout(
-                currentState.messages(),
+                visibleMessages,
                 font,
                 area.width() - CONTENT_PADDING * 2
         );
@@ -470,10 +586,11 @@ public final class AssistantScreen extends Screen {
                     SUBTLE_TEXT_COLOR,
                     false
             );
-        } else if (currentState instanceof AssistantUiState.Loading) {
+        } else if (currentState instanceof AssistantUiState.Loading loading) {
+            Component phase = phaseComponent(loading.phase());
             graphics.drawString(
                     font,
-                    Component.translatable("screen.modpedia.loading"),
+                    phase,
                     area.left() + 12,
                     y,
                     glassStyle.accentColor(),
@@ -528,6 +645,109 @@ public final class AssistantScreen extends Screen {
         return 0;
     }
 
+    private List<ChatMessage> visibleMessages() {
+        if (!(currentState instanceof AssistantUiState.Loading loading)
+                || loading.assistantDraft().isBlank()) {
+            return currentState.messages();
+        }
+        List<ChatMessage> messages = new ArrayList<>(currentState.messages());
+        messages.add(new ChatMessage(MessageRole.ASSISTANT, loading.assistantDraft(), List.of()));
+        return messages;
+    }
+
+    private Component phaseComponent(String phase) {
+        if (phase == null || phase.isBlank()) {
+            return Component.translatable("screen.modpedia.loading");
+        }
+        return phase.startsWith("screen.modpedia.")
+                ? Component.translatable(phase)
+                : Component.literal(phase);
+    }
+
+    private void renderHeaderActions(GuiGraphics graphics, int mouseX, int mouseY) {
+        drawHeaderAction(graphics, historyBounds(), Component.translatable("screen.modpedia.history"),
+                historyOpen, mouseX, mouseY);
+        drawHeaderAction(graphics, settingsBounds(), Component.translatable("screen.modpedia.settings"),
+                settingsOpen, mouseX, mouseY);
+    }
+
+    private void drawHeaderAction(
+            GuiGraphics graphics,
+            Bounds area,
+            Component label,
+            boolean selected,
+            int mouseX,
+            int mouseY
+    ) {
+        boolean hovered = area.contains(mouseX, mouseY);
+        if (selected || hovered) {
+            graphics.fill(area.left(), area.top(), area.right(), area.bottom(), glassStyle.glowInnerColor());
+        }
+        graphics.drawCenteredString(
+                font,
+                label,
+                area.left() + area.width() / 2,
+                area.top() + (area.height() - font.lineHeight) / 2,
+                selected || hovered ? TEXT_COLOR : SUBTLE_TEXT_COLOR
+        );
+    }
+
+    private void renderHistoryDrawer(GuiGraphics graphics, int mouseX, int mouseY) {
+        int drawerWidth = Math.min(Math.max(132, bounds.width() * 38 / 100), bounds.width() - 8);
+        int left = bounds.x() + bounds.width() - drawerWidth;
+        int top = bounds.y() + HEADER_HEIGHT;
+        int bottom = bounds.y() + bounds.height() - INPUT_HEIGHT;
+        historyDrawerBounds = new Bounds(left, top, drawerWidth, Math.max(1, bottom - top));
+        int right = bounds.x() + bounds.width();
+        graphics.fill(left, top, right, bottom, glassStyle.opaquePanelColor());
+        graphics.renderOutline(left, top, drawerWidth, bottom - top, glassStyle.outlineColor());
+        graphics.drawString(font, Component.translatable("screen.modpedia.history"), left + 12, top + 10, TEXT_COLOR, false);
+
+        historyNewBounds = new Bounds(left + 10, top + 26, drawerWidth - 20, 20);
+        drawDrawerButton(graphics, historyNewBounds, Component.translatable("screen.modpedia.new_conversation"), mouseX, mouseY);
+
+        historyHits = new ArrayList<>();
+        List<ConversationSummary> summaries = session.conversations();
+        int y = historyNewBounds.bottom() + 8;
+        int listBottom = bottom - 34;
+        if (summaries.isEmpty()) {
+            graphics.drawString(font, Component.translatable("screen.modpedia.no_conversations"), left + 12, y + 4, SUBTLE_TEXT_COLOR, false);
+        } else {
+            for (ConversationSummary summary : summaries) {
+                if (y + 28 > listBottom) {
+                    break;
+                }
+                Bounds row = new Bounds(left + 8, y, drawerWidth - 16, 28);
+                boolean selected = summary.id().equals(session.activeConversationId());
+                if (selected || row.contains(mouseX, mouseY)) {
+                    graphics.fill(row.left(), row.top(), row.right(), row.bottom(), glassStyle.glowInnerColor());
+                }
+                String title = font.plainSubstrByWidth(summary.title(), row.width() - 12);
+                graphics.drawString(font, Component.literal(title), row.left() + 6, row.top() + 4,
+                        selected ? TEXT_COLOR : SUBTLE_TEXT_COLOR, false);
+                graphics.drawString(font, Component.translatable("screen.modpedia.message_count", summary.messageCount()),
+                        row.left() + 6, row.top() + 16, SUBTLE_TEXT_COLOR, false);
+                historyHits.add(new HistoryHit(row, summary));
+                y += 31;
+            }
+        }
+
+        historyRenameBounds = new Bounds(left + 8, bottom - 27, Math.max(48, drawerWidth / 2 - 12), 20);
+        historyDeleteBounds = new Bounds(historyRenameBounds.right() + 8, bottom - 27,
+                Math.max(48, drawerWidth - historyRenameBounds.width() - 24), 20);
+        drawDrawerButton(graphics, historyRenameBounds, Component.translatable("screen.modpedia.rename"), mouseX, mouseY);
+        drawDrawerButton(graphics, historyDeleteBounds, Component.translatable("screen.modpedia.delete"), mouseX, mouseY);
+    }
+
+    private void drawDrawerButton(GuiGraphics graphics, Bounds area, Component label, int mouseX, int mouseY) {
+        if (area.contains(mouseX, mouseY)) {
+            graphics.fill(area.left(), area.top(), area.right(), area.bottom(), glassStyle.glowInnerColor());
+        }
+        graphics.renderOutline(area.left(), area.top(), area.width(), area.height(), glassStyle.glowInnerColor());
+        graphics.drawCenteredString(font, label, area.left() + area.width() / 2,
+                area.top() + 6, TEXT_COLOR);
+    }
+
     private void renderSourcePreview(GuiGraphics graphics) {
         Bounds preview = previewBounds();
         graphics.fill(preview.left() - 4, preview.top() - 4, preview.right() + 4, preview.bottom() + 4, 0xB8000000);
@@ -539,7 +759,14 @@ public final class AssistantScreen extends Screen {
         graphics.drawString(font, Component.literal("模组：" + previewSource.sourceMod()), preview.left() + 16, preview.top() + 64, SUBTLE_TEXT_COLOR, false);
         drawWrapped(graphics, "文档 ID：" + previewSource.documentId(), preview.left() + 16, preview.top() + 88, preview.width() - 32, SUBTLE_TEXT_COLOR);
         drawWrapped(graphics, "路径：" + previewSource.sourcePath(), preview.left() + 16, preview.top() + 128, preview.width() - 32, SUBTLE_TEXT_COLOR);
-        graphics.drawString(font, Component.translatable("screen.modpedia.source_preview_hint"), preview.left() + 16, preview.bottom() - 24, SUBTLE_TEXT_COLOR, false);
+        Bounds open = previewOpenBounds();
+        graphics.fill(open.left(), open.top(), open.right(), open.bottom(), glassStyle.assistantBubbleColor());
+        graphics.renderOutline(open.left(), open.top(), open.width(), open.height(), glassStyle.glowInnerColor());
+        graphics.drawCenteredString(font, Component.translatable("screen.modpedia.open_source"), open.left() + open.width() / 2, open.top() + 6, glassStyle.accentColor());
+        Component hint = previewStatus.isBlank()
+                ? Component.translatable("screen.modpedia.source_preview_hint")
+                : Component.translatable("screen.modpedia.source_navigation_unavailable");
+        graphics.drawString(font, hint, preview.left() + 16, open.top() - 14, SUBTLE_TEXT_COLOR, false);
     }
 
     private void drawWrapped(GuiGraphics graphics, String text, int x, int y, int width, int color) {
@@ -567,7 +794,7 @@ public final class AssistantScreen extends Screen {
         } else {
             text = "知识库尚未生成 · 0 来源 · 0 文档";
         }
-        return font == null ? text : font.plainSubstrByWidth(text, Math.max(40, bounds.width() - 72));
+        return font == null ? text : font.plainSubstrByWidth(text, Math.max(40, bounds.width() - 150));
     }
 
     private void submitInput() {
@@ -585,9 +812,43 @@ public final class AssistantScreen extends Screen {
         scrollToEnd = true;
     }
 
+    void addSettingsWidget(net.minecraft.client.gui.components.EditBox widget) {
+        addRenderableWidget(widget);
+    }
+
+    void addSettingsWidget(net.minecraft.client.gui.components.CycleButton<?> widget) {
+        addRenderableWidget(widget);
+    }
+
+    void addSettingsWidget(net.minecraft.client.gui.components.Button widget) {
+        addRenderableWidget(widget);
+    }
+
+    void rebuildAssistantWidgets() {
+        rebuildWidgets();
+    }
+
+    boolean settingsPanelOpen() {
+        return settingsOpen;
+    }
+
+    void closeSettingsPanel() {
+        settingsOpen = false;
+        rebuildWidgets();
+    }
+
+    private void openSettingsPanel() {
+        historyOpen = false;
+        settingsOpen = true;
+        if (settingsPanel == null) {
+            settingsPanel = new AiSettingsPanel();
+        }
+        rebuildWidgets();
+    }
+
     private void openSource(SourceReference source) {
         previewSource = source;
-        sourceNavigator.open(source);
+        previewStatus = "";
     }
 
     private WindowBounds.ResizeEdge resizeEdgeAt(double mouseX, double mouseY) {
@@ -650,7 +911,25 @@ public final class AssistantScreen extends Screen {
     }
 
     private Bounds titleBounds() {
-        return new Bounds(bounds.x() + 8, bounds.y() + 4, bounds.width() - 48, HEADER_HEIGHT - 8);
+        return new Bounds(bounds.x() + 8, bounds.y() + 4, Math.max(24, bounds.width() - 148), HEADER_HEIGHT - 8);
+    }
+
+    private Bounds historyBounds() {
+        return new Bounds(bounds.x() + bounds.width() - 116, bounds.y() + 4, 38, HEADER_HEIGHT - 8);
+    }
+
+    private Bounds settingsBounds() {
+        return new Bounds(bounds.x() + bounds.width() - 76, bounds.y() + 4, 38, HEADER_HEIGHT - 8);
+    }
+
+    private Bounds settingsDrawerBounds() {
+        int drawerWidth = Math.min(Math.max(230, bounds.width() * 78 / 100), bounds.width() - 8);
+        return new Bounds(
+                bounds.x() + bounds.width() - drawerWidth,
+                bounds.y() + HEADER_HEIGHT,
+                drawerWidth,
+                Math.max(1, bounds.height() - HEADER_HEIGHT - INPUT_HEIGHT)
+        );
     }
 
     private Bounds closeBounds() {
@@ -702,14 +981,24 @@ public final class AssistantScreen extends Screen {
         return new Bounds(
                 bounds.x() + 18,
                 bounds.y() + HEADER_HEIGHT + 18,
-                Math.max(160, bounds.width() - 36),
-                Math.max(120, bounds.height() - HEADER_HEIGHT - 24)
+                Math.max(120, bounds.width() - 36),
+                Math.max(80, bounds.height() - HEADER_HEIGHT - 24)
         );
     }
 
     private Bounds previewCloseBounds() {
         Bounds preview = previewBounds();
         return new Bounds(preview.right() - 36, preview.top() + 4, 32, HEADER_HEIGHT - 8);
+    }
+
+    private Bounds previewOpenBounds() {
+        Bounds preview = previewBounds();
+        return new Bounds(
+                preview.left() + 16,
+                preview.bottom() - 34,
+                Math.min(112, Math.max(96, preview.width() - 32)),
+                20
+        );
     }
 
     private static <T> List<T> append(List<T> original, T value) {
@@ -733,5 +1022,8 @@ public final class AssistantScreen extends Screen {
     }
 
     private record SuggestionHit(Bounds bounds, String text) {
+    }
+
+    private record HistoryHit(Bounds bounds, ConversationSummary summary) {
     }
 }
