@@ -13,6 +13,7 @@ import io.ctyx.modpedia.search.SearchQuery;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
+import io.ctyx.modpedia.search.SearchTextNormalizer;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -35,6 +36,7 @@ public final class SearchKnowledgeTool {
     private static final Pattern TOKEN_PATTERN = Pattern.compile(
             "[\\p{L}\\p{N}\\u3400-\\u9fff]+(?:[:_./-][\\p{L}\\p{N}\\u3400-\\u9fff]+)*"
     );
+    private static final Pattern CJK_RUN_PATTERN = Pattern.compile("[\\u3400-\\u9fff]{2,}");
     private static final Set<String> FOCUSES = Set.of(
             "identify", "steps", "recipe", "prerequisite", "troubleshooting", "related"
     );
@@ -47,7 +49,9 @@ public final class SearchKnowledgeTool {
             "troubleshooting", List.of("故障", "错误", "问题", "排查", "修复", "漏气", "异常",
                     "troubleshooting", "error", "problem", "leak", "leakage", "fix"),
             "related", List.of("相关", "兼容", "联动", "区别", "related", "compatibility", "compatible"),
-            "identify", List.of("识别", "名称", "是什么", "identify", "name", "what")
+            "identify", List.of("识别", "名称", "是什么", "介绍", "简介", "概览", "核心玩法",
+                    "新手", "入门", "第一天", "overview", "introduction", "getting started",
+                    "gameplay", "identify", "name", "what")
     );
     private static final Set<String> GENERIC_QUERY_TERMS = Set.of(
             "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "is",
@@ -56,7 +60,12 @@ public final class SearchKnowledgeTool {
             "requirements", "usage", "instructions", "start", "begin", "using", "怎么", "如何", "什么",
             "哪个", "哪些", "怎么做", "如何使用", "使用方法", "用法", "可以", "需要", "这个", "那个",
             "设置", "前置", "前置条件", "前提", "条件", "步骤", "操作", "操作步骤", "防止", "模组",
-            "minecraft", "mod", "mods"
+            "连接", "连接方式", "安装", "启动", "使用", "怎么用",
+            "配方", "合成", "制作", "材料", "依赖", "前置依赖", "漏气", "故障",
+            "机器", "设备", "物品", "方块", "东西", "助手", "文档", "手册",
+            "minecraft", "mod", "mods", "介绍", "简介", "概览", "是什么", "全称", "缩写", "核心玩法", "玩法", "功能",
+            "机制", "流程", "生存流程", "新手", "入门", "第一天", "指南", "内容", "重制版",
+            "overview", "introduction", "intro", "gameplay", "mechanics", "abbreviation", "guide"
     );
 
     private final RetrievalService retrievalService;
@@ -67,7 +76,9 @@ public final class SearchKnowledgeTool {
     private final AtomicInteger roundCounter;
     private final Consumer<SearchTrace> traceSink;
     private final Set<String> seenQueries = new HashSet<>();
-    private final Set<String> seenDocuments = new LinkedHashSet<>();
+    // 同一文档在不同补搜轮次可能返回不同的最佳段落；只按段落身份去重，
+    // 否则第一轮命中概览页后，后续步骤/配方查询永远拿不到同一手册的细节页。
+    private final Set<String> seenSegments = new LinkedHashSet<>();
 
     public SearchKnowledgeTool(
             RetrievalService retrievalService,
@@ -152,21 +163,36 @@ public final class SearchKnowledgeTool {
             return finish(output, currentRound, SearchStatus.EMPTY_QUERY, List.of(), false, "查询为空", normalizedQuery, normalizedLanguage, normalizedFocus);
         }
 
-        String queryKey = normalizedLanguage + "|" + queryKey(normalizedQuery);
+        String queryKey = normalizedLanguage + "|" + normalizedFocus + "|" + queryKey(normalizedQuery);
         if (!seenQueries.add(queryKey)) {
             return finish(output, currentRound, SearchStatus.NO_MATCH, List.of(), false,
                     "重复查询，请改写关键词或针对缺失的资料类型继续搜索", normalizedQuery, normalizedLanguage, normalizedFocus);
         }
 
-        List<SearchResponse> responses = searchLanguages(normalizedQuery, requestedLanguage);
+        List<SearchResponse> responses = searchLanguages(
+                normalizedQuery,
+                requestedLanguage,
+                Math.max(32, Math.min(256, maxResults * 8 + excluded.size() * 4))
+        );
         List<SearchResult> candidates = mergeCandidates(responses);
         candidates = keepEntityMatches(candidates, normalizedQuery);
 
-        List<SearchResult> fresh = candidates.stream()
-                .filter(result -> !excluded.contains(documentKey(result.documentId())))
-                .filter(result -> !seenDocuments.contains(documentKey(result.documentId())))
+        List<SearchResult> ordered = candidates.stream()
+                .filter(result -> !seenSegments.contains(resultKey(result)))
                 .sorted(focusComparator(normalizedFocus))
                 .toList();
+        // 已读文档只是降级候选，不是永久黑名单：同一手册的下一轮可以返回另一个
+        // 步骤/配方段落。每轮仍按文档去重，避免同一轮把一篇手册的多个段落挤满结果。
+        List<SearchResult> preferred = uniqueByDocument(ordered.stream()
+                .filter(result -> !excluded.contains(documentKey(result.documentId())))
+                .toList());
+        List<SearchResult> fallback = uniqueByDocument(ordered.stream()
+                .filter(result -> excluded.contains(documentKey(result.documentId())))
+                .toList());
+        List<SearchResult> fresh = new ArrayList<>(preferred);
+        if (fresh.size() < requestedLimit) {
+            fresh.addAll(fallback);
+        }
         List<SearchResult> selected = new ArrayList<>();
         int selectedChars = 0;
         for (SearchResult result : fresh) {
@@ -188,7 +214,8 @@ public final class SearchKnowledgeTool {
 
     private List<SearchResponse> searchLanguages(
             String query,
-            SearchLanguage requestedLanguage
+            SearchLanguage requestedLanguage,
+            int candidateLimit
     ) {
         List<SearchResponse> responses = new ArrayList<>();
         if (requestedLanguage == SearchLanguage.AUTO) {
@@ -199,34 +226,42 @@ public final class SearchKnowledgeTool {
                     ? SearchLanguage.EN_US
                     : SearchLanguage.ZH_CN;
             // AUTO 不再等到主语言完全无结果才切换；两种语言都查，再按文档和分数合并。
-            responses.add(searchOne(query, primary));
-            responses.add(searchOne(query, alternate));
+            responses.add(searchOne(query, primary, candidateLimit));
+            responses.add(searchOne(query, alternate, candidateLimit));
         } else {
-            responses.add(searchOne(query, requestedLanguage));
+            responses.add(searchOne(query, requestedLanguage, candidateLimit));
         }
         return responses;
     }
 
-    private SearchResponse searchOne(String query, SearchLanguage language) {
-        return retrievalService.search(new SearchQuery(
+    private SearchResponse searchOne(String query, SearchLanguage language, int candidateLimit) {
+        return retrievalService.searchForExpansion(new SearchQuery(
                 query,
                 SearchQuery.MAX_LIMIT,
                 language
-        ));
+        ), candidateLimit);
     }
 
     private static List<SearchResult> mergeCandidates(List<SearchResponse> responses) {
-        Map<String, SearchResult> bestByDocument = new LinkedHashMap<>();
+        Map<String, SearchResult> bestBySegment = new LinkedHashMap<>();
         for (SearchResponse response : responses) {
             for (SearchResult result : response.results()) {
-                String key = documentKey(result.documentId());
-                SearchResult previous = bestByDocument.get(key);
+                String key = resultKey(result);
+                SearchResult previous = bestBySegment.get(key);
                 if (previous == null || better(result, previous)) {
-                    bestByDocument.put(key, result);
+                    bestBySegment.put(key, result);
                 }
             }
         }
-        return new ArrayList<>(bestByDocument.values());
+        return new ArrayList<>(bestBySegment.values());
+    }
+
+    private static List<SearchResult> uniqueByDocument(List<SearchResult> results) {
+        Map<String, SearchResult> unique = new LinkedHashMap<>();
+        for (SearchResult result : results) {
+            unique.putIfAbsent(documentKey(result.documentId()), result);
+        }
+        return new ArrayList<>(unique.values());
     }
 
     private static boolean better(SearchResult candidate, SearchResult previous) {
@@ -249,22 +284,80 @@ public final class SearchKnowledgeTool {
     private static List<SearchResult> keepEntityMatches(List<SearchResult> candidates, String query) {
         List<String> anchors = queryAnchors(query);
         if (anchors.isEmpty()) {
-            return candidates;
+            return hasUnresolvedReference(query) ? List.of() : candidates;
         }
-        // 查询开头的实体通常是玩家真正要问的对象。只要索引中存在它，就不让
-        // “防止漏气/步骤/设置”这类后续描述把示例文档抬到实体手册之前。
-        List<SearchResult> primaryMatches = candidates.stream()
-                .filter(result -> matchesAnchor(result, List.of(anchors.get(0))))
-                .toList();
-        if (!primaryMatches.isEmpty()) {
-            return primaryMatches;
-        }
-        List<SearchResult> filtered = candidates.stream()
+        List<SearchResult> matched = candidates.stream()
                 .filter(result -> matchesAnchor(result, anchors))
                 .toList();
-        // 查询包含明确实体但当前语言没有命中该实体时，返回空结果而不是把通用页面
-        // 当成答案。模型会看到 NO_MATCH，再用英文名称、ID 或其他实体改写查询。
-        return filtered;
+        if (matched.isEmpty()) {
+            // 查询包含明确实体但当前语言没有命中该实体时，返回空结果而不是把通用页面
+            // 当成答案。模型会看到 NO_MATCH，再用英文名称、ID 或其他实体改写查询。
+            return List.of();
+        }
+
+        // 对三字以上的中文实体优先要求完整短语命中。仅命中“压力”“管道”这类
+        // 双字片段会把泵、支撑梁和其它泛相关页面带进来；完整短语存在时，只保留
+        // 真正包含该实体的段落。完整短语完全不存在时也返回空，让模型改用英文名
+        // 或内部 ID 补搜，而不是把双字片段拼成错误答案。
+        List<String> compoundAnchors = anchors.stream()
+                .filter(anchor -> anchor.matches("[\\u3400-\\u9fff]{3,}"))
+                .toList();
+        if (!compoundAnchors.isEmpty()) {
+            List<String> matchedCompounds = compoundAnchors.stream()
+                    .filter(anchor -> candidates.stream().anyMatch(result -> matchesCompoundAnchor(result, anchor)))
+                    .toList();
+            if (matchedCompounds.isEmpty()) {
+                return List.of();
+            }
+            List<SearchResult> compoundMatches = matched.stream()
+                    .filter(result -> matchedCompounds.stream()
+                            .anyMatch(anchor -> matchesCompoundAnchor(result, anchor)))
+                    .toList();
+            if (!compoundMatches.isEmpty()) {
+                return compoundMatches;
+            }
+        }
+
+        // 模组显示名经常位于查询开头，但它只代表“候选模组”，不是最终实体。只要
+        // 更具体的 ID、中文实体或英文物品名在正文/标题中出现，就按具体锚点收窄，
+        // 避免 overview、getting-started 等模组总览页压过目标页面。
+        List<String> specific = anchors.stream()
+                .filter(SearchKnowledgeTool::isSpecificAnchor)
+                .filter(anchor -> candidates.stream().anyMatch(result -> matchesContentAnchor(result, anchor)))
+                .toList();
+        if (!specific.isEmpty()) {
+            List<SearchResult> focused = matched.stream()
+                    .filter(result -> specific.stream().anyMatch(anchor -> matchesContentAnchor(result, anchor)))
+                    .toList();
+            if (!focused.isEmpty()) {
+                return focused;
+            }
+        }
+        return matched;
+    }
+
+    private static boolean hasUnresolvedReference(String query) {
+        String normalized = normalize(query).replace(" ", "");
+        return normalized.contains("这个机器")
+                || normalized.contains("那个机器")
+                || normalized.contains("这个设备")
+                || normalized.contains("那个设备")
+                || normalized.contains("这个物品")
+                || normalized.contains("那个物品")
+                || normalized.contains("这个方块")
+                || normalized.contains("那个方块")
+                || normalized.contains("这个东西")
+                || normalized.contains("那个东西")
+                || normalized.contains("这个模组")
+                || normalized.contains("本模组")
+                || normalized.contains("这个助手")
+                || normalized.contains("本助手");
+    }
+
+    private static boolean matchesCompoundAnchor(SearchResult result, String anchor) {
+        // 三字以上中文实体必须作为连续短语命中；不能把“压力”“容器”或
+        // 其它相邻双字词分别命中后拼成一个不存在的物品名称。
+        return matchesContentAnchor(result, anchor);
     }
 
     private static List<String> queryAnchors(String query) {
@@ -272,35 +365,84 @@ public final class SearchKnowledgeTool {
         Matcher matcher = TOKEN_PATTERN.matcher(rawNormalize(query));
         while (matcher.find()) {
             String token = matcher.group();
-            if (!GENERIC_QUERY_TERMS.contains(token)
-                    && (token.length() >= 3 || token.matches("[a-z0-9_:/.-]{4,}"))) {
-                anchors.add(token);
+            Matcher cjk = CJK_RUN_PATTERN.matcher(token);
+            while (cjk.find()) {
+                addCjkAnchors(anchors, cjk.group());
+            }
+            for (String part : token.split("[\\u3400-\\u9fff]+")) {
+                if (!part.isBlank()
+                        && !isGenericAnchor(part)
+                        && (part.length() >= 3 || part.matches("[a-z0-9_:/.-]{4,}"))) {
+                    anchors.add(part);
+                }
             }
         }
         return List.copyOf(anchors);
     }
 
-    private static boolean matchesAnchor(SearchResult result, List<String> anchors) {
-        String haystack = normalize(
-                result.documentId() + " "
-                        + result.title() + " "
-                        + result.sourceMod() + " "
-                        + result.sourcePath() + " "
-                        + result.headingPath() + " "
-                        + result.segmentMarkdown() + " "
-                        + String.join(" ", result.matchedTerms())
-        );
-        String compactHaystack = haystack.replace(" ", "");
-        return anchors.stream().anyMatch(anchor -> {
-            if (haystack.contains(anchor)) {
-                return true;
+    private static void addCjkAnchors(LinkedHashSet<String> anchors, String run) {
+        for (String semantic : SearchTextNormalizer.semanticCjkPhrases(run)) {
+            if (!isGenericAnchor(semantic) && semantic.length() >= 2) {
+                anchors.add(semantic);
             }
-            // 只有资源 ID、路径或英文连字符词需要忽略标点比较；中文实体必须保持
-            // 连续匹配，不能把“压力”和“管道”两个独立命中拼成“压力管道”。
-            boolean hasIdentifierSeparator = anchor.matches(".*[:_./-].*");
-            String compactAnchor = normalize(anchor).replace(" ", "");
-            return hasIdentifierSeparator && compactHaystack.contains(compactAnchor);
+            for (int index = 0; index + 1 < semantic.length(); index++) {
+                String gram = semantic.substring(index, index + 2);
+                if (!isGenericAnchor(gram)) {
+                    anchors.add(gram);
+                }
+            }
+        }
+    }
+
+    private static boolean matchesAnchor(SearchResult result, List<String> anchors) {
+        return anchors.stream().anyMatch(anchor -> {
+            String normalizedAnchor = normalize(anchor);
+            return containsAnchor(result.documentId(), normalizedAnchor, anchor)
+                    || containsAnchor(result.title(), normalizedAnchor, anchor)
+                    || containsAnchor(result.sourceMod(), normalizedAnchor, anchor)
+                    || containsAnchor(result.sourcePath(), normalizedAnchor, anchor)
+                    || containsAnchor(result.headingPath(), normalizedAnchor, anchor)
+                    || containsAnchor(result.segmentMarkdown(), normalizedAnchor, anchor)
+                    || containsAnchor(String.join(" ", result.matchedTerms()), normalizedAnchor, anchor);
         });
+    }
+
+    private static boolean matchesContentAnchor(SearchResult result, String anchor) {
+        String normalizedAnchor = normalize(anchor);
+        return containsAnchor(result.title(), normalizedAnchor, anchor)
+                || containsAnchor(result.headingPath(), normalizedAnchor, anchor)
+                || containsAnchor(result.segmentMarkdown(), normalizedAnchor, anchor)
+                || containsAnchor(String.join(" ", result.matchedTerms()), normalizedAnchor, anchor);
+    }
+
+    private static boolean containsAnchor(String value, String normalizedAnchor, String originalAnchor) {
+        String normalizedValue = normalize(value);
+        if (normalizedValue.contains(normalizedAnchor)) {
+            return true;
+        }
+        // 只有 ID、路径和带连字符的英文名称允许忽略分隔符；中文实体仍必须
+        // 在同一个字段中连续出现，避免跨字段或跨双字词产生假命中。
+        return originalAnchor.matches(".*[:_./-].*")
+                && normalizedValue.replace(" ", "")
+                .contains(normalizedAnchor.replace(" ", ""));
+    }
+
+    private static boolean isSpecificAnchor(String anchor) {
+        String normalized = normalize(anchor);
+        return normalized.matches(".*[\\u3400-\\u9fff].*")
+                || normalized.matches(".*[:_./-].*")
+                || normalized.length() >= 5;
+    }
+
+    private static boolean isGenericAnchor(String value) {
+        String normalized = normalize(value);
+        if (normalized.isBlank() || GENERIC_QUERY_TERMS.contains(normalized)) {
+            return true;
+        }
+        return FOCUS_ALIASES.values().stream()
+                .flatMap(List::stream)
+                .map(SearchKnowledgeTool::normalize)
+                .anyMatch(normalized::equals);
     }
 
     private static Comparator<SearchResult> focusComparator(String focus) {
@@ -338,7 +480,7 @@ public final class SearchKnowledgeTool {
             String focus
     ) {
         JsonArray documents = new JsonArray();
-        List<SourceReference> sources = new ArrayList<>();
+        Map<String, SourceReference> sourcesByDocument = new LinkedHashMap<>();
         int usedChars = 0;
         for (SearchResult result : results) {
             int nextChars = result.segmentMarkdown().length();
@@ -359,7 +501,7 @@ public final class SearchKnowledgeTool {
             document.addProperty("score", result.score());
             document.add("matched_terms", JSON.toJsonTree(result.matchedTerms()));
             documents.add(document);
-            sources.add(new SourceReference(
+            sourcesByDocument.putIfAbsent(documentKey(result.documentId()), new SourceReference(
                     result.documentId(),
                     result.title().isBlank() ? result.documentId() : result.title(),
                     result.sourceMod(),
@@ -367,11 +509,11 @@ public final class SearchKnowledgeTool {
             ));
             // 只有真正放进模型上下文的来源才标记为已读；上下文预算裁掉的结果必须
             // 留给下一轮补搜，避免 has_more 之后出现“已排除但从未返回”的来源。
-            seenDocuments.add(documentKey(result.documentId()));
+            seenSegments.add(resultKey(result));
         }
         output.addProperty("status", status.name());
         output.addProperty("returned_count", documents.size());
-        output.addProperty("new_source_count", sources.size());
+        output.addProperty("new_source_count", sourcesByDocument.size());
         output.addProperty("has_more", hasMore);
         output.addProperty("context_chars", usedChars);
         output.add("results", documents);
@@ -385,7 +527,7 @@ public final class SearchKnowledgeTool {
                 round,
                 status.name(),
                 hasMore,
-                sources,
+                List.copyOf(sourcesByDocument.values()),
                 System.currentTimeMillis()
         ));
         return JSON.toJson(output);
@@ -457,5 +599,11 @@ public final class SearchKnowledgeTool {
 
     private static String documentKey(String value) {
         return normalize(value).replace(" ", "");
+    }
+
+    private static String resultKey(SearchResult result) {
+        return documentKey(result.documentId())
+                + "|" + normalize(result.headingPath())
+                + "|" + normalize(result.segmentMarkdown());
     }
 }

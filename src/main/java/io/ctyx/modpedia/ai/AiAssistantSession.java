@@ -3,6 +3,9 @@ package io.ctyx.modpedia.ai;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.model.TokenCountEstimator;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.ToolChoice;
 import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
@@ -35,6 +38,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,7 +63,10 @@ public final class AiAssistantSession implements AssistantSession {
     private static final int MAX_DISPLAYED_SOURCES = 5;
 
     private final CopyOnWriteArrayList<Consumer<AssistantUiState>> listeners = new CopyOnWriteArrayList<>();
+    private final ConcurrentMap<Long, CopyOnWriteArrayList<SearchTrace>> requestTraces = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Long, Long> requestStartedNanos = new ConcurrentHashMap<>();
     private final AtomicLong requestSequence = new AtomicLong();
+    private final AtomicLong terminalRequest = new AtomicLong();
     private final RetrievalService retrievalService;
     private final ConversationStore conversationStore;
     private final PersistentChatMemoryStore memoryStore;
@@ -102,6 +110,10 @@ public final class AiAssistantSession implements AssistantSession {
         if (normalized.isBlank() || isLoading()) {
             return;
         }
+        if (BuiltInGuide.isUsageQuestion(normalized)) {
+            showBuiltInGuide(BuiltInGuide.ASSISTANT_USAGE_DOCUMENT_ID);
+            return;
+        }
         AiSettings settings = settingsStore.load();
         String conversationId = conversationStore.activeId();
         int repairedMessages = memoryStore.repair(conversationId);
@@ -114,9 +126,15 @@ public final class AiAssistantSession implements AssistantSession {
             );
         }
         long request = requestSequence.incrementAndGet();
+        terminalRequest.set(0L);
+        requestTraces.clear();
+        requestStartedNanos.clear();
+        requestTraces.put(request, new CopyOnWriteArrayList<>());
+        requestStartedNanos.put(request, System.nanoTime());
         lastPrompt = normalized;
         ModPedia.LOGGER.info(
-                "AI request started: conversation={}, mode={}, streaming={}, model={}",
+                "AI request started: request={}, conversation={}, mode={}, streaming={}, model={}",
+                request,
                 conversationId,
                 settings.mode(),
                 settings.streaming(),
@@ -141,9 +159,20 @@ public final class AiAssistantSession implements AssistantSession {
             return;
         }
         if (!settings.configured()) {
+            requestTraces.remove(request);
+            requestStartedNanos.remove(request);
             publish(new AssistantUiState.Error(
                     conversationStore.active().messages(),
                     "请先打开助手设置，填写 API 地址和模型名称。"
+            ));
+            return;
+        }
+        if (settings.effectiveApiKey().isBlank()) {
+            requestTraces.remove(request);
+            requestStartedNanos.remove(request);
+            publish(new AssistantUiState.Error(
+                    conversationStore.active().messages(),
+                    "请先打开助手设置，填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。"
             ));
             return;
         }
@@ -173,6 +202,8 @@ public final class AiAssistantSession implements AssistantSession {
             return;
         }
         requestSequence.incrementAndGet();
+        requestTraces.clear();
+        requestStartedNanos.clear();
         StreamingHandle handle = streamingHandle;
         streamingHandle = null;
         if (handle != null) {
@@ -305,6 +336,7 @@ public final class AiAssistantSession implements AssistantSession {
     @Override
     public void cancel() {
         requestSequence.incrementAndGet();
+        requestTraces.clear();
         StreamingHandle handle = streamingHandle;
         streamingHandle = null;
         if (handle != null) {
@@ -381,6 +413,7 @@ public final class AiAssistantSession implements AssistantSession {
     @Override
     public void deleteConversation(String conversationId) {
         cancel();
+        memoryStore.deleteMessages(conversationId);
         conversationStore.delete(conversationId);
         publish(new AssistantUiState.Conversation(conversationStore.active().messages(), false));
     }
@@ -425,14 +458,14 @@ public final class AiAssistantSession implements AssistantSession {
             SearchKnowledgeTool searchTool
     ) {
         EXECUTOR.execute(() -> {
-            AtomicBoolean fallbackStarted = new AtomicBoolean();
+            AiRequestLifecycle lifecycle = new AiRequestLifecycle();
             try {
                 var model = AiClient.streamingModel(settings);
                 StreamingAssistantService service = buildStreamingService(
                         model, settings, language, rounds, searchTool
                 );
                 StringBuilder draft = new StringBuilder();
-                AtomicBoolean completed = new AtomicBoolean();
+                AtomicBoolean firstTextLogged = new AtomicBoolean();
                 TokenStream stream = service.chat(conversationId, prompt)
                         .onPartialResponseWithContext((PartialResponse partial, PartialResponseContext context) -> {
                             streamingHandle = context.streamingHandle();
@@ -440,6 +473,13 @@ public final class AiAssistantSession implements AssistantSession {
                                 return;
                             }
                             if (partial != null && partial.text() != null) {
+                                if (!partial.text().isBlank() && firstTextLogged.compareAndSet(false, true)) {
+                                    ModPedia.LOGGER.info(
+                                            "AI first text received: request={}, elapsedMs={}",
+                                            request,
+                                            elapsedMillis(requestStartedNanos.get(request))
+                                    );
+                                }
                                 draft.append(partial.text());
                                 publishLoading(conversationId, PHASE_ORGANIZING, draft.toString());
                             }
@@ -447,12 +487,14 @@ public final class AiAssistantSession implements AssistantSession {
                         .beforeToolExecution(ignored -> publishLoading(conversationId, PHASE_SEARCHING, draft.toString()))
                         .onToolExecuted(ignored -> publishLoading(conversationId, PHASE_RESULTS, draft.toString()))
                         .onCompleteResponse(response -> {
-                            if (completed.compareAndSet(false, true)) {
-                                finish(request, conversationId, draft.toString());
+                            if (request != requestSequence.get() || !lifecycle.isOpen()) {
+                                return;
                             }
-                        })
-                        .onError(error -> {
-                            if (!completed.get()) {
+                            String answer = draft.toString();
+                            if (answer.isBlank()) {
+                                answer = responseText(response);
+                            }
+                            if (answer.isBlank()) {
                                 fallbackToBlocking(
                                         request,
                                         conversationId,
@@ -461,10 +503,25 @@ public final class AiAssistantSession implements AssistantSession {
                                         language,
                                         rounds,
                                         searchTool,
-                                        error,
-                                        fallbackStarted
+                                        new IllegalStateException("流式响应完成但没有文本内容"),
+                                        lifecycle
                                 );
+                            } else if (lifecycle.complete()) {
+                                finish(request, conversationId, answer);
                             }
+                        })
+                        .onError(error -> {
+                            fallbackToBlocking(
+                                    request,
+                                    conversationId,
+                                    prompt,
+                                    settings,
+                                    language,
+                                    rounds,
+                                    searchTool,
+                                    error,
+                                    lifecycle
+                            );
                         });
                 // start() 之后由 partial-response 回调填充 StreamingHandle；不要在这里
                 // 再清空，否则用户在首个 token 到来前点击取消时无法中止请求。
@@ -479,7 +536,7 @@ public final class AiAssistantSession implements AssistantSession {
                         rounds,
                         searchTool,
                         throwable,
-                        fallbackStarted
+                        lifecycle
                 );
             }
         });
@@ -494,9 +551,9 @@ public final class AiAssistantSession implements AssistantSession {
             int rounds,
             SearchKnowledgeTool searchTool,
             Throwable streamingError,
-            AtomicBoolean fallbackStarted
+            AiRequestLifecycle lifecycle
     ) {
-        if (request != requestSequence.get() || !fallbackStarted.compareAndSet(false, true)) {
+        if (request != requestSequence.get() || !lifecycle.beginFallback()) {
             return;
         }
         AiSettings effectiveSettings = fallbackSettings(settings, streamingError);
@@ -525,7 +582,9 @@ public final class AiAssistantSession implements AssistantSession {
                     freshSearchTool
             );
             String answer = service.chat(conversationId, prompt);
-            finish(request, conversationId, answer);
+            if (lifecycle.completeFallback()) {
+                finish(request, conversationId, answer);
+            }
         } catch (Throwable fallbackError) {
             if (!retryBlockingOnce(
                     request,
@@ -623,7 +682,7 @@ public final class AiAssistantSession implements AssistantSession {
                     conversationId,
                     Math.max(0, removedMessages),
                     removedMessages < 0,
-                    sanitize(AiClient.friendlyError(firstFailure))
+                    sanitize(AiClient.friendlyError(firstFailure, settings.effectiveApiKey()))
             );
             BlockingAssistantService service = buildBlockingService(
                     AiClient.blockingModel(settings),
@@ -713,6 +772,7 @@ public final class AiAssistantSession implements AssistantSession {
             int rounds,
             SearchKnowledgeTool searchTool
     ) {
+        AtomicBoolean firstRequest = new AtomicBoolean(true);
         return AiServices.builder(StreamingAssistantService.class)
                 .streamingChatModel(model)
                 .systemMessage(promptBuilder.build(
@@ -724,6 +784,10 @@ public final class AiAssistantSession implements AssistantSession {
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
                 .tools(searchTool)
+                // 提示词只能“建议”工具调用；首次请求强制 REQUIRED，避免模型直接
+                // 编造答案或把“如何使用”误答成整合包内另一个模组。工具结果回传后的
+                // 请求恢复 AUTO，模型才能根据证据完整度决定是否继续补搜或直接回答。
+                .chatRequestTransformer(request -> requireSearchOnFirstRequest(request, firstRequest))
                 .maxToolCallingRoundTrips(toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
                         "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
@@ -741,6 +805,7 @@ public final class AiAssistantSession implements AssistantSession {
             int rounds,
             SearchKnowledgeTool searchTool
     ) {
+        AtomicBoolean firstRequest = new AtomicBoolean(true);
         return AiServices.builder(BlockingAssistantService.class)
                 .chatModel(model)
                 .systemMessage(promptBuilder.build(
@@ -752,6 +817,7 @@ public final class AiAssistantSession implements AssistantSession {
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
                 .tools(searchTool)
+                .chatRequestTransformer(request -> requireSearchOnFirstRequest(request, firstRequest))
                 .maxToolCallingRoundTrips(toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
                         "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
@@ -783,9 +849,11 @@ public final class AiAssistantSession implements AssistantSession {
 
     static int memoryTokenBudget(int contextChars) {
         int normalized = Math.max(4_000, Math.min(64_000, contextChars));
-        // 按字符预算给出保守的 token 窗口，至少容纳一轮完整 Markdown 工具结果、
-        // 用户问题和系统提示词；实际 token 数仍由 LangChain4j 的 estimator 计算。
-        return Math.max(8_000, normalized);
+        // contextChars 是 Markdown 字符预算，不是 token 数。中文通常约 2 个字符/token，
+        // 英文则更省；直接 1:1 映射会把 64,000 字符扩大成不必要的 64,000 token，
+        // 既增加网关延迟，也可能触发模型上下文上限。预留少量系统提示词和消息结构开销，
+        // 实际保留哪些消息仍由 LangChain4j 的 estimator 决定。
+        return Math.max(8_000, (normalized + 1) / 2 + 2_048);
     }
 
     /**
@@ -802,10 +870,13 @@ public final class AiAssistantSession implements AssistantSession {
         if (request != requestSequence.get()) {
             return;
         }
+        requestTraces.computeIfAbsent(request, ignored -> new CopyOnWriteArrayList<>()).add(trace);
         conversationStore.appendTrace(conversationId, trace);
         ModPedia.LOGGER.info(
-                "AI knowledge search: round={}, query={}, language={}, focus={}, status={}, sources={}, hasMore={}",
+                "AI knowledge search: request={}, round={}, elapsedMs={}, query={}, language={}, focus={}, status={}, sources={}, hasMore={}",
+                request,
                 trace.round(),
+                elapsedMillis(requestStartedNanos.get(request)),
                 trace.query(),
                 trace.language(),
                 trace.focus(),
@@ -832,28 +903,43 @@ public final class AiAssistantSession implements AssistantSession {
             return;
         }
         String normalized = answer == null ? "" : answer.strip();
-        if (normalized.isBlank()) {
+        FollowUpQuestionParser.Parsed parsed = FollowUpQuestionParser.parse(normalized);
+        if (parsed.markdown().isBlank() && parsed.questions().isEmpty()) {
             fail(request, conversationId, new IllegalStateException("AI 返回了空回答"));
             return;
         }
-        List<SourceReference> sources = collectSources(conversationId, normalized);
-        String displayMarkdown = SourceCitationParser.removeCitationMarkup(normalized);
-        if (displayMarkdown.isBlank() && !sources.isEmpty()) {
-            displayMarkdown = "已根据本地手册整理，详细依据见下方来源。";
+        if (!terminalRequest.compareAndSet(0L, request)) {
+            return;
+        }
+        List<SearchTrace> traces = requestTraces.remove(request);
+        List<SourceReference> sources = selectCitedSources(
+                traces == null ? List.of() : traces,
+                parsed.markdown()
+        );
+        // 保留来源协议在回答中的原始位置。MarkdownRenderer 会逐行解析它，并在对应
+        // 句子后生成可点击的来源标注；这里不能先全局删除再把来源统一堆到气泡底部。
+        String displayMarkdown = parsed.markdown();
+        String renderableMarkdown = SourceCitationParser.removeCitationMarkup(displayMarkdown);
+        if (renderableMarkdown.isBlank() && !parsed.questions().isEmpty()) {
+            displayMarkdown = "已整理当前问题的下一步检索方向。";
+        }
+        if (SourceCitationParser.removeCitationMarkup(displayMarkdown).isBlank() && !sources.isEmpty()) {
+            displayMarkdown = "已根据本地手册整理，详细依据已标注在相关正文后。";
         }
         ModPedia.LOGGER.info(
-                "AI response completed: conversation={}, chars={}, searchTraces={}, sources={}",
+                "AI response completed: request={}, conversation={}, totalMs={}, chars={}, searchRounds={}, sources={}",
+                request,
                 conversationId,
+                elapsedMillis(requestStartedNanos.remove(request)),
                 normalized.length(),
-                conversationStore.get(conversationId) == null
-                        ? 0
-                        : conversationStore.get(conversationId).searchTraces().size(),
+                traces == null ? 0 : traces.size(),
                 sources.size()
         );
         conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.client.ChatMessage(
                 MessageRole.ASSISTANT,
                 displayMarkdown,
-                sources
+                sources,
+                parsed.questions()
         ));
         streamingHandle = null;
         if (conversationId.equals(conversationStore.activeId())) {
@@ -862,14 +948,6 @@ public final class AiAssistantSession implements AssistantSession {
                     false
             ));
         }
-    }
-
-    private List<SourceReference> collectSources(String conversationId, String answer) {
-        ConversationRecord record = conversationStore.get(conversationId);
-        if (record == null) {
-            return List.of();
-        }
-        return selectCitedSources(record.searchTraces(), answer);
     }
 
     static List<SourceReference> selectCitedSources(List<SearchTrace> traces, String answer) {
@@ -887,12 +965,19 @@ public final class AiAssistantSession implements AssistantSession {
         if (request != requestSequence.get()) {
             return;
         }
+        if (!terminalRequest.compareAndSet(0L, request)) {
+            return;
+        }
+        requestTraces.remove(request);
+        requestStartedNanos.remove(request);
         streamingHandle = null;
         String reason = throwable == null
                 ? "请检查 AI 设置、网络连接和模型名称。"
-                : AiClient.friendlyError(throwable);
+                : AiClient.friendlyError(throwable, settingsStore.load().effectiveApiKey());
         ModPedia.LOGGER.warn(
-                "AI request failed: type={}, reason={}",
+                "AI request failed: request={}, totalMs={}, type={}, reason={}",
+                request,
+                elapsedMillis(requestStartedNanos.remove(request)),
                 throwable == null ? "unknown" : throwable.getClass().getName(),
                 sanitize(reason)
         );
@@ -902,6 +987,13 @@ public final class AiAssistantSession implements AssistantSession {
                         : conversationStore.get(conversationId).messages(),
                 "AI 请求失败：" + sanitize(reason)
         ));
+    }
+
+    static ChatRequest requireSearchOnFirstRequest(ChatRequest request, AtomicBoolean firstRequest) {
+        if (request == null || firstRequest == null || !firstRequest.compareAndSet(true, false)) {
+            return request;
+        }
+        return request.toBuilder().toolChoice(ToolChoice.REQUIRED).build();
     }
 
     private String sanitize(String message) {
@@ -933,6 +1025,20 @@ public final class AiAssistantSession implements AssistantSession {
 
     private void notifyListeners(AssistantUiState next) {
         listeners.forEach(listener -> listener.accept(next));
+    }
+
+    private static String responseText(ChatResponse response) {
+        if (response == null || response.aiMessage() == null || response.aiMessage().text() == null) {
+            return "";
+        }
+        return response.aiMessage().text().strip();
+    }
+
+    private static long elapsedMillis(Long startedNanos) {
+        if (startedNanos == null) {
+            return -1L;
+        }
+        return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
     }
 
     private static java.nio.file.Path defaultKnowledgeRoot() {

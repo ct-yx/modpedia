@@ -124,7 +124,7 @@ public final class ManualSourceNavigator implements SourceNavigator {
         }
 
         // 即使来源页在资源重载期间暂时不可见，也先打开对应模组的 GuideME
-        // 根页面，避免点击来源卡片后完全没有反馈。
+            // 根页面，避免点击正文来源标注后完全没有反馈。
         if (fallbackGuideId != null) {
             Class<?> guidesCommon = Class.forName("guideme.GuidesCommon");
             guidesCommon.getMethod("openGuide", Player.class, ResourceLocation.class)
@@ -221,7 +221,7 @@ public final class ManualSourceNavigator implements SourceNavigator {
     }
 
     private String normalize(String value) {
-        return value == null ? "" : value.replace('\\', '/');
+        return value == null ? "" : value.replace('\\', '/').replaceAll("^/+", "");
     }
 
     private String removeExtension(String value) {
@@ -238,6 +238,20 @@ public final class ManualSourceNavigator implements SourceNavigator {
         return new GuideTarget(namespace, resourcePath, documentPath)
                 .pageCandidates(namespace, folder)
                 .stream()
+                .map(ResourceLocation::toString)
+                .toList();
+    }
+
+    /** 使用完整来源对象生成 GuideME 页面候选，覆盖 manifest 中的 assets/data 路径。 */
+    static List<String> guidePageCandidatePaths(SourceReference source, String folder) {
+        if (source == null) {
+            return List.of();
+        }
+        GuideTarget target = new ManualSourceNavigator().guideTarget(source);
+        if (target == null) {
+            return List.of();
+        }
+        return target.pageCandidates(target.namespace(), folder).stream()
                 .map(ResourceLocation::toString)
                 .toList();
     }

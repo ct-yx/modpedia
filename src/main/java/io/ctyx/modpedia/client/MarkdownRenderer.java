@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.ai.SourceCitationParser;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.Font;
 import net.minecraft.network.chat.Component;
@@ -8,7 +9,9 @@ import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** 将轻量 Markdown 行转换为 Minecraft 的带样式文本并按字体宽度换行。 */
 public final class MarkdownRenderer {
@@ -22,20 +25,112 @@ public final class MarkdownRenderer {
     }
 
     public static List<RenderedLine> layout(String markdown, Font font, int width) {
+        return layout(markdown, font, width, List.of());
+    }
+
+    /**
+     * 布局回答正文，同时把与本轮搜索结果匹配的来源标记绑定到原始 Markdown 行。
+     *
+     * <p>来源协议不会在这里被绘制成一串原始 ID，而是由 AssistantScreen 在对应行之后
+     * 绘制成可点击的短标注。这样来源位置随正文滚动，不会再统一堆在气泡底部。</p>
+     */
+    public static List<RenderedLine> layout(
+            String markdown,
+            Font font,
+            int width,
+            List<SourceReference> availableSources
+    ) {
         List<RenderedLine> result = new ArrayList<>();
         int lineWidth = Math.max(1, width);
+        List<SourceReference> normalizedSources = uniqueSources(availableSources);
+        boolean hasInlineAnnotations = false;
         for (MarkdownLine line : MarkdownParser.parse(markdown)) {
-            Component component = component(line);
+            List<SourceReference> annotations = sourceAnnotations(line, normalizedSources);
+            String displayText = line.kind() == MarkdownLine.Kind.CODE
+                    ? line.text()
+                    : SourceCitationParser.removeCitationMarkup(line.text());
+            MarkdownLine displayLine = displayLine(line, displayText);
+            Component component = component(displayLine);
             List<FormattedCharSequence> wrapped = font.split(component, lineWidth);
             if (wrapped.isEmpty()) {
-                result.add(new RenderedLine(FormattedCharSequence.EMPTY, line));
+                result.add(new RenderedLine(FormattedCharSequence.EMPTY, displayLine, annotations));
             } else {
-                for (FormattedCharSequence sequence : wrapped) {
-                    result.add(new RenderedLine(sequence, line));
+                for (int index = 0; index < wrapped.size(); index++) {
+                    result.add(new RenderedLine(
+                            wrapped.get(index),
+                            displayLine,
+                            index + 1 == wrapped.size() ? annotations : List.of()
+                    ));
                 }
             }
+            hasInlineAnnotations |= !annotations.isEmpty();
+        }
+
+        // 旧会话和内置文档可能只有 sources 字段，没有把协议标记保存到正文。为了兼容这些
+        // 数据，仍把来源放回正文末尾的标注行，而不是恢复旧的“来源区域”整段堆叠。
+        if (!hasInlineAnnotations && !normalizedSources.isEmpty() && !result.isEmpty()) {
+            int last = result.size() - 1;
+            while (last > 0 && result.get(last).source().kind() == MarkdownLine.Kind.BLANK) {
+                last--;
+            }
+            RenderedLine previous = result.get(last);
+            result.set(last, previous.withAnnotations(normalizedSources));
         }
         return List.copyOf(result);
+    }
+
+    /** 当前 Markdown 行对应的、且确实存在于本轮搜索结果中的来源。 */
+    static List<SourceReference> sourceAnnotations(MarkdownLine line, List<SourceReference> availableSources) {
+        if (line == null || line.kind() == MarkdownLine.Kind.CODE
+                || availableSources == null || availableSources.isEmpty()) {
+            return List.of();
+        }
+        List<SourceCitationParser.Citation> citations = SourceCitationParser.parse(line.text());
+        if (citations.isEmpty()) {
+            return List.of();
+        }
+        Map<String, SourceReference> sources = new LinkedHashMap<>();
+        for (SourceReference source : availableSources) {
+            if (source != null && !source.documentId().isBlank()) {
+                sources.putIfAbsent(
+                        SourceCitationParser.normalizeDocumentId(source.documentId()),
+                        source
+                );
+            }
+        }
+        Map<String, SourceReference> resolved = new LinkedHashMap<>();
+        for (SourceCitationParser.Citation citation : citations) {
+            String key = SourceCitationParser.normalizeDocumentId(citation.documentId());
+            SourceReference source = sources.get(key);
+            if (source == null) {
+                continue;
+            }
+            SourceReference annotated = citation.annotation().isBlank()
+                    ? source
+                    : source.withAnnotation(citation.annotation());
+            resolved.putIfAbsent(key, annotated);
+        }
+        return List.copyOf(resolved.values());
+    }
+
+    private static MarkdownLine displayLine(MarkdownLine source, String displayText) {
+        if (displayText == null || displayText.isBlank()) {
+            return new MarkdownLine(" ", MarkdownLine.Kind.BLANK, source.level());
+        }
+        return new MarkdownLine(displayText, source.kind(), source.level());
+    }
+
+    private static List<SourceReference> uniqueSources(List<SourceReference> sources) {
+        Map<String, SourceReference> unique = new LinkedHashMap<>();
+        if (sources == null) {
+            return List.of();
+        }
+        for (SourceReference source : sources) {
+            if (source != null && !source.documentId().isBlank()) {
+                unique.putIfAbsent(SourceCitationParser.normalizeDocumentId(source.documentId()), source);
+            }
+        }
+        return List.copyOf(unique.values());
     }
 
     static Component component(MarkdownLine line) {
@@ -103,6 +198,21 @@ public final class MarkdownRenderer {
         return dot < 0 ? 0 : dot + 2;
     }
 
-    public record RenderedLine(FormattedCharSequence sequence, MarkdownLine source) {
+    public record RenderedLine(
+            FormattedCharSequence sequence,
+            MarkdownLine source,
+            List<SourceReference> annotations
+    ) {
+        public RenderedLine(FormattedCharSequence sequence, MarkdownLine source) {
+            this(sequence, source, List.of());
+        }
+
+        public RenderedLine {
+            annotations = annotations == null ? List.of() : List.copyOf(annotations);
+        }
+
+        public RenderedLine withAnnotations(List<SourceReference> value) {
+            return new RenderedLine(sequence, source, value);
+        }
     }
 }

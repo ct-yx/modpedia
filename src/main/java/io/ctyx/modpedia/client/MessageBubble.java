@@ -11,8 +11,14 @@ public record MessageBubble(
         int top,
         int width,
         int height,
-        List<MarkdownRenderer.RenderedLine> lines
+        List<MarkdownRenderer.RenderedLine> lines,
+        boolean showFollowUps
 ) {
+    private static final int FOLLOW_UP_ROW_HEIGHT = 20;
+    private static final int FOLLOW_UP_ROW_GAP = 3;
+    private static final int SECTION_LABEL_GAP = 3;
+    private static final int SECTION_BOTTOM_GAP = 4;
+
     public MessageBubble {
         lines = List.copyOf(lines);
     }
@@ -24,19 +30,67 @@ public record MessageBubble(
     public static List<MessageBubble> layout(List<ChatMessage> messages, Font font, int contentWidth) {
         List<MessageBubble> result = new ArrayList<>();
         int top = 0;
-        for (ChatMessage message : messages) {
+        int lastAssistantIndex = -1;
+        for (int index = 0; index < messages.size(); index++) {
+            if (messages.get(index).role() == MessageRole.ASSISTANT) {
+                lastAssistantIndex = index;
+            }
+        }
+        for (int index = 0; index < messages.size(); index++) {
+            ChatMessage message = messages.get(index);
             int maxWidth = Math.max(140, (int) (contentWidth * 0.78));
             List<MarkdownRenderer.RenderedLine> lines = MarkdownRenderer.layout(
                     message.markdown(),
                     font,
-                    maxWidth - 24
+                    maxWidth - 24,
+                    message.sources()
             );
             int widest = lines.stream().mapToInt(line -> font.width(line.sequence())).max().orElse(80);
             int width = Math.min(maxWidth, Math.max(150, widest + 24));
-            int height = 14 + lines.size() * font.lineHeight + message.sources().size() * 16;
-            result.add(new MessageBubble(message, top, width, height, lines));
+            boolean showFollowUps = index == lastAssistantIndex && !message.followUpQuestions().isEmpty();
+            int height = 14 + bodyHeight(lines, font, width)
+                    + (showFollowUps ? followUpSectionHeight(font, message.followUpQuestions().size()) : 0);
+            result.add(new MessageBubble(message, top, width, height, lines, showFollowUps));
             top += height + 6;
         }
         return result;
+    }
+
+    static int bodyHeight(List<MarkdownRenderer.RenderedLine> lines, Font font, int bubbleWidth) {
+        int height = 0;
+        int annotationWidth = Math.max(1, bubbleWidth - 20);
+        for (MarkdownRenderer.RenderedLine line : lines) {
+            height += font.lineHeight;
+            height += SourceCard.inlineHeight(line.annotations(), font, annotationWidth);
+        }
+        return height;
+    }
+
+    static int followUpSectionHeight(Font font, int questionCount) {
+        if (questionCount <= 0) {
+            return 0;
+        }
+        return SECTION_LABEL_GAP
+                + font.lineHeight
+                + SECTION_LABEL_GAP
+                + questionCount * FOLLOW_UP_ROW_HEIGHT
+                + Math.max(0, questionCount - 1) * FOLLOW_UP_ROW_GAP
+                + SECTION_BOTTOM_GAP;
+    }
+
+    static int followUpRowHeight() {
+        return FOLLOW_UP_ROW_HEIGHT;
+    }
+
+    static int followUpRowGap() {
+        return FOLLOW_UP_ROW_GAP;
+    }
+
+    static int sectionLabelGap() {
+        return SECTION_LABEL_GAP;
+    }
+
+    static int sectionBottomGap() {
+        return SECTION_BOTTOM_GAP;
     }
 }

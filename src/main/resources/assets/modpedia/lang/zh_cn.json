@@ -76,6 +76,8 @@
   "screen.modpedia.source_preview": "来源文档",
   "screen.modpedia.source_preview_hint": "点击按钮跳转到原手册页面。",
   "screen.modpedia.open_source": "打开原手册",
+  "screen.modpedia.source_annotations": "来源标注 · 点击跳转对应手册页面",
+  "screen.modpedia.follow_up_questions": "你可能还会问",
   "screen.modpedia.source_navigation_unavailable": "当前来源没有可用的手册跳转。",
   "modpedia.example.title": "ModPedia 示例条目",
   "modpedia.example.text": "这是 JSON 手册转换器的测试页面。",
@@ -91,7 +93,7 @@
   "modpedia.patchouli.entry.introduction.page2_title": "提问与检索",
   "modpedia.patchouli.entry.introduction.page2": "按 K 打开助手，在输入框中用自然语言描述你遇到的问题。直接写游戏内显示名称、模组名称或“这个机器”即可；模组 ID、物品 ID 和标签只是可选的精确补充。$(br2)AI 会先调用本地搜索工具；当配方、步骤、前置条件或版本资料不完整时，会继续改写查询并补充检索。",
   "modpedia.patchouli.entry.introduction.page3_title": "AI 与仅搜索",
-  "modpedia.patchouli.entry.introduction.page3": "在设置中可以选择 AI 回答或仅搜索。AI 回答会根据检索到的来源组织说明；仅搜索模式跳过模型请求，直接显示完整 Markdown 段落、标题路径、匹配分和来源卡片。$(br2)点击来源卡片可以预览文档，并在可用时跳转到原手册页面。",
+  "modpedia.patchouli.entry.introduction.page3": "在设置中可以选择 AI 回答或仅搜索。AI 回答会根据检索到的来源组织说明，并在正文中显示由模型标注的来源跳转按钮；回答底部会给出三个可能的后续问题。仅搜索模式跳过模型请求，直接显示完整 Markdown 段落、标题路径、匹配分和来源标注。$(br2)点击来源标注可以预览文档，并在可用时跳转到原手册页面。",
   "modpedia.patchouli.entry.introduction.page4_title": "历史与更新",
   "modpedia.patchouli.entry.introduction.page4": "历史页面保存本地会话，设置页面管理接口和搜索预算。按 F9 可以重新扫描和构建知识库；启动时会自动导入 custom/ 下新增或修改的 Markdown 到 SQLite。$(br2)如果资料不足，ModPedia 会列出缺少的证据，不应把其他模组的相似名称当成确定答案。"
 }

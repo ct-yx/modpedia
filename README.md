@@ -9,8 +9,8 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.0.0-beta.2** |
-| 发布状态 | GitHub 正式测试版 |
+| Mod | **v0.2.0** |
+| 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
 | Java | **21** |
@@ -18,7 +18,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 | 客户端 UI 依赖 | ModernUI **3.12.0.2** |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2)。下一稳定版本目标为 `v1.0.0`。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v0.2.0)。此前的 `v1.0.0-beta.1` 和 `v1.0.0-beta.2` 保留为历史技术标签，Release 显示名称已统一为 `ModPedia · 模组百科` 前缀；从 `v0.2.0` 起采用 `0.x` 版本序列。
 
 ## 快速安装
 
@@ -35,7 +35,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.0.0-beta.2.jar**。
+1. 下载 **modpedia-0.2.0.jar**。
 2. 将 ModPedia 和 ModernUI JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 按 **K** 打开助手。
@@ -54,7 +54,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 3. 将“工作模式”切换为“仅搜索”。
 4. 在输入区输入模组、机器、物品或配方关键词。
 
-此模式直接读取本地 SQLite，返回完整 Markdown 段落、标题路径、匹配分和来源卡片，不读取 API 配置。
+此模式直接读取本地 SQLite，返回完整 Markdown 段落、标题路径、匹配分和正文内来源标注按钮，不读取 API 配置。
 
 ### AI 回答模式
 
@@ -69,7 +69,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 
 批量测试把模型分为“普通+工具可用”和“流式+工具可用”。如果当前开启流式响应，应优先选择报告中流式工具链通过的模型；某些图片、实时或 Codex 账户专用模型即使出现在列表中，也可能不适用于当前 Chat Completions 工具调用链。
 
-模型可以调用 search_knowledge。当配方、步骤、前置条件或版本证据不足时，会继续改写查询并补充检索；最终只展示 3–5 个本轮实际搜索到且由模型标注用途的相关来源。
+模型可以调用 search_knowledge。当配方、步骤、前置条件或版本证据不足时，会继续改写查询并补充检索；最终只展示 3–5 个本轮实际搜索到且由模型标注用途的正文内来源按钮，并在回答底部给出三个后续问题按钮。
 
 默认搜索预算：
 
@@ -239,7 +239,7 @@ build/reports/modpedia/knowledge-benchmark.md
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v0.2.0)
 
 ## 作者与许可证
 

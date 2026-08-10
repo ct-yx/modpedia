@@ -101,6 +101,17 @@ public final class AiModelCompatibilitySelfTest {
         boolean hasTools = request.has("tools");
         boolean continuation = request.has("messages")
                 && request.getAsJsonArray("messages").toString().contains("\"role\":\"tool\"");
+        if (hasTools && !continuation
+                && (!request.has("tool_choice")
+                || !"required".equals(request.get("tool_choice").getAsString()))) {
+            byte[] error = "{\"error\":{\"message\":\"tool_choice must be required\"}}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(400, error.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(error);
+            }
+            return;
+        }
         String response;
         if (streaming) {
             response = hasTools && !continuation

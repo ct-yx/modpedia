@@ -169,7 +169,7 @@ public final class AiModelCompatibilityTester {
         payload.addProperty("stream", false);
         HttpResult result = request(payload, false);
         if (!result.success()) {
-            return result.toCapability(started, "plain");
+            return result.toCapability(started, "plain", settings.effectiveApiKey());
         }
         JsonObject response = parseObject(result.body());
         if (response == null || !response.has("choices")) {
@@ -182,7 +182,7 @@ public final class AiModelCompatibilityTester {
         long started = System.nanoTime();
         HttpResult first = request(toolPayload(model, false), false);
         if (!first.success()) {
-            return first.toCapability(started, "tool");
+            return first.toCapability(started, "tool", settings.effectiveApiKey());
         }
         ToolCall call = firstToolCall(parseObject(first.body()));
         if (call == null) {
@@ -190,7 +190,7 @@ public final class AiModelCompatibilityTester {
         }
         HttpResult continuation = request(continuationPayload(model, call, false), false);
         if (!continuation.success()) {
-            return continuation.toCapability(started, "tool continuation");
+            return continuation.toCapability(started, "tool continuation", settings.effectiveApiKey());
         }
         return capability(Status.PASS, started, "工具调用和 tool 输出续接成功");
     }
@@ -206,7 +206,7 @@ public final class AiModelCompatibilityTester {
         payload.addProperty("stream", true);
         HttpResult result = request(payload, true);
         if (!result.success()) {
-            return result.toCapability(started, "stream");
+            return result.toCapability(started, "stream", settings.effectiveApiKey());
         }
         if (!result.body().contains("[DONE]")) {
             return capability(Status.FAIL, started, "流式响应没有 [DONE]");
@@ -218,7 +218,7 @@ public final class AiModelCompatibilityTester {
         long started = System.nanoTime();
         HttpResult first = request(toolPayload(model, true), true);
         if (!first.success()) {
-            return first.toCapability(started, "stream tool");
+            return first.toCapability(started, "stream tool", settings.effectiveApiKey());
         }
         ToolCall call = firstStreamingToolCall(first.body());
         if (call == null) {
@@ -226,7 +226,7 @@ public final class AiModelCompatibilityTester {
         }
         HttpResult continuation = request(continuationPayload(model, call, true), true);
         if (!continuation.success()) {
-            return continuation.toCapability(started, "stream tool continuation");
+            return continuation.toCapability(started, "stream tool continuation", settings.effectiveApiKey());
         }
         if (!continuation.body().contains("[DONE]")) {
             return capability(Status.FAIL, started, "工具续接流式响应没有 [DONE]");
@@ -278,10 +278,21 @@ public final class AiModelCompatibilityTester {
                     .header("Accept", "application/json")
                     .GET()
                     .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            return AiClient.parseModelListResponse(response.statusCode(), response.body());
+            for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (attempt < MAX_RETRIES && retryable(response.statusCode())) {
+                    sleep(350L * (attempt + 1));
+                    continue;
+                }
+                return AiClient.parseModelListResponse(response.statusCode(), response.body());
+            }
+            return new AiClient.ModelListResult(true, List.of(), "获取模型列表失败，请稍后重试。");
         } catch (Exception exception) {
-            return new AiClient.ModelListResult(true, List.of(), safeError(exception.getMessage()));
+            return new AiClient.ModelListResult(
+                    true,
+                    List.of(),
+                    safeError(exception.getMessage(), settings.effectiveApiKey())
+            );
         }
     }
 
@@ -293,7 +304,9 @@ public final class AiModelCompatibilityTester {
                 message("user", "查询压力管道。")
         ));
         payload.add("tools", tools());
-        payload.addProperty("tool_choice", "auto");
+        // 生产链路对新问题使用 required；批量探测必须测试同一协议，而不是只测
+        // 模型愿不愿意在 auto 下主动选工具。
+        payload.addProperty("tool_choice", "required");
         payload.addProperty("parallel_tool_calls", false);
         payload.addProperty("stream", streaming);
         return payload;
@@ -464,12 +477,16 @@ public final class AiModelCompatibilityTester {
         }
     }
 
-    private static Capability capability(Status status, long started, String message) {
-        return new Capability(status, elapsedMillis(started), safeError(message));
+    private Capability capability(Status status, long started, String message) {
+        return new Capability(status, elapsedMillis(started), safeError(message, settings.effectiveApiKey()));
     }
 
-    private static ModelReport failedModel(String model, Exception exception) {
-        Capability failure = new Capability(Status.FAIL, 0, safeError(exception.getMessage()));
+    private ModelReport failedModel(String model, Exception exception) {
+        Capability failure = new Capability(
+                Status.FAIL,
+                0,
+                safeError(exception.getMessage(), settings.effectiveApiKey())
+        );
         return new ModelReport(model, "", failure, failure, failure, failure);
     }
 
@@ -500,8 +517,11 @@ public final class AiModelCompatibilityTester {
         }
     }
 
-    private static String safeError(String message) {
+    private static String safeError(String message, String apiKey) {
         String value = message == null ? "未知错误" : message.strip();
+        if (apiKey != null && !apiKey.isBlank()) {
+            value = value.replace(apiKey, "[已隐藏密钥]");
+        }
         value = value.replaceAll("(?i)bearer\\s+[a-z0-9._~+/=-]+", "Bearer [已隐藏]");
         return value.length() <= MAX_ERROR_CHARS
                 ? value
@@ -642,13 +662,13 @@ public final class AiModelCompatibilityTester {
     }
 
     private record HttpResult(int status, String body, long latencyNanos, boolean success) {
-        Capability toCapability(long started, String operation) {
+        Capability toCapability(long started, String operation, String apiKey) {
             Status status = this.status == 400 || this.status == 404 || this.status == 405 || this.status == 422
                     ? Status.UNSUPPORTED
                     : Status.FAIL;
             String message = this.status == 0
-                    ? safeError(body)
-                    : operation + " HTTP " + this.status + "：" + safeError(body);
+                    ? safeError(body, apiKey)
+                    : operation + " HTTP " + this.status + "：" + safeError(body, apiKey);
             return new Capability(status, elapsedMillis(started), message);
         }
     }

@@ -148,6 +148,37 @@ public final class RetrievalService {
         );
     }
 
+    /**
+     * 为 AI 补搜读取同一文档的多个段落候选。
+     *
+     * <p>普通搜索契约仍然是“每篇文档一个最佳段落”。AI 需要在已经看过某篇文档的
+     * 概览后继续寻找步骤或配方，因此这里使用 SQLite 的扩展候选接口；旧版 JSON
+     * 索引没有段落数据库时退回普通搜索，不改变兼容行为。</p>
+     */
+    public SearchResponse searchForExpansion(SearchQuery query, int candidateLimit) {
+        SearchQuery actualQuery = query == null ? SearchQuery.of("") : query;
+        if (SearchTextNormalizer.normalizeField(actualQuery.text()).isBlank()) {
+            return new SearchResponse(SearchStatus.EMPTY_QUERY, actualQuery.text(), List.of(), "");
+        }
+
+        if (Files.isRegularFile(databasePath)) {
+            synchronized (reloadLock) {
+                ensureFreshDatabaseLocked();
+                if (databaseStatus != SearchStatus.READY || databaseReader == null) {
+                    return new SearchResponse(databaseStatus, actualQuery.text(), List.of(), databaseError);
+                }
+                return databaseReader.searchExpanded(
+                        actualQuery,
+                        defaultLanguage,
+                        databaseSynonyms,
+                        Math.max(1, Math.min(256, candidateLimit)),
+                        4
+                );
+            }
+        }
+        return search(actualQuery);
+    }
+
     /** 强制重新读取 SQLite 或旧版 manifest、关键词索引和同义词配置。 */
     public void reload() {
         synchronized (reloadLock) {

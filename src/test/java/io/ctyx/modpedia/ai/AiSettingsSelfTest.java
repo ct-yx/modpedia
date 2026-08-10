@@ -41,6 +41,19 @@ public final class AiSettingsSelfTest {
                     "设置页填写的 Key 应优先于旧环境变量");
             check("environment-key".equals(AiSettings.resolveApiKey("", " environment-key ")),
                     "设置页为空时应回退到环境变量");
+            check(!new AiSettings(
+                            AssistantMode.AI,
+                            "https://example.invalid/v1",
+                            "test-model",
+                            "",
+                            false,
+                            SearchIntensity.FAST,
+                            1,
+                            4,
+                            8_000,
+                            10
+                    ).requestConfigured(),
+                    "没有配置 API Key 时不能进入模型请求链路");
             check(restored.mode() == AssistantMode.AI, "旧版默认设置应使用 AI 模式");
 
             Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\"}");

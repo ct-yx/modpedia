@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -244,38 +244,46 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
         if (messages == null || messages.isEmpty()) {
             return List.of();
         }
+        List<ChatMessage> complete = new ArrayList<>();
+        Set<String> pending = new LinkedHashSet<>();
+        int toolTurnStart = -1;
+
         for (int index = 0; index < messages.size(); index++) {
             ChatMessage message = messages.get(index);
-            // 工具结果本身是完整工具回合的一部分，不能在这里直接截断。
-            if (message instanceof ToolExecutionResultMessage) {
-                continue;
-            }
-            if (!(message instanceof AiMessage aiMessage) || !aiMessage.hasToolExecutionRequests()) {
+            if (!pending.isEmpty()) {
+                // Tool result 必须紧跟发出对应请求的 AiMessage，并且 ID 必须匹配。
+                // 一旦出现普通消息、孤立结果或错误 ID，整个工具回合从请求处截断。
+                if (!(message instanceof ToolExecutionResultMessage toolResult)
+                        || toolResult.id() == null
+                        || !pending.remove(toolResult.id())) {
+                    return List.copyOf(messages.subList(0, toolTurnStart));
+                }
+                complete.add(message);
                 continue;
             }
 
-            Set<String> pending = new HashSet<>();
-            aiMessage.toolExecutionRequests().forEach(request -> {
-                if (request == null || request.id() == null || request.id().isBlank()) {
-                    pending.add("__invalid_tool_request__");
-                } else {
-                    pending.add(request.id());
-                }
-            });
-            int next = index + 1;
-            while (!pending.isEmpty() && next < messages.size()) {
-                ChatMessage result = messages.get(next);
-                if (!(result instanceof ToolExecutionResultMessage toolResult)
-                        || !pending.remove(toolResult.id())) {
-                    break;
-                }
-                next++;
-            }
-            if (!pending.isEmpty()) {
+            if (message instanceof ToolExecutionResultMessage) {
+                // 没有前置 Ai tool call 的结果不能交给网关；保留此前完整上下文。
                 return List.copyOf(messages.subList(0, index));
             }
-            index = next - 1;
+
+            if (message instanceof AiMessage aiMessage && aiMessage.hasToolExecutionRequests()) {
+                pending.clear();
+                for (var request : aiMessage.toolExecutionRequests()) {
+                    if (request == null || request.id() == null || request.id().isBlank()
+                            || !pending.add(request.id())) {
+                        return List.copyOf(messages.subList(0, index));
+                    }
+                }
+                toolTurnStart = index;
+            }
+            complete.add(message);
         }
-        return List.copyOf(new ArrayList<>(messages));
+
+        // 到达列表末尾仍有未返回的工具结果，删除从 Ai tool call 开始的尾部。
+        if (!pending.isEmpty() && toolTurnStart >= 0) {
+            return List.copyOf(messages.subList(0, toolTurnStart));
+        }
+        return List.copyOf(complete);
     }
 }

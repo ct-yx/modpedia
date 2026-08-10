@@ -21,7 +21,12 @@ public final class ConversationStoreSelfTest {
             ConversationStore store = new ConversationStore(root);
             String first = store.activeId();
             store.appendMessage(first, new ChatMessage(MessageRole.USER, "压力容器怎么启动？", List.of()));
-            store.appendMessage(first, new ChatMessage(MessageRole.ASSISTANT, "请先检查前置条件。", List.of()));
+            store.appendMessage(first, new ChatMessage(
+                    MessageRole.ASSISTANT,
+                    "请先检查前置条件。",
+                    List.of(),
+                    List.of("还需要配方吗？", "还需要步骤吗？", "如何排查？")
+            ));
             store.updateMemoryMessages(first, "[memory-json]");
 
             ConversationRecord created = store.create();
@@ -37,6 +42,8 @@ public final class ConversationStoreSelfTest {
             check(first.equals(restored.activeId()), "重启后应恢复活动会话");
             check(restored.active().messages().size() == 2, "重启后应恢复会话消息");
             check("[memory-json]".equals(restored.memoryMessagesJson(first)), "重启后应恢复上下文 JSON");
+            check(restored.active().messages().get(1).followUpQuestions().size() == 3,
+                    "重启后应恢复回答下方的后续问题");
 
             ConversationStore migration = new ConversationStore(root.resolve("migration"));
             String migrationId = migration.activeId();
@@ -66,7 +73,7 @@ public final class ConversationStoreSelfTest {
             check(restoredAnswer.sources().size() == 1, "旧会话引用应迁移为来源卡片");
             check("连接与防漏气步骤".equals(restoredAnswer.sources().get(0).annotation()),
                     "迁移后的来源应保留 AI 标注");
-            check(!restoredAnswer.markdown().contains("[来源:"), "迁移后的正文不应保留原始引用标记");
+            check(restoredAnswer.markdown().contains("[来源:"), "迁移后的正文应保留原始引用位置供客户端渲染");
 
             restored.delete(first);
             check(!first.equals(restored.activeId()), "删除活动会话后应切换到其他会话");

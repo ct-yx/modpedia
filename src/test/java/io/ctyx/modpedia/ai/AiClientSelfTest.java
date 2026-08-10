@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** AI 地址归一化、模型列表解析、认证错误和 HTML 错误提示回归测试。 */
@@ -27,6 +28,12 @@ public final class AiClientSelfTest {
                 "版本地址只应去除末尾斜杠");
         check("https://example.invalid/api".equals(AiClient.normalizedEndpoint("https://example.invalid/api")),
                 "自定义 API 路径不应被改写");
+        check("https://example.invalid/v1".equals(
+                        AiClient.normalizedEndpoint("https://example.invalid/v1/chat/completions")),
+                "误填完整 Chat Completions 地址时应回退到 API 根地址");
+        check("https://example.invalid/v1".equals(
+                        AiClient.normalizedEndpoint("https://example.invalid/v1/models")),
+                "误填模型列表地址时应回退到 API 根地址");
 
         AiClient.ModelListResult parsed = AiClient.parseModelListResponse(
                 200,
@@ -63,6 +70,10 @@ public final class AiClientSelfTest {
         );
         check(friendlyHtml.contains("网页内容"), "连接测试应将 HTML 解析错误转换为可读提示");
         check(!friendlyHtml.contains("secret-value"), "连接错误提示不得包含 API Key");
+        check(!AiClient.friendlyError(
+                new IllegalStateException("upstream echoed secret-value"),
+                "secret-value"
+        ).contains("secret-value"), "上游直接回显 API Key 时也必须脱敏");
 
         String friendlySpi = AiClient.friendlyError(new java.util.ServiceConfigurationError(
                 "dev.langchain4j.http.client.HttpClientBuilderFactory: "
@@ -112,12 +123,15 @@ public final class AiClientSelfTest {
         }
 
         testFetchModelsUsesNormalizedEndpoint();
+        testFetchModelsRetriesTemporaryFailure();
         testConnectionReportsSuccessfulResponseAsSuccess();
+        testConnectionReportsNonRetryableFailure();
         System.out.println("ModPedia AI client self-test passed");
     }
 
     private static void testConnectionReportsSuccessfulResponseAsSuccess() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger attempts = new AtomicInteger();
         ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
             Thread thread = new Thread(runnable, "modpedia-ai-client-connection-fixture");
             thread.setDaemon(true);
@@ -125,11 +139,14 @@ public final class AiClientSelfTest {
         });
         server.setExecutor(executor);
         server.createContext("/v1/chat/completions", exchange -> {
-            byte[] body = ("{\"id\":\"test\",\"choices\":[{\"message\":{"
+            int attempt = attempts.incrementAndGet();
+            byte[] body = (attempt == 1
+                    ? "{\"error\":{\"message\":\"temporary unavailable\"}}"
+                    : "{\"id\":\"test\",\"choices\":[{\"message\":{"
                     + "\"role\":\"assistant\",\"content\":\"OK\"},"
-                    + "\"finish_reason\":\"stop\"}]}" ).getBytes(StandardCharsets.UTF_8);
+                    + "\"finish_reason\":\"stop\"}]}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
+            exchange.sendResponseHeaders(attempt == 1 ? 503 : 200, body.length);
             try (var output = exchange.getResponseBody()) {
                 output.write(body);
             }
@@ -157,6 +174,106 @@ public final class AiClientSelfTest {
             check(completed.await(5, TimeUnit.SECONDS), "连接测试应在测试超时内完成");
             check(result.get() != null && !result.get().failed(),
                     "非空的成功响应必须报告为连接成功");
+            check(attempts.get() >= 2, "连接测试遇到临时 503 后应自动重试一次");
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    private static void testConnectionReportsNonRetryableFailure() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "modpedia-ai-client-failure-fixture");
+            thread.setDaemon(true);
+            return thread;
+        });
+        server.setExecutor(executor);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = "{\"error\":{\"message\":\"invalid model\"}}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(400, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try {
+            AiSettings settings = new AiSettings(
+                    AssistantMode.AI,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                    "test-model",
+                    "secret-value",
+                    false,
+                    SearchIntensity.FAST,
+                    1,
+                    4,
+                    8_000,
+                    10
+            );
+            java.util.concurrent.atomic.AtomicReference<AiClient.TestResult> result =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            CountDownLatch completed = new CountDownLatch(1);
+            AiClient.testConnection(settings, value -> {
+                result.set(value);
+                completed.countDown();
+            });
+            check(completed.await(5, TimeUnit.SECONDS), "非重试错误的连接测试应完成");
+            check(result.get() != null && result.get().failed(),
+                    "400 等配置错误必须报告 failed=true，不能显示为连接成功");
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    private static void testFetchModelsRetriesTemporaryFailure() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger attempts = new AtomicInteger();
+        ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "modpedia-ai-client-model-retry-fixture");
+            thread.setDaemon(true);
+            return thread;
+        });
+        server.setExecutor(executor);
+        server.createContext("/v1/models", exchange -> {
+            int attempt = attempts.incrementAndGet();
+            byte[] body = (attempt == 1
+                    ? "{\"error\":{\"message\":\"temporary unavailable\"}}"
+                    : "{\"data\":[{\"id\":\"retried-model\"}]}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(attempt == 1 ? 503 : 200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try {
+            AiSettings settings = new AiSettings(
+                    AssistantMode.AI,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                    "",
+                    "secret-value",
+                    false,
+                    SearchIntensity.FAST,
+                    1,
+                    4,
+                    8_000,
+                    10
+            );
+            AtomicReference<AiClient.ModelListResult> result = new AtomicReference<>();
+            CountDownLatch completed = new CountDownLatch(1);
+            AiClient.fetchModels(settings, value -> {
+                result.set(value);
+                completed.countDown();
+            });
+            check(completed.await(5, TimeUnit.SECONDS), "模型列表临时失败后的重试应完成");
+            check(result.get() != null && !result.get().failed()
+                            && result.get().models().stream()
+                            .anyMatch(model -> "retried-model".equals(model.id())),
+                    "模型列表遇到 503 后应自动重试并返回模型");
+            check(attempts.get() >= 2, "模型列表临时失败后必须发起第二次请求");
         } finally {
             server.stop(0);
             executor.shutdownNow();

@@ -7,8 +7,8 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.0.0-beta.2` |
-| GitHub 发布状态 | 正式测试版 |
+| 发布版本 | `v0.2.0` |
+| GitHub 发布状态 | 正式发布，M0 自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
 | Java | `21` |
@@ -21,7 +21,7 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2
+https://github.com/ct-yx/modpedia/releases/tag/v0.2.0
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
@@ -86,7 +86,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2
 - [x] `language=auto` 合并双语候选、实体锚点过滤通用词误命中，并归一化中文自然语言 `focus`。
 - [x] 重试或上游中断后清理没有工具结果的持久化调用，避免后续请求复用损坏的工具消息链。
 - [x] 快速、标准、深入和自定义搜索预算可配置。
-- [x] 历史会话保存用户/助手消息、来源卡片和 SearchTrace，不复制知识正文。
+- [x] 历史会话保存用户/助手消息、正文来源标注、三个后续问题和 SearchTrace，不复制知识正文。
 - [x] API Key 仅用于认证，不写入日志和会话；设置页非空值优先，空白时回退到环境变量。
 - [x] AI 设置保存使用原子替换并回读校验，失败时不会显示“已保存”。
 - [x] `AiClient` 支持 `/models` 模型列表、模型 ID 去重排序、根地址自动补全 `/v1` 和 HTML/401 友好错误提示。
@@ -131,16 +131,16 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. Beta 发布清单
+## 7. v0.2.0 发布清单
 
 - [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
 - [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
-- [x] 构建产物 `build/libs/modpedia-1.0.0-beta.2.jar` 已生成。
+- [x] 构建产物 `build/libs/modpedia-0.2.0.jar` 已生成。
 - [x] `SHA256SUMS` 与发布 JAR 校验一致。
-- [x] GitHub `main` 已推送，标签 `v1.0.0-beta.2` 已推送。
+- [x] GitHub `main` 已推送，标签 `v0.2.0` 已推送。
 - [x] GitHub 发布资产包含 JAR、校验、更新日志、安装说明和已知限制。
 - [~] 在真实图形客户端完成小窗口 UI、三种手册跳转和完整整合包回归。
-- [ ] 完成 M0 稳定版门槛后发布 `v1.0.0`。
+- [~] GUI Scale 4、Dedicated Server、三种手册真实跳转和大型整合包仍需目标实例人工回归。
 
 ## 8. 后续开发入口
 
@@ -204,8 +204,8 @@ docs: update mod development checklist
 ### 搜索与跳转
 
 - [ ] 使用中文名称、英文名称、模组 ID、物品 ID 和模糊关键词分别搜索。
-- [ ] 确认结果返回完整 Markdown 段落、标题路径、分数和来源卡片。
-- [ ] 分别测试 Patchouli、GuideME、Modonomicon 三种来源；来源卡片可预览并跳转。
+- [ ] 确认结果返回完整 Markdown 段落、标题路径、分数和正文来源标注按钮。
+- [ ] 分别测试 Patchouli、GuideME、Modonomicon 三种来源；正文来源标注可预览并跳转。
 - [ ] 只安装手册框架时确认加载正常；安装内容模组后确认正文数量增加。
 - [ ] 删除或更新 JAR 后按 `F9` 重建，确认生成文档、SQLite 和来源记录同步变化。
 - [ ] 新增、修改、删除 `config/modpedia/knowledge/custom/*.md` 后重启游戏，确认 ID/语言更新正确。
@@ -216,7 +216,7 @@ docs: update mod development checklist
 - [ ] AI 模式测试首次搜索不足时的补搜、跨语言查询、`has_more` 和重复查询抑制。
 - [ ] 测试流式输出、取消、超时、错误重试和历史会话恢复。
 - [ ] 检查日志和会话文件中没有 API Key。
-- [ ] 启动 Dedicated Server，确认不解析 ModernUI、AssistantScreen 和第三方客户端反射类。
+- [x] 启动 Dedicated Server，确认 ModPedia 不解析 `AssistantScreen` 和第三方客户端反射类；ModernUI 作为客户端可选依赖在服务端不加载其客户端入口。
 
 ## 12. 发布流程
 

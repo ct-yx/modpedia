@@ -40,6 +40,8 @@ public final class SourceCitationParserSelfTest {
         check(!cleaned.contains("[来源:"), "正文不应重复显示已转换的来源标记");
         check(!cleaned.contains("来源"), "单独的来源标题应由来源卡片替代");
         check(cleaned.contains("答案正文"), "移除来源标记时应保留回答正文");
+        check(SourceCitationParser.removeCitationMarkup("## 来源").isBlank(),
+                "来源协议标题应在正文渲染前隐藏，即使该行本身没有 ID");
 
         List<SourceCitationParser.Citation> english = SourceCitationParser.parse(
                 "[source: ae2:guide/energy | annotation: energy prerequisites]"
@@ -47,6 +49,26 @@ public final class SourceCitationParserSelfTest {
         check(english.size() == 1, "英文来源格式应可解析");
         check("energy prerequisites".equals(english.get(0).annotation()),
                 "英文 AI 标注应被解析");
+
+        List<SourceCitationParser.Citation> markdownLink = SourceCitationParser.parse(
+                "参见 [压力容器](ae2:guide/pressure#page=2)。"
+        );
+        check(markdownLink.size() == 1
+                        && "ae2:guide/pressure".equals(markdownLink.get(0).documentId())
+                        && "压力容器".equals(markdownLink.get(0).annotation()),
+                "直接 Markdown 来源链接应解析文档 ID、锚点和 AI 标注");
+        List<SourceCitationParser.Citation> nested = SourceCitationParser.parse(
+                "[来源: [压力容器](ae2:guide/pressure) | 标注: 启动条件]"
+        );
+        check(nested.size() == 1 && "ae2:guide/pressure".equals(nested.get(0).documentId())
+                        && "启动条件".equals(nested.get(0).annotation()),
+                "带 Markdown 链接的来源格式应保持显式标注优先");
+
+        List<SourceCitationParser.Citation> normalized = SourceCitationParser.parse(
+                "[来源： `AE2:GUIDE/ENERGY` | 标注：能源前置条件]"
+        );
+        check(normalized.size() == 1 && "AE2:GUIDE/ENERGY".equals(normalized.get(0).documentId()),
+                "中文全角标点和反引号来源 ID 应可解析");
 
         SourceReference source = new SourceReference(
                 "ae2:guide/controller", "原始标题", "ae2", "guide/controller.md"
@@ -71,7 +93,7 @@ public final class SourceCitationParserSelfTest {
         );
         List<SourceReference> selected = AiAssistantSession.selectCitedSources(
                 List.of(trace),
-                "[来源: doc:6 | 标注: 第六条] [来源: doc:2 | 标注: 第二条] "
+                "[来源: DOC:6 | 标注: 第六条] [来源: doc:2 | 标注: 第二条] "
                         + "[来源: doc:1] [来源: doc:3] [来源: doc:4] [来源: doc:5]"
         );
         check(selected.size() == 5, "来源卡片最多应保留五个明确引用");

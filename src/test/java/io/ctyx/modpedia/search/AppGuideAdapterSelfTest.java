@@ -199,7 +199,8 @@ public final class AppGuideAdapterSelfTest {
                 new LocalGuideScanner.ScanResult(List.of(changed), List.of())
         );
         check(updated.report().updatedCount() == 2, "APP 内容变化后应重新生成逻辑文档");
-        check(new RetrievalService(updated.knowledgeRoot()).search("新的压力").results().stream()
+        SearchResponse changedSearch = new RetrievalService(updated.knowledgeRoot()).search("新的压力");
+        check(changedSearch.results().stream()
                         .anyMatch(item -> item.title().contains("压力容器")),
                 "修改后的 APP 文档应可被 SQLite 检索");
     }

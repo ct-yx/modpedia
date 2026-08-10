@@ -83,11 +83,11 @@ ConversationStore → conversations/conversation-*.json
 
 `AiModelCompatibilityTester` 不参与正常回答链路，使用当前 API Key 读取 `/models` 后对每个模型验证四个能力：普通非流式、非流式工具结果续接、普通 SSE、流式工具结果续接。报告同时标记普通+工具可用和流式+工具可用，写入 `config/modpedia/diagnostics/ai-model-compatibility.{json,md}`；报告只保留接口主机、模型 ID、状态、耗时和脱敏错误，不保存 API Key。设置页批量按钮和 Gradle `aiModelCompatibility` 任务共用这套探测器。
 
-`SearchKnowledgeTool` 每轮返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`。`language=auto` 会同时查询当前语言和另一语言，再按文档 ID 去重合并；自然语言 `focus` 会归一化为标准值并参与段落排序。工具会优先保留查询实体锚点，避免“设置/前置条件/步骤”等通用词把示例页面抬到目标手册之前。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、资料缺口和来源格式规则。回答完成后只接受模型明确引用的来源，最多保留 5 个，并从 `[来源: document_id | 标注: ...]` 提取卡片标注；没有明确引用时不自动展示全部候选。
+`SearchKnowledgeTool` 每轮返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`。`language=auto` 会同时查询当前语言和另一语言，再按文档 ID 去重合并；自然语言 `focus` 会归一化为标准值并参与段落排序。工具会优先保留查询实体锚点，避免“设置/前置条件/步骤”等通用词把示例页面抬到目标手册之前。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、资料缺口和来源格式规则。回答完成后只接受模型明确引用的来源，最多保留 5 个，并从 `[来源: document_id | 标注: ...]` 提取正文来源标注按钮；没有明确引用时不自动展示全部候选。模型回答末尾的 `<modpedia_follow_up_questions>` 协议会被提取为三个后续问题按钮，不显示原始标签。
 
-历史会话的 UI 消息、来源卡片和 `SearchTrace` 保存到 `config/modpedia/conversations/conversation-*.json`；模型上下文单独保存到同目录的 `memory.sqlite`，知识正文不复制到会话文件。API Key 优先从设置读取，设置为空时回退到 `MODPEDIA_API_KEY`，不进入搜索轨迹和错误日志。设置保存后会原子替换并回读校验，失败会在页面显示。
+历史会话的 UI 消息、正文来源标注、后续问题和 `SearchTrace` 保存到 `config/modpedia/conversations/conversation-*.json`；模型上下文单独保存到同目录的 `memory.sqlite`，知识正文不复制到会话文件。API Key 优先从设置读取，设置为空时回退到 `MODPEDIA_API_KEY`，不进入搜索轨迹和错误日志。设置保存后会原子替换并回读校验，失败会在页面显示。
 
-`AiSettings.mode` 支持 `AI` 和 `SEARCH_ONLY`。仅搜索模式复用相同的 `RetrievalService` 和会话持久化，但跳过模型初始化、API Key 读取和连接测试；`LocalSearchMessageFormatter` 将完整段落转换为带来源卡片的助手消息。
+`AiSettings.mode` 支持 `AI` 和 `SEARCH_ONLY`。仅搜索模式复用相同的 `RetrievalService` 和会话持久化，但跳过模型初始化、API Key 读取和连接测试；`LocalSearchMessageFormatter` 将完整段落转换为带正文来源标注按钮的助手消息。
 
 ### `client`
 

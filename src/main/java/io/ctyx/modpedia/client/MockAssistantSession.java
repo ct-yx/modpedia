@@ -193,7 +193,9 @@ public final class MockAssistantSession implements AssistantSession {
         for (int index = 0; index < response.results().size(); index++) {
             SearchResult result = response.results().get(index);
             String title = result.title().isBlank() ? result.documentId() : result.title();
-            markdown.append("### ").append(index + 1).append(". ").append(title).append("\n");
+            markdown.append("### ").append(index + 1).append(". ").append(title)
+                    .append(" [来源: ").append(result.documentId())
+                    .append(" | 标注: ").append(citationLabel(title)).append("]\n");
             if (!result.headingPath().isBlank()) {
                 markdown.append("位置：").append(result.headingPath()).append("\n");
             }
@@ -209,7 +211,22 @@ public final class MockAssistantSession implements AssistantSession {
                     result.sourcePath()
             ));
         }
-        return new ChatMessage(MessageRole.ASSISTANT, markdown.toString().trim(), sources);
+        return new ChatMessage(
+                MessageRole.ASSISTANT,
+                markdown.toString().trim(),
+                sources,
+                List.of(
+                        "还要查看“" + prompt + "”的前置条件吗？",
+                        "还要查看“" + prompt + "”的配方或材料吗？",
+                        "如果使用失败，如何排查“" + prompt + "”？"
+                )
+        );
+    }
+
+    private static String citationLabel(String value) {
+        return (value == null ? "" : value.replace("\n", " ").replace("\r", " ").strip())
+                .replace("]", "）")
+                .replace("|", "·");
     }
 
     private static Path defaultKnowledgeRoot() {

@@ -48,6 +48,29 @@ public final class MarkdownRendererSelfTest {
         check(inline.stream().anyMatch(MarkdownInlineSpan::link),
                 "链接片段应保留下划线样式");
 
+        SourceReference annotatedSource = new SourceReference(
+                "demo:guide/pressure",
+                "压力容器",
+                "demo",
+                "assets/demo/guide/pressure.md"
+        );
+        MarkdownLine citationLine = new MarkdownLine(
+                "结论见 [来源: demo:guide/pressure | 标注: 启动条件和操作步骤]。",
+                MarkdownLine.Kind.PARAGRAPH,
+                0
+        );
+        List<SourceReference> annotations = MarkdownRenderer.sourceAnnotations(
+                citationLine,
+                List.of(annotatedSource)
+        );
+        check(annotations.size() == 1, "正文中的来源标记应解析为一个来源标注");
+        check("启动条件和操作步骤".equals(annotations.get(0).displayLabel()),
+                "正文来源标注应保留模型写的用途说明");
+        check(MarkdownRenderer.sourceAnnotations(
+                new MarkdownLine("[来源: other:unsearched]", MarkdownLine.Kind.PARAGRAPH, 0),
+                List.of(annotatedSource)
+        ).isEmpty(), "未出现在本轮搜索结果中的 ID 不得生成跳转按钮");
+
         String longText = "这是一段用于检查布局输入的很长文本，".repeat(20);
         check(MarkdownParser.parse(longText).size() == 1,
                 "长文本应作为一个 Markdown 段落交给 Font 进行宽度换行");

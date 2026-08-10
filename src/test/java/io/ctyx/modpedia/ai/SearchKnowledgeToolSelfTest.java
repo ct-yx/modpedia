@@ -32,16 +32,20 @@ public final class SearchKnowledgeToolSelfTest {
         Path root = Files.createTempDirectory("modpedia-ai-search-tool-");
         Path conversationsRoot = Files.createTempDirectory("modpedia-ai-conversations-");
         try {
-            KnowledgeDatabase.sync(root, List.of(
-                    input("ae2:pressure", "压力容器", "压力容器需要能量和密封材料。\n\n启动步骤：先安装控制器，再连接能源。"),
+            List<KnowledgeDatabase.DocumentInput> documents = new ArrayList<>(List.of(
+                    input("ae2:pressure", "压力容器", "压力容器需要能量和密封材料。\n\n细节段落：启动步骤是先安装控制器，再连接能源。"),
                     input("ae2:controller", "控制器", "控制器是压力容器的前置机器。\n\n控制器启动步骤和配方说明。"),
                     input("modpedia:generic", "搜索提示", "设置、前置条件和步骤是通用的搜索提示。"),
                     input("pneumaticcraft:pressure_tubes", "压力管道", "压力管道用于连接机器并防止漏气。"),
+                    input("tfc:overview", "TerraFirmaCraft", "TerraFirmaCraft 从石器时代开始，逐步发展到金属时代。", "zh_cn",
+                            List.of("tfc", "TerraFirmaCraft", "terrafirmacraft")),
                     input("modpedia:pressure-note", "压力提示", "压力是一个通用概念。", "zh_cn", List.of("pressure")),
                     input("pneumaticcraft:pressure-tubes-en", "Pressure Tubes",
                             "Pressure tubes connect machines and prevent leaks.", "en_us",
-                            List.of("pressure tubes", "pressure"))
-            ), true);
+                            List.of("pressure tubes", "pressure")),
+                    input("ae2:installer", "安装器", "安装器用于安装控制器。", "zh_cn", List.of("安装器"))
+            ));
+            KnowledgeDatabase.sync(root, documents, true);
             RetrievalService retrieval = new RetrievalService(root);
 
             SearchKnowledgeTool relevanceTool = new SearchKnowledgeTool(
@@ -64,6 +68,88 @@ public final class SearchKnowledgeToolSelfTest {
             check(relevance.get("results").getAsJsonArray().get(0).getAsJsonObject()
                     .get("document_id").getAsString().equals("pneumaticcraft:pressure_tubes"),
                     "实体命中应优先于通用的设置、前置条件和步骤页面");
+
+            JsonObject modIntroduction = parse(relevanceTool.search(
+                    "TFC TerraFirmaCraft 是什么、核心玩法、如何开始",
+                    "auto",
+                    8,
+                    "identify",
+                    List.of()
+            ));
+            check(modIntroduction.get("returned_count").getAsInt() >= 1
+                            && modIntroduction.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().equals("tfc:overview"),
+                    "模组介绍类问题应保留 TFC 实体，不能被‘介绍/玩法/如何开始’等意图词带偏："
+                            + modIntroduction);
+            check(modIntroduction.get("results").getAsJsonArray().asList().stream()
+                            .noneMatch(element -> element.getAsJsonObject().get("document_id").getAsString()
+                                    .startsWith("modpedia:")),
+                    "模组介绍类问题不应返回 ModPedia 通用页面");
+
+            SearchKnowledgeTool compactTool = new SearchKnowledgeTool(
+                    retrieval,
+                    SearchLanguage.ZH_CN,
+                    20,
+                    4_000,
+                    1,
+                    ignored -> { }
+            );
+            JsonObject compactChinese = parse(compactTool.search(
+                    "压力管道怎么连接",
+                    "zh_cn",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            check(compactChinese.get("returned_count").getAsInt() >= 1,
+                    "没有空格的中文连续句也必须拆出实体和双字词");
+            check(compactChinese.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().contains("pressure"),
+                    "没有空格的中文实体查询不能返回无关页面");
+
+            JsonObject prerequisiteQuestion = parse(compactTool.search(
+                    "压力容器需要哪些前置条件",
+                    "zh_cn",
+                    8,
+                    "prerequisite",
+                    List.of()
+            ));
+            check(prerequisiteQuestion.get("returned_count").getAsInt() >= 1
+                            && prerequisiteQuestion.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().equals("ae2:pressure"),
+                    "前置条件自然语言中的‘需要’不能把压力容器实体误删");
+
+            SearchKnowledgeTool troubleshootingTool = new SearchKnowledgeTool(
+                    retrieval,
+                    SearchLanguage.ZH_CN,
+                    20,
+                    4_000,
+                    1,
+                    ignored -> { }
+            );
+            JsonObject troubleshootingQuestion = parse(troubleshootingTool.search(
+                    "如何避免漏气",
+                    "zh_cn",
+                    8,
+                    "troubleshooting",
+                    List.of()
+            ));
+            check(troubleshootingQuestion.get("returned_count").getAsInt() >= 1
+                            && troubleshootingQuestion.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().contains("pressure"),
+                    "故障问题中的‘避免’不能把漏气相关手册误判为无结果");
+
+            JsonObject actionNamed = parse(compactTool.search(
+                    "安装器怎么用",
+                    "zh_cn",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            check(actionNamed.get("returned_count").getAsInt() >= 1
+                            && actionNamed.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().equals("ae2:installer"),
+                    "实体名称包含动作词时不能被中文问题清理逻辑误删");
 
             JsonObject bilingual = parse(relevanceTool.search(
                     "pressure tubes",
@@ -88,6 +174,37 @@ public final class SearchKnowledgeToolSelfTest {
             check(irrelevant.get("returned_count").getAsInt() == 0,
                     "明确实体没有命中时不能返回无关的通用页面");
 
+            JsonObject unresolved = parse(compactTool.search(
+                    "这个机器怎么用",
+                    "auto",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            check(unresolved.get("returned_count").getAsInt() == 0,
+                    "没有给出机器名称时不能用 ModPedia 或其它模组页面冒充答案");
+
+            documents.add(input("appliedpneumatics:overview", "Applied Pneumatics",
+                    "Applied Pneumatics 是气动附属模组的总览页面。", "zh_cn",
+                    List.of("appliedpneumatics", "Applied Pneumatics")));
+            documents.add(input("appliedpneumatics:pressure_tube", "压力管道",
+                    "压力管道用于连接机器并防止漏气。", "zh_cn",
+                    List.of("appliedpneumatics", "压力管道", "pressure tube")));
+            KnowledgeDatabase.sync(root, documents, true);
+            retrieval.reload();
+            JsonObject displayNameAndEntity = parse(relevanceTool.search(
+                    "Applied Pneumatics压力管道怎么连接",
+                    "auto",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            check(displayNameAndEntity.get("returned_count").getAsInt() >= 1,
+                    "模组显示名和中文实体连写时仍必须有结果");
+            check(displayNameAndEntity.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().equals("appliedpneumatics:pressure_tube"),
+                    "模组名前缀不能把结果泛化到模组总览页面");
+
             List<SearchTrace> traces = new ArrayList<>();
             SearchKnowledgeTool tool = new SearchKnowledgeTool(
                     retrieval,
@@ -109,6 +226,20 @@ public final class SearchKnowledgeToolSelfTest {
 
             String firstId = first.get("results").getAsJsonArray().get(0).getAsJsonObject()
                     .get("document_id").getAsString();
+            JsonObject sameDocumentExpansion = parse(tool.search(
+                    "细节段落",
+                    "zh_cn",
+                    8,
+                    "steps",
+                    List.of(firstId)
+            ));
+            check(sameDocumentExpansion.get("returned_count").getAsInt() >= 1,
+                    "排除已读文档后仍应允许返回该文档未读的细节段落");
+            check(sameDocumentExpansion.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().equals(firstId)
+                            && sameDocumentExpansion.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("segment_markdown").getAsString().contains("启动步骤"),
+                    "补搜应返回同一文档中新的步骤段落，而不是重复首段或错误页面：" + sameDocumentExpansion);
             JsonObject second = parse(tool.search(
                     "控制器",
                     "zh_cn",
@@ -121,9 +252,34 @@ public final class SearchKnowledgeToolSelfTest {
             check(!second.get("results").getAsJsonArray().get(0).getAsJsonObject()
                     .get("document_id").getAsString().equals(firstId), "补搜不应重复第一篇来源");
 
-            JsonObject repeated = parse(tool.search("压力容器", "zh_cn", 8, "prerequisite", List.of()));
+            JsonObject focusVariant = parse(tool.search("压力容器", "zh_cn", 8, "prerequisite", List.of()));
+            check(!focusVariant.get("hint").getAsString().contains("重复查询"),
+                    "同一查询补充不同 focus 时应允许重新检索");
+            JsonObject repeated = parse(tool.search("压力容器", "zh_cn", 8, "identify", List.of()));
             check(repeated.get("hint").getAsString().contains("重复查询"), "相同查询应提示模型改写");
-            check(traces.size() == 3, "每次工具调用都应保存搜索轨迹");
+            check(traces.size() == 5, "每次工具调用都应保存搜索轨迹");
+
+            SearchKnowledgeTool multiEntityTool = new SearchKnowledgeTool(
+                    retrieval,
+                    SearchLanguage.ZH_CN,
+                    20,
+                    8_000,
+                    1,
+                    ignored -> { }
+            );
+            JsonObject multiEntity = parse(multiEntityTool.search(
+                    "压力容器和控制器怎么启动",
+                    "zh_cn",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            List<String> multiIds = new ArrayList<>();
+            multiEntity.get("results").getAsJsonArray().forEach(element -> multiIds.add(
+                    element.getAsJsonObject().get("document_id").getAsString()
+            ));
+            check(multiIds.contains("ae2:pressure") && multiIds.contains("ae2:controller"),
+                    "中文多实体查询应拆开召回压力容器和控制器，而不是要求同一段同时出现两者");
             testIncompleteToolTurnCleanup();
             testPersistentContextRepair(conversationsRoot);
             System.out.println("ModPedia search knowledge tool self-test passed");
@@ -195,6 +351,31 @@ public final class SearchKnowledgeToolSelfTest {
         check(sanitized.get(4) instanceof AiMessage
                         && ((AiMessage) sanitized.get(4)).text().equals("first answer"),
                 "完整工具调用和最终回答应保留");
+
+        ToolExecutionRequest otherRequest = ToolExecutionRequest.builder()
+                .id("other-call")
+                .name("search_knowledge")
+                .arguments("{}")
+                .build();
+        List<ChatMessage> orphanResult = List.of(
+                SystemMessage.from("system"),
+                UserMessage.from("complete"),
+                AiMessage.from(completeRequest),
+                ToolExecutionResultMessage.from(completeRequest, "{}"),
+                AiMessage.from("answer"),
+                ToolExecutionResultMessage.from(otherRequest, "orphan")
+        );
+        check(PersistentChatMemoryStore.removeIncompleteToolTurn(orphanResult).size() == 5,
+                "孤立 Tool Result 也必须从自身位置截断，不能进入下一次模型请求");
+
+        List<ChatMessage> mismatchedResult = List.of(
+                SystemMessage.from("system"),
+                UserMessage.from("question"),
+                AiMessage.from(brokenRequest),
+                ToolExecutionResultMessage.from(otherRequest, "wrong id")
+        );
+        check(PersistentChatMemoryStore.removeIncompleteToolTurn(mismatchedResult).size() == 2,
+                "工具结果 ID 不匹配时应删除整个未完成工具回合");
     }
 
     private static void testPersistentContextRepair(Path root) {

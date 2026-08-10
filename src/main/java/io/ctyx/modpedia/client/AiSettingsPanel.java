@@ -604,6 +604,10 @@ final class AiSettingsPanel {
             setStatus("请先填写 API 地址和模型名称。", true);
             return;
         }
+        if (values.effectiveApiKey().isBlank()) {
+            setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
+            return;
+        }
         testing = true;
         setStatus("正在测试连接……", false);
         AiClient.testConnection(values, result -> Minecraft.getInstance().execute(() -> {

@@ -49,6 +49,24 @@ public final class ManualSourceNavigatorSelfTest {
                 ),
                 "GuideME 扩展页面应按书籍文件夹匹配注册书籍"
         );
+        SourceReference exactInterface = new SourceReference(
+                "ae2:ae2guide/items-blocks-machines/interface",
+                "ME Interface",
+                "ae2",
+                "assets/ae2/ae2guide/items-blocks-machines/interface.md"
+        );
+        List<String> exactInterfaceCandidates = ManualSourceNavigator.guidePageCandidatePaths(
+                exactInterface,
+                "ae2guide"
+        );
+        check(
+                exactInterfaceCandidates.contains("ae2:items-blocks-machines/interface.md"),
+                "真实 AE2 GuideME 来源必须从完整 assets 路径还原到页面 ID"
+        );
+        check(
+                exactInterfaceCandidates.contains("ae2:ae2guide/items-blocks-machines/interface.md"),
+                "真实 GuideME 来源还应保留带书籍根目录的兼容候选"
+        );
         SourceReference appSource = new SourceReference(
                 "content:app/book/basics/pressure",
                 "压力说明",

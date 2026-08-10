@@ -57,6 +57,11 @@ public record AiSettings(
         return !endpoint.isBlank() && !model.isBlank();
     }
 
+    /** 模型请求真正需要的完整配置；仅搜索模式不调用此检查。 */
+    public boolean requestConfigured() {
+        return configured() && !effectiveApiKey().isBlank();
+    }
+
     public int effectiveMaxRounds() {
         return intensity == SearchIntensity.CUSTOM ? maxRounds : intensity.rounds();
     }

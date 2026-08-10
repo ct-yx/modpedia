@@ -340,10 +340,12 @@ public final class AssistantScreen extends Screen {
             scrollToEnd = true;
             return true;
         }
-        for (SourceCard card : sourceCards) {
-            if (card.contains(mouseX, mouseY)) {
-                openSource(card.source());
-                return true;
+        if (messageBounds().contains(mouseX, mouseY)) {
+            for (SourceCard card : sourceCards) {
+                if (card.contains(mouseX, mouseY)) {
+                    openSourceOrPreview(card.source());
+                    return true;
+                }
             }
         }
         for (SuggestionHit hit : suggestionHits) {
@@ -494,7 +496,7 @@ public final class AssistantScreen extends Screen {
         // 只保留主窗口标题栏作为父层。这样即使渲染器/主题改变混合顺序，
         // 欢迎语、建议文字和输入控件也不会出现在二级页面文字之上。
         if (secondaryPanel == SecondaryPanel.NONE) {
-            drawMessages(graphics);
+            drawMessages(graphics, mouseX, mouseY);
             drawInputChrome(graphics);
         } else if (secondaryPanel == SecondaryPanel.HISTORY) {
             renderHistoryPage(graphics, mouseX, mouseY);
@@ -551,7 +553,7 @@ public final class AssistantScreen extends Screen {
         );
     }
 
-    private void drawMessages(GuiGraphics graphics) {
+    private void drawMessages(GuiGraphics graphics, int mouseX, int mouseY) {
         Bounds area = messageBounds();
         List<ChatMessage> visibleMessages = visibleMessages();
         List<MessageBubble> layouts = MessageList.layout(
@@ -576,7 +578,7 @@ public final class AssistantScreen extends Screen {
             drawEmptyState(graphics, area);
         } else {
             for (MessageBubble layout : layouts) {
-                drawMessage(graphics, layout, area, (int) scrollOffset);
+                drawMessage(graphics, layout, area, (int) scrollOffset, mouseX, mouseY);
             }
             drawStateNotice(graphics, area, messageContentHeight, (int) scrollOffset);
         }
@@ -689,7 +691,14 @@ public final class AssistantScreen extends Screen {
         }
     }
 
-    private void drawMessage(GuiGraphics graphics, MessageBubble layout, Bounds area, int scroll) {
+    private void drawMessage(
+            GuiGraphics graphics,
+            MessageBubble layout,
+            Bounds area,
+            int scroll,
+            int mouseX,
+            int mouseY
+    ) {
         ChatMessage message = layout.message();
         int y = area.top() + layout.top() - scroll;
         int bubbleX = message.role() == MessageRole.USER
@@ -719,24 +728,86 @@ public final class AssistantScreen extends Screen {
             }
             graphics.drawString(font, line.sequence(), bubbleX + 12, textY, TEXT_COLOR, false);
             textY += font.lineHeight;
+            if (!line.annotations().isEmpty()) {
+                int annotationWidth = Math.max(1, layout.width() - 20);
+                List<SourceCard> cards = SourceCard.inlineLayout(
+                        line.annotations(),
+                        font,
+                        bubbleX + 10,
+                        textY,
+                        annotationWidth
+                );
+                for (SourceCard card : cards) {
+                    boolean hovered = card.contains(mouseX, mouseY);
+                    card.render(
+                            graphics,
+                            font,
+                            hovered
+                                    ? glassStyle.glowInnerColor()
+                                    : (opaqueSurface ? glassStyle.opaqueSourceColor() : glassStyle.sourceColor()),
+                            hovered ? TEXT_COLOR : glassStyle.accentColor()
+                    );
+                    sourceCards = append(sourceCards, card);
+                }
+                textY += SourceCard.inlineHeight(line.annotations(), font, annotationWidth);
+            }
         }
-        for (SourceReference source : message.sources()) {
-            int sourceTop = textY + 3;
-            SourceCard card = new SourceCard(
-                    source,
-                    bubbleX + 8,
-                    sourceTop - 2,
-                    layout.width() - 16,
-                    16
-            );
-            card.render(
-                    graphics,
+
+        if (layout.showFollowUps()) {
+            textY += MessageBubble.sectionLabelGap();
+            graphics.drawString(
                     font,
-                    opaqueSurface ? glassStyle.opaqueSourceColor() : glassStyle.sourceColor(),
-                    glassStyle.accentColor()
+                    Component.translatable("screen.modpedia.follow_up_questions"),
+                    bubbleX + 12,
+                    textY,
+                    SUBTLE_TEXT_COLOR,
+                    false
             );
-            sourceCards = append(sourceCards, card);
-            textY += 16;
+            textY += font.lineHeight + MessageBubble.sectionLabelGap();
+            for (int index = 0; index < message.followUpQuestions().size(); index++) {
+                String question = message.followUpQuestions().get(index);
+                Bounds questionBounds = new Bounds(
+                        bubbleX + 8,
+                        textY,
+                        Math.max(1, layout.width() - 16),
+                        MessageBubble.followUpRowHeight()
+                );
+                boolean hovered = questionBounds.contains(mouseX, mouseY);
+                graphics.fill(
+                        questionBounds.left(),
+                        questionBounds.top(),
+                        questionBounds.right(),
+                        questionBounds.bottom(),
+                        hovered ? glassStyle.glowInnerColor() : glassStyle.assistantBubbleColor()
+                );
+                graphics.renderOutline(
+                        questionBounds.left(),
+                        questionBounds.top(),
+                        questionBounds.width(),
+                        questionBounds.height(),
+                        glassStyle.glowInnerColor()
+                );
+                String label = font.plainSubstrByWidth(
+                        "› " + question,
+                        Math.max(1, questionBounds.width() - 10)
+                );
+                graphics.drawString(
+                        font,
+                        Component.literal(label),
+                        questionBounds.left() + 5,
+                        questionBounds.top() + Math.max(2, (questionBounds.height() - font.lineHeight) / 2),
+                        hovered ? TEXT_COLOR : SUBTLE_TEXT_COLOR,
+                        false
+                );
+                suggestionHits = append(
+                        suggestionHits,
+                        new SuggestionHit(questionBounds, question, null)
+                );
+                textY += MessageBubble.followUpRowHeight();
+                if (index + 1 < message.followUpQuestions().size()) {
+                    textY += MessageBubble.followUpRowGap();
+                }
+            }
         }
     }
 
@@ -1099,6 +1170,16 @@ public final class AssistantScreen extends Screen {
     private void openSource(SourceReference source) {
         previewSource = source;
         previewStatus = "";
+    }
+
+    /** 正文标注区是直接跳转按钮；目标暂时不可用时才回退到来源预览。 */
+    private void openSourceOrPreview(SourceReference source) {
+        if (sourceNavigator.open(source)) {
+            previewSource = null;
+            return;
+        }
+        previewSource = source;
+        previewStatus = "unavailable";
     }
 
     private WindowBounds.ResizeEdge resizeEdgeAt(double mouseX, double mouseY) {

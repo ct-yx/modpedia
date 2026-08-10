@@ -49,6 +49,11 @@ public final class LocalSearchMessageFormatter {
                     .append(index + 1)
                     .append(". ")
                     .append(title)
+                    .append(" [来源: ")
+                    .append(result.documentId())
+                    .append(" | 标注: ")
+                    .append(citationLabel(title))
+                    .append("]")
                     .append("\n");
             if (!result.headingPath().isBlank()) {
                 markdown.append("位置：").append(result.headingPath()).append("\n");
@@ -72,5 +77,9 @@ public final class LocalSearchMessageFormatter {
 
     private static String safe(String value) {
         return value == null ? "" : value.replace("\n", " ").replace("\r", " ").strip();
+    }
+
+    private static String citationLabel(String value) {
+        return safe(value).replace("]", "）").replace("|", "·");
     }
 }

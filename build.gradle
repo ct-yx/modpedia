@@ -353,6 +353,18 @@ def sourceCitationParserSelfTest = tasks.register('sourceCitationParserSelfTest'
     mainClass = 'io.ctyx.modpedia.ai.SourceCitationParserSelfTest'
 }
 
+def followUpQuestionParserSelfTest = tasks.register('followUpQuestionParserSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.FollowUpQuestionParserSelfTest'
+}
+
+def aiRequestLifecycleSelfTest = tasks.register('aiRequestLifecycleSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiRequestLifecycleSelfTest'
+}
+
 def localSearchMessageFormatterSelfTest = tasks.register('localSearchMessageFormatterSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -427,6 +439,8 @@ tasks.named('test', Test) {
     dependsOn promptBuilderSelfTest
     dependsOn searchKnowledgeToolSelfTest
     dependsOn sourceCitationParserSelfTest
+    dependsOn followUpQuestionParserSelfTest
+    dependsOn aiRequestLifecycleSelfTest
     dependsOn localSearchMessageFormatterSelfTest
     dependsOn aiContextWindowSelfTest
     dependsOn aiModelCompatibilitySelfTest

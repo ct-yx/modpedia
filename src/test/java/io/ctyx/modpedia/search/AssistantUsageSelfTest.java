@@ -3,6 +3,7 @@ package io.ctyx.modpedia.search;
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
 import io.ctyx.modpedia.knowledge.LocalGuideScanner;
 import io.ctyx.modpedia.knowledge.ScannedResource;
+import io.ctyx.modpedia.client.BuiltInGuide;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +19,16 @@ public final class AssistantUsageSelfTest {
     }
 
     public static void main(String[] args) throws Exception {
+        check(BuiltInGuide.isUsageQuestion("如何开始使用这个模组"),
+                "未指定其他模组时的使用问题应确定性路由到 ModPedia 文档");
+        check(BuiltInGuide.isUsageQuestion("这个助手怎么用？"),
+                "助手使用问题应确定性路由到 ModPedia 文档");
+        check(BuiltInGuide.isUsageQuestion("这个模组怎么使用"),
+                "自然语言变体也应确定性路由到 ModPedia 文档");
+        check(BuiltInGuide.isUsageQuestion("请问如何开始使用本助手"),
+                "带礼貌前缀的助手使用问题应确定性路由");
+        check(!BuiltInGuide.isUsageQuestion("PneumaticCraft 压力管道怎么用"),
+                "明确指定其他模组和实体时不能误路由到 ModPedia 文档");
         Path root = Files.createTempDirectory("modpedia-assistant-usage-");
         try {
             String markdown = "---\n"
@@ -31,7 +42,7 @@ public final class AssistantUsageSelfTest {
             ScannedResource builtin = new ScannedResource(
                     "modpedia",
                     "ModPedia",
-                    "1.0.0-beta.2",
+                    "0.2.0",
                     "assets/modpedia/guides/modpedia/guide/assistant-usage.md",
                     "builtin_markdown",
                     markdown,

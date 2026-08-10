@@ -17,6 +17,7 @@ public final class RetrievalServiceSelfTest {
             Fixture fixture = new Fixture(tempDirectory);
             fixture.writeInitialData();
             testWholeParagraph(fixture);
+            testCompactChinesePhrase(fixture);
             testIdentifierAndRanking(fixture);
             testFencedCodeBlock(fixture);
             testLimitAndDeduplication(fixture);
@@ -46,6 +47,14 @@ public final class RetrievalServiceSelfTest {
 
         SearchResponse title = fixture.service().search("controller");
         check("ae2:controller".equals(title.results().get(0).documentId()), "标题命中应优先于正文命中");
+    }
+
+    private static void testCompactChinesePhrase(Fixture fixture) {
+        SearchResponse response = fixture.service().search("网络控制器怎么连接");
+        check(response.status() == SearchStatus.READY, "没有空格的中文实体问题应返回 READY");
+        check(!response.results().isEmpty(), "没有空格的中文实体问题应有结果");
+        check("ae2:controller".equals(response.results().get(0).documentId()),
+                "中文实体完整短语命中时不能返回泛相关页面");
     }
 
     private static void testFencedCodeBlock(Fixture fixture) {

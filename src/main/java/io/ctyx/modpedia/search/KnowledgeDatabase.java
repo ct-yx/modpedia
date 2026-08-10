@@ -36,7 +36,7 @@ import java.util.Set;
  * 读取到半成品。</p>
  */
 public final class KnowledgeDatabase {
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final int CUSTOM_PRIORITY = 100;
 
@@ -212,7 +212,36 @@ public final class KnowledgeDatabase {
             if (SearchTextNormalizer.normalizeField(actualQuery.text()).isBlank()) {
                 return new SearchResponse(SearchStatus.EMPTY_QUERY, actualQuery.text(), List.of(), "");
             }
-            return searchConnection(connection, actualQuery, defaultLanguage, synonyms);
+            return searchConnection(connection, actualQuery, defaultLanguage, synonyms, 1, actualQuery.limit());
+        }
+
+        /**
+         * 为 AI 补搜读取更大的段落候选窗口。
+         *
+         * <p>普通规则搜索仍然每篇文档只返回一个最佳段落；补搜需要在同一文档已经
+         * 命中概览页时，继续拿到步骤/配方等其它段落。这里把“候选窗口”和“最终
+         * 返回限制”分开，调用方仍负责去重和上下文预算。</p>
+         */
+        public synchronized SearchResponse searchExpanded(
+                SearchQuery query,
+                SearchLanguage defaultLanguage,
+                Map<String, Set<String>> synonyms,
+                int candidateLimit,
+                int segmentsPerDocument
+        ) {
+            ensureOpen();
+            SearchQuery actualQuery = query == null ? SearchQuery.of("") : query;
+            if (SearchTextNormalizer.normalizeField(actualQuery.text()).isBlank()) {
+                return new SearchResponse(SearchStatus.EMPTY_QUERY, actualQuery.text(), List.of(), "");
+            }
+            return searchConnection(
+                    connection,
+                    actualQuery,
+                    defaultLanguage,
+                    synonyms,
+                    Math.max(1, Math.min(8, segmentsPerDocument)),
+                    Math.max(1, Math.min(256, candidateLimit))
+            );
         }
 
         public synchronized Optional<String> readMarkdown(String documentId, String language) {
@@ -315,7 +344,9 @@ public final class KnowledgeDatabase {
             Connection connection,
             SearchQuery actualQuery,
             SearchLanguage defaultLanguage,
-            Map<String, Set<String>> synonyms
+            Map<String, Set<String>> synonyms,
+            int segmentsPerDocument,
+            int resultLimit
     ) {
         SearchLanguage language = actualQuery.language() == SearchLanguage.AUTO
                 ? defaultLanguage == null || defaultLanguage == SearchLanguage.AUTO
@@ -337,14 +368,16 @@ public final class KnowledgeDatabase {
                     : new LinkedHashMap<>();
             Map<Long, SegmentRef> segmentRefs = identifierQuery && !metadataDocuments.isEmpty()
                     ? Map.of()
-                    : findFtsSegments(connection, queryTerms, language, actualQuery.limit());
+                    : findFtsSegments(connection, queryTerms, language, resultLimit, segmentsPerDocument);
             // 标题和关键词已经进入 FTS；常规查询不再先对所有文档执行多组
             // 前置 LIKE。只有 FTS 没有候选时才扫描 ID、分类和来源路径元数据，
             // 保留这些字段的回退匹配，同时避免中文双字词把查询放大到 N×M。
             if (metadataDocuments.isEmpty() && segmentRefs.isEmpty()) {
                 metadataDocuments.putAll(findMetadataDocuments(connection, queryTerms, language));
             }
-            List<SegmentRow> segments = loadSegments(connection, segmentRefs.keySet());
+            List<SegmentRow> segments = metadataDocuments.isEmpty()
+                    ? loadSegments(connection, segmentRefs.keySet())
+                    : loadSegmentsForDocuments(connection, metadataDocuments.keySet(), segmentsPerDocument);
             Map<DocumentKey, List<SegmentRow>> segmentsByDocument = new LinkedHashMap<>();
             for (SegmentRow segment : segments) {
                 segmentsByDocument.computeIfAbsent(segment.key(), ignored -> new ArrayList<>()).add(segment);
@@ -369,6 +402,7 @@ public final class KnowledgeDatabase {
             Map<String, SearchResult> bestByDocument = new LinkedHashMap<>();
             Map<String, Integer> bestPriorities = new HashMap<>();
             Map<String, String> bestLanguages = new HashMap<>();
+            Map<String, List<ScoredSegment>> expandedByDocument = new LinkedHashMap<>();
             for (Map.Entry<DocumentKey, List<SegmentRow>> entry : segmentsByDocument.entrySet()) {
                 DocumentRow document = metadataDocuments.get(entry.getKey());
                 if (document == null) {
@@ -383,29 +417,37 @@ public final class KnowledgeDatabase {
                     if (candidate.score() <= 0) {
                         continue;
                     }
-                    SearchResult previous = bestByDocument.get(candidate.documentId());
-                    if (previous == null || better(
-                            candidate,
-                            document,
-                            previous,
-                            bestPriorities.getOrDefault(candidate.documentId(), Integer.MIN_VALUE),
-                            bestLanguages.get(candidate.documentId()),
-                            language
-                    )) {
-                        bestByDocument.put(candidate.documentId(), candidate);
-                        bestPriorities.put(candidate.documentId(), document.priority());
-                        bestLanguages.put(candidate.documentId(), document.language());
+                    if (segmentsPerDocument == 1) {
+                        SearchResult previous = bestByDocument.get(candidate.documentId());
+                        if (previous == null || better(
+                                candidate,
+                                document,
+                                previous,
+                                bestPriorities.getOrDefault(candidate.documentId(), Integer.MIN_VALUE),
+                                bestLanguages.get(candidate.documentId()),
+                                language
+                        )) {
+                            bestByDocument.put(candidate.documentId(), candidate);
+                            bestPriorities.put(candidate.documentId(), document.priority());
+                            bestLanguages.put(candidate.documentId(), document.language());
+                        }
+                    } else {
+                        expandedByDocument.computeIfAbsent(candidate.documentId(), ignored -> new ArrayList<>())
+                                .add(new ScoredSegment(document, segment, candidate));
                     }
                 }
             }
 
-            List<SearchResult> results = new ArrayList<>(bestByDocument.values());
+            List<SearchResult> results = segmentsPerDocument == 1
+                    ? new ArrayList<>(bestByDocument.values())
+                    : selectExpandedResults(expandedByDocument, language, segmentsPerDocument);
+            results = refineCjkResults(results, actualQuery.text());
             results.sort(Comparator
                     .comparingInt(SearchResult::score)
                     .reversed()
                     .thenComparing(SearchResult::documentId));
-            if (results.size() > actualQuery.limit()) {
-                results = new ArrayList<>(results.subList(0, actualQuery.limit()));
+            if (results.size() > resultLimit) {
+                results = new ArrayList<>(results.subList(0, resultLimit));
             }
             return new SearchResponse(
                     results.isEmpty() ? SearchStatus.NO_MATCH : SearchStatus.READY,
@@ -423,6 +465,82 @@ public final class KnowledgeDatabase {
                             : exception.getMessage())
             );
         }
+    }
+
+    private static List<SearchResult> selectExpandedResults(
+            Map<String, List<ScoredSegment>> candidatesByDocument,
+            SearchLanguage language,
+            int segmentsPerDocument
+    ) {
+        List<SearchResult> results = new ArrayList<>();
+        for (List<ScoredSegment> candidates : candidatesByDocument.values()) {
+            candidates.sort(Comparator
+                    .comparingInt((ScoredSegment value) -> value.result().score())
+                    .reversed()
+                    .thenComparing(Comparator.comparingInt((ScoredSegment value) -> value.document().priority())
+                            .reversed())
+                    .thenComparingInt(value -> value.document().language().equals(language.code()) ? 0 : 1)
+                    .thenComparingInt(value -> value.segment().index())
+                    .thenComparing(value -> value.document().language())
+                    .thenComparing(value -> value.segment().headingPath()));
+            if (candidates.isEmpty()) {
+                continue;
+            }
+
+            // 同一 document_id 的中英文页面只保留一个语言版本；语言回退仍由
+            // 当前语言优先级和原有 score 规则决定，避免补搜同时塞入两份正文。
+            String selectedLanguage = candidates.get(0).document().language();
+            int selected = 0;
+            for (ScoredSegment candidate : candidates) {
+                if (!selectedLanguage.equals(candidate.document().language())) {
+                    continue;
+                }
+                results.add(candidate.result());
+                if (++selected >= segmentsPerDocument) {
+                    break;
+                }
+            }
+        }
+        return results;
+    }
+
+    /** 中文连续句先按完整实体短语收窄，避免仅命中双字片段的泛相关页面进入结果。 */
+    private static List<SearchResult> refineCjkResults(List<SearchResult> results, String query) {
+        List<String> phrases = SearchTextNormalizer.semanticCjkPhrases(query);
+        List<String> compoundPhrases = phrases.stream()
+                .filter(phrase -> phrase.length() >= 3)
+                .toList();
+        if (compoundPhrases.isEmpty() || results.isEmpty()) {
+            return results;
+        }
+        List<SearchResult> matched = results.stream()
+                .filter(result -> compoundPhrases.stream()
+                        .anyMatch(phrase -> matchesCjkPhrase(result, phrase)))
+                .toList();
+        // stream().toList() 返回不可变列表；调用方还会按稳定规则排序和截断，
+        // 因此这里必须返回可变副本，避免中文查询在最终排序阶段触发异常。
+        return new ArrayList<>(matched);
+    }
+
+    private static boolean matchesCjkPhrase(SearchResult result, String phrase) {
+        return containsCjkPhrase(result.documentId(), phrase)
+                || containsCjkPhrase(result.title(), phrase)
+                || containsCjkPhrase(result.sourcePath(), phrase)
+                || containsCjkPhrase(result.headingPath(), phrase)
+                || containsCjkPhrase(result.segmentMarkdown(), phrase)
+                || containsCjkPhrase(String.join(" ", result.matchedTerms()), phrase);
+    }
+
+    private static boolean containsCjkPhrase(String value, String phrase) {
+        String normalizedValue = SearchTextNormalizer.normalizeField(value);
+        String normalizedPhrase = SearchTextNormalizer.normalizeField(phrase);
+        if (normalizedValue.contains(normalizedPhrase)) {
+            return true;
+        }
+        // 允许“压力 容器”这类只由空格/标点分隔的紧凑写法，但只在同一个字段
+        // 内判断，不能把标题末尾和正文开头拼成一个不存在的实体。
+        return SearchTextNormalizer.compact(normalizedValue)
+                .contains(SearchTextNormalizer.compact(normalizedPhrase));
     }
 
     private static boolean looksLikeIdentifier(String text) {
@@ -522,7 +640,8 @@ public final class KnowledgeDatabase {
             Connection connection,
             SearchTextNormalizer.QueryTerms query,
             SearchLanguage language,
-            int limit
+            int limit,
+            int segmentsPerDocument
     ) throws SQLException {
         String match = ftsMatch(query);
         if (match.isBlank()) {
@@ -538,9 +657,11 @@ public final class KnowledgeDatabase {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, match);
             statement.setString(2, language.code());
-            // 结果在 Java 侧还会按文档去重；取 4 倍页面上限即可覆盖同一文档
-            // 的多个段落，同时避免 10× 语料把数百个候选段落全部加载到内存。
-            statement.setInt(3, Math.max(32, Math.min(64, Math.max(1, limit) * 4)));
+            // 结果在 Java 侧还会按文档去重，并且中文多实体查询可能需要从多个
+            // 页面中筛出完整短语。扩大候选窗口可以避免通用双字词把真正实体挤出
+            // 候选集；上限仍然固定，保证大型整合包下不会把整张 FTS 表搬进内存。
+            statement.setInt(3, Math.max(32, Math.min(1024,
+                    Math.max(1, limit) * 12 * Math.max(1, segmentsPerDocument))));
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     long segmentId = rows.getLong("segment_id");
@@ -562,7 +683,8 @@ public final class KnowledgeDatabase {
         String placeholders = String.join(", ", java.util.Collections.nCopies(segmentIds.size(), "?"));
         String sql = "SELECT segment_id, document_id, language, segment_index, "
                 + "heading_path, markdown, normalized_text FROM segments "
-                + "WHERE segment_id IN (" + placeholders + ")";
+                + "WHERE segment_id IN (" + placeholders + ")"
+                + " ORDER BY document_id, language, segment_index";
         List<SegmentRow> result = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             int parameter = 1;
@@ -572,6 +694,55 @@ public final class KnowledgeDatabase {
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     result.add(readSegmentRow(rows));
+                }
+            }
+        }
+        return result;
+    }
+
+    private static List<SegmentRow> loadSegmentsForDocuments(
+            Connection connection,
+            Set<DocumentKey> keys,
+            int maxPerDocument
+    ) throws SQLException {
+        if (keys.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> documentIds = new LinkedHashSet<>();
+        LinkedHashSet<String> languages = new LinkedHashSet<>();
+        for (DocumentKey key : keys) {
+            documentIds.add(key.documentId());
+            languages.add(key.language());
+        }
+        String idPlaceholders = String.join(", ", java.util.Collections.nCopies(documentIds.size(), "?"));
+        String languagePlaceholders = String.join(", ", java.util.Collections.nCopies(languages.size(), "?"));
+        String sql = "SELECT segment_id, document_id, language, segment_index, "
+                + "heading_path, markdown, normalized_text FROM segments "
+                + "WHERE document_id IN (" + idPlaceholders + ") "
+                + "AND language IN (" + languagePlaceholders + ") "
+                + "ORDER BY document_id, language, segment_index";
+        Map<DocumentKey, Integer> counts = new HashMap<>();
+        List<SegmentRow> result = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int parameter = 1;
+            for (String documentId : documentIds) {
+                statement.setString(parameter++, documentId);
+            }
+            for (String language : languages) {
+                statement.setString(parameter++, language);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    SegmentRow segment = readSegmentRow(rows);
+                    if (!keys.contains(segment.key())) {
+                        continue;
+                    }
+                    int count = counts.getOrDefault(segment.key(), 0);
+                    if (count >= maxPerDocument) {
+                        continue;
+                    }
+                    result.add(segment);
+                    counts.put(segment.key(), count + 1);
                 }
             }
         }
@@ -875,6 +1046,13 @@ public final class KnowledgeDatabase {
     ) {
     }
 
+    private record ScoredSegment(
+            DocumentRow document,
+            SegmentRow segment,
+            SearchResult result
+    ) {
+    }
+
     private record TextProfile(String normalized, String compact, Set<String> tokens) {
         static TextProfile fromNormalized(String value) {
             String normalized = value == null ? "" : value.trim();
@@ -1149,10 +1327,10 @@ public final class KnowledgeDatabase {
                 ftsStatement.setLong(1, segmentId);
                 ftsStatement.setString(2, document.id());
                 ftsStatement.setString(3, input.language());
-                ftsStatement.setString(4, normalized(document.title()));
-                ftsStatement.setString(5, normalized(String.join(" ", document.keywords())));
-                ftsStatement.setString(6, normalized(segment.headingPath()));
-                ftsStatement.setString(7, normalized(segment.markdown()));
+                ftsStatement.setString(4, ftsText(document.title()));
+                ftsStatement.setString(5, ftsText(String.join(" ", document.keywords())));
+                ftsStatement.setString(6, ftsText(segment.headingPath()));
+                ftsStatement.setString(7, ftsText(segment.markdown()));
                 ftsStatement.executeUpdate();
             }
         }
@@ -1261,6 +1439,47 @@ public final class KnowledgeDatabase {
             return "";
         }
         return String.join(" ", SearchTextNormalizer.tokens(value));
+    }
+
+    /**
+     * unicode61 会将连续中文视为一个 token。查询端会生成相邻双字词，因此索引端
+     * 也要把中文字符分隔开，否则实体只出现在正文时会因标题/关键词没有命中而漏搜。
+     * 仅改变 FTS 派生列，documents.markdown 和 segments.normalized_text 仍保留原格式。
+     */
+    private static String ftsText(String value) {
+        String raw = SearchTextNormalizer.normalizeRaw(value);
+        if (raw.isBlank()) {
+            return "";
+        }
+        StringBuilder separated = new StringBuilder(raw.length() + 16);
+        StringBuilder cjkRun = new StringBuilder();
+        raw.codePoints().forEach(codePoint -> {
+            if (isCjk(codePoint)) {
+                cjkRun.appendCodePoint(codePoint);
+                return;
+            }
+            appendCjkRun(separated, cjkRun);
+            separated.appendCodePoint(codePoint);
+        });
+        appendCjkRun(separated, cjkRun);
+        return SearchTextNormalizer.normalizeField(separated.toString());
+    }
+
+    private static void appendCjkRun(StringBuilder output, StringBuilder run) {
+        if (run.isEmpty()) {
+            return;
+        }
+        // 同时保留完整中文串和相邻双字词：前者支持完整实体，后者支持实体出现在
+        // 正文且查询包含自然语言后缀的情况。这样不依赖 unicode61 对中文分词的猜测。
+        output.append(run).append(' ');
+        for (int index = 0; index + 1 < run.length(); index++) {
+            output.append(run, index, index + 2).append(' ');
+        }
+        run.setLength(0);
+    }
+
+    private static boolean isCjk(int codePoint) {
+        return codePoint >= 0x3400 && codePoint <= 0x9fff;
     }
 
     private static String normalizeLanguage(String value) {

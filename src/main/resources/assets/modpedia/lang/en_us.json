@@ -76,6 +76,8 @@
   "screen.modpedia.source_preview": "Source document",
   "screen.modpedia.source_preview_hint": "Use the button to open the original guide page.",
   "screen.modpedia.open_source": "Open original guide",
+  "screen.modpedia.source_annotations": "Source annotations · click to open the guide page",
+  "screen.modpedia.follow_up_questions": "You may also ask",
   "screen.modpedia.source_navigation_unavailable": "No guide navigation is available for this source.",
   "modpedia.example.title": "ModPedia Example Entry",
   "modpedia.example.text": "This page validates the JSON guide converter.",
@@ -91,7 +93,7 @@
   "modpedia.patchouli.entry.introduction.page2_title": "Ask and Search",
   "modpedia.patchouli.entry.introduction.page2": "Press K to open the assistant and describe the problem in natural language. Use the in-game display name, mod name, or a description such as ‘this machine’; mod IDs, item IDs, and tags are optional precision hints.$(br2)The AI calls the local search tool first. If recipes, steps, prerequisites, or version details are incomplete, it rewrites the query and searches again.",
   "modpedia.patchouli.entry.introduction.page3_title": "AI or Search Only",
-  "modpedia.patchouli.entry.introduction.page3": "The settings page lets you choose AI answers or search only. AI mode organizes evidence from the retrieved sources; search-only mode skips model requests and displays complete Markdown paragraphs, heading paths, scores, and source cards.$(br2)Source cards can preview the document and, when available, open the original guide page.",
+  "modpedia.patchouli.entry.introduction.page3": "The settings page lets you choose AI answers or search only. AI mode organizes evidence from retrieved sources and places model-labelled guide buttons in the answer body; the bottom of the answer shows three likely follow-up questions. Search-only mode skips model requests and displays complete Markdown paragraphs, heading paths, scores, and source annotations.$(br2)Click a source annotation to preview the document and, when available, open the original guide page.",
   "modpedia.patchouli.entry.introduction.page4_title": "History and Updates",
   "modpedia.patchouli.entry.introduction.page4": "The history page stores local conversations, while settings manage the API and search budget. Press F9 to rescan and rebuild the knowledge base; on startup, new or modified Markdown in custom/ is imported into SQLite.$(br2)When evidence is insufficient, ModPedia lists the missing facts instead of treating a similarly named mod as a certain answer."
 }

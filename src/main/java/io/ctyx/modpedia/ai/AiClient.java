@@ -91,23 +91,37 @@ public final class AiClient {
         AiSettings actual = settings == null ? AiSettings.defaults() : settings;
         Consumer<TestResult> resultConsumer = callback == null ? ignored -> { } : callback;
         TEST_EXECUTOR.execute(() -> {
-            try {
-                if (!actual.configured()) {
-                    resultConsumer.accept(new TestResult(false, "请先填写 API 地址和模型名称。"));
+            for (int attempt = 0; attempt < 2; attempt++) {
+                try {
+                    if (!actual.configured()) {
+                        resultConsumer.accept(new TestResult(false, "请先填写 API 地址和模型名称。"));
+                        return;
+                    }
+                    if (actual.effectiveApiKey().isBlank()) {
+                        resultConsumer.accept(new TestResult(false,
+                                "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。"));
+                        return;
+                    }
+                    String response = blockingModel(actual).chat(
+                            "Reply with a short confirmation that the connection is working."
+                    );
+                    boolean empty = response == null || response.isBlank();
+                    resultConsumer.accept(new TestResult(
+                            empty,
+                            empty
+                                    ? "请求完成，但模型返回了空内容。"
+                                    : "连接成功。"
+                    ));
+                    return;
+                } catch (Throwable throwable) {
+                    if (attempt == 0 && isRetryableFailure(throwable)) {
+                        sleepQuietly(350L);
+                        continue;
+                    }
+                    resultConsumer.accept(new TestResult(true,
+                            friendlyError(throwable, actual.effectiveApiKey())));
                     return;
                 }
-                String response = blockingModel(actual).chat(
-                        "Reply with a short confirmation that the connection is working."
-                );
-                boolean empty = response == null || response.isBlank();
-                resultConsumer.accept(new TestResult(
-                        empty,
-                        empty
-                                ? "请求完成，但模型返回了空内容。"
-                        : "连接成功。"
-                ));
-            } catch (Throwable throwable) {
-                resultConsumer.accept(new TestResult(false, friendlyError(throwable)));
             }
         });
     }
@@ -137,7 +151,11 @@ public final class AiClient {
                 }
                 resultConsumer.accept(fetchModelsBlocking(actual));
             } catch (Throwable throwable) {
-                resultConsumer.accept(new ModelListResult(true, List.of(), friendlyError(throwable)));
+                resultConsumer.accept(new ModelListResult(
+                        true,
+                        List.of(),
+                        friendlyError(throwable, actual.effectiveApiKey())
+                ));
             }
         });
     }
@@ -180,7 +198,7 @@ public final class AiClient {
                         true,
                         null,
                         "",
-                        friendlyError(throwable)
+                        friendlyError(throwable, actual.effectiveApiKey())
                 ));
             }
         });
@@ -200,8 +218,23 @@ public final class AiClient {
                 .header("Accept", "application/json")
                 .GET()
                 .build();
-        HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        return parseModelListResponse(response.statusCode(), response.body());
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+                if (attempt == 0 && retryableStatus(response.statusCode())) {
+                    sleepQuietly(350L);
+                    continue;
+                }
+                return parseModelListResponse(response.statusCode(), response.body());
+            } catch (Exception exception) {
+                if (attempt == 0 && isRetryableFailure(exception)) {
+                    sleepQuietly(350L);
+                    continue;
+                }
+                throw exception;
+            }
+        }
+        return new ModelListResult(true, List.of(), "获取模型列表失败，请稍后重试。");
     }
 
     /**
@@ -213,6 +246,7 @@ public final class AiClient {
         if (value.isBlank()) {
             return "";
         }
+        value = stripKnownEndpointSuffix(value);
         try {
             URI uri = URI.create(value);
             String path = uri.getPath();
@@ -223,6 +257,17 @@ public final class AiClient {
             // LangChain4j 会在真正构造模型时给出地址格式错误；这里不吞掉用户的原始输入。
         }
         return value;
+    }
+
+    private static String stripKnownEndpointSuffix(String value) {
+        String result = value;
+        for (String suffix : List.of("/chat/completions", "/models")) {
+            if (result.toLowerCase(Locale.ROOT).endsWith(suffix)) {
+                result = stripTrailingSlash(result.substring(0, result.length() - suffix.length()));
+                break;
+            }
+        }
+        return result;
     }
 
     /**
@@ -275,6 +320,7 @@ public final class AiClient {
                         || lower.contains("connection refused")
                         || lower.contains("timed out")
                         || lower.matches(".*(?:http|status|code)[ =:]?(408|425|429|500|502|503|504)\\b.*")
+                        || lower.matches(".*\\b(408|425|429|500|502|503|504)\\b.*")
                         || lower.contains("too many requests")
                         || lower.contains("temporarily unavailable")) {
                     return true;
@@ -356,17 +402,34 @@ public final class AiClient {
     }
 
     static String friendlyError(Throwable throwable) {
+        return friendlyError(throwable, "");
+    }
+
+    static String friendlyError(Throwable throwable, String apiKey) {
         Throwable cause = throwable;
         while (cause.getCause() != null && cause != cause.getCause()) {
             cause = cause.getCause();
         }
-        String message = cause.getMessage() == null ? "" : cause.getMessage().strip();
+        String message = cause.getMessage() == null ? "" : redact(cause.getMessage().strip(), apiKey);
         String lower = message.toLowerCase(Locale.ROOT);
         if (lower.contains("no healthy grok oauth account")) {
             return "当前模型的 Grok 上游没有可用账户；请在设置中选择 grok-4.5-latest，或等待上游恢复。";
         }
         if (lower.contains("httpclientbuilderfactory") && lower.contains("not a subtype")) {
             return "AI HTTP 客户端依赖加载失败，请重启游戏；如果仍然失败，请更新 ModPedia。";
+        }
+        if (lower.matches(".*\\b503\\b.*") || lower.contains("service unavailable")) {
+            return "AI 上游暂时不可用（HTTP 503），通常是模型路由或工具调用通道暂时没有可用服务；已支持自动重试，请稍后再试。";
+        }
+        if (lower.matches(".*\\b429\\b.*") || lower.contains("too many requests")) {
+            return "AI 请求过于频繁（HTTP 429），请稍后再试或降低请求频率。";
+        }
+        if (lower.matches(".*\\b(408|425|500|502|504)\\b.*")) {
+            return "AI 网关暂时失败（" + firstHttpStatus(lower) + "），请稍后重试。";
+        }
+        if (lower.contains("tool_calls") || lower.contains("tool call")
+                || lower.contains("function call") || lower.contains("tool_choice")) {
+            return "当前模型或 API 网关拒绝了工具调用格式；请确认模型支持 Chat Completions 工具调用，并检查 API 地址是否为兼容接口。";
         }
         if (looksLikeHtml(message) || message.contains("Unexpected character '<'")
                 || message.contains("code 60")) {
@@ -379,7 +442,38 @@ public final class AiClient {
         if (message.isBlank()) {
             return cause.getClass().getSimpleName();
         }
-        return message.replaceAll("(?i)bearer\\s+[a-z0-9._~+/=-]+", "Bearer [已隐藏]");
+        return redact(
+                message.replaceAll("(?i)bearer\\s+[a-z0-9._~+/=-]+", "Bearer [已隐藏]"),
+                apiKey
+        );
+    }
+
+    private static String firstHttpStatus(String message) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\b(408|425|500|502|504)\\b")
+                .matcher(message == null ? "" : message);
+        return matcher.find() ? "HTTP " + matcher.group(1) : "HTTP 5xx";
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static boolean retryableStatus(int statusCode) {
+        return statusCode == 408 || statusCode == 425 || statusCode == 429
+                || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504;
+    }
+
+    private static String redact(String value, String apiKey) {
+        String message = value == null ? "" : value;
+        if (apiKey != null && !apiKey.isBlank()) {
+            message = message.replace(apiKey, "[已隐藏密钥]");
+        }
+        return message;
     }
 
     private static String normalizedModelName(String requested, String fallback) {
@@ -399,6 +493,9 @@ public final class AiClient {
         AiSettings actual = settings == null ? AiSettings.defaults() : settings;
         if (!actual.configured()) {
             throw new IllegalArgumentException("AI API 地址或模型名称为空");
+        }
+        if (actual.effectiveApiKey().isBlank()) {
+            throw new IllegalArgumentException("AI API Key 为空");
         }
         return actual;
     }

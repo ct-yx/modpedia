@@ -57,11 +57,10 @@ public final class KnowledgeDatabaseSelfTest {
             Path invalidNew = custom.resolve("invalid-new.md");
             write(invalidNew, "没有 Front Matter 的文件\n");
 
-            List<ScannedResource> generated = List.of(generatedController());
             KnowledgeCompiler compiler = new KnowledgeCompiler();
             KnowledgeCompiler.CompileResult first = compiler.compile(
                     config,
-                    new LocalGuideScanner.ScanResult(generated, List.of()),
+                    new LocalGuideScanner.ScanResult(List.of(generatedController(), generatedBodyOnly()), List.of()),
                     true
             );
             Path knowledgeRoot = first.knowledgeRoot();
@@ -71,6 +70,10 @@ public final class KnowledgeDatabaseSelfTest {
 
             RetrievalService service = new RetrievalService(knowledgeRoot);
             check(service.search("人工导入").hasResults(), "新增 custom 文档应可搜索");
+            SearchResponse bodyOnlySearch = service.search("正文专有机器");
+            check(bodyOnlySearch.results().stream()
+                            .anyMatch(result -> result.documentId().contains("body-only")),
+                    "只出现在正文中的中文实体也应可搜索");
             check(service.search("ae2:controller").hasResults(), "稳定文档 ID 应可精确搜索");
             SearchResponse imported = service.search("人工导入");
             check(imported.results().stream().anyMatch(result -> "custom:note".equals(result.documentId())),
@@ -102,20 +105,20 @@ public final class KnowledgeDatabaseSelfTest {
                     "自定义笔记",
                     "修改后的启动自动导入内容。"
             ));
-            compiler.compile(config, new LocalGuideScanner.ScanResult(generated, List.of()), false);
+            compiler.compile(config, new LocalGuideScanner.ScanResult(List.of(generatedController(), generatedBodyOnly()), List.of()), false);
             service.reload();
             check(service.search("修改后的").hasResults(), "修改 custom 文件后应增量更新 SQLite");
 
             write(note, "---\nid: custom:note\n这是未闭合的 Front Matter\n");
-            compiler.compile(config, new LocalGuideScanner.ScanResult(generated, List.of()), false);
+            compiler.compile(config, new LocalGuideScanner.ScanResult(List.of(generatedController(), generatedBodyOnly()), List.of()), false);
             service.reload();
             check(service.search("修改后的").hasResults(), "非法修改应保留上一份有效 custom 记录");
-            compiler.compile(config, new LocalGuideScanner.ScanResult(generated, List.of()), true);
+            compiler.compile(config, new LocalGuideScanner.ScanResult(List.of(generatedController(), generatedBodyOnly()), List.of()), true);
             service.reload();
             check(service.search("修改后的").hasResults(), "强制重建时非法 custom 修改也应保留上一份有效记录");
 
             Files.delete(override);
-            compiler.compile(config, new LocalGuideScanner.ScanResult(generated, List.of()), false);
+            compiler.compile(config, new LocalGuideScanner.ScanResult(List.of(generatedController(), generatedBodyOnly()), List.of()), false);
             service.reload();
             check(service.search("人工覆盖").status() == SearchStatus.NO_MATCH,
                     "删除 custom 文件后应删除对应 SQLite 记录");
@@ -128,7 +131,7 @@ public final class KnowledgeDatabaseSelfTest {
                     "数据库重建时重新导入的内容。"
             ));
             Files.writeString(database, "corrupt", StandardCharsets.UTF_8);
-            compiler.compile(config, new LocalGuideScanner.ScanResult(generated, List.of()), false);
+            compiler.compile(config, new LocalGuideScanner.ScanResult(List.of(generatedController(), generatedBodyOnly()), List.of()), false);
             service.reload();
             check(KnowledgeDatabase.isUsable(database), "损坏数据库应在启动编译时重建");
             check(service.search("数据库重建").hasResults(), "数据库重建后 custom 文档仍应可搜索");
@@ -150,6 +153,19 @@ public final class KnowledgeDatabaseSelfTest {
                 "guideme_markdown",
                 "# 自动控制器\n\n自动手册内容。",
                 "generated-controller-v1",
+                Map.of()
+        );
+    }
+
+    private static ScannedResource generatedBodyOnly() {
+        return new ScannedResource(
+                "ae2",
+                "Applied Energistics 2",
+                "19.2.17",
+                "assets/ae2/guides/body-only.md",
+                "guideme_markdown",
+                "# 通用手册\n\n正文专有机器只在这一段出现。",
+                "generated-body-only-v1",
                 Map.of()
         );
     }

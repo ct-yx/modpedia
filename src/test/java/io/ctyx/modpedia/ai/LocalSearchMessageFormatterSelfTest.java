@@ -25,19 +25,20 @@ public final class LocalSearchMessageFormatterSelfTest {
                 120,
                 List.of("压力容器")
         );
+        io.ctyx.modpedia.client.ChatMessage formatted = LocalSearchMessageFormatter.format(
+                "压力容器",
+                new SearchResponse(SearchStatus.READY, "压力容器", List.of(result), "")
+        );
         ChatMessageAssertions.assertMessage(
-                LocalSearchMessageFormatter.format(
-                        "压力容器",
-                        new SearchResponse(SearchStatus.READY, "压力容器", List.of(result), "")
-                ),
+                formatted,
                 "完整 Markdown 段落应原样保留",
                 "```text\npressure = ready\n```"
         );
+        if (!formatted.markdown().contains("[来源: demo:pressure | 标注: 压力容器]")) {
+            throw new AssertionError("仅搜索结果应把来源标记放在对应结果标题中");
+        }
         ChatMessageAssertions.assertSource(
-                LocalSearchMessageFormatter.format(
-                        "压力容器",
-                        new SearchResponse(SearchStatus.READY, "压力容器", List.of(result), "")
-                ),
+                formatted,
                 "demo:pressure"
         );
         ChatMessageAssertions.assertMessage(

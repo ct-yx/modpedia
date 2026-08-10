@@ -53,8 +53,11 @@ public final class AiContextWindowSelfTest {
         );
         check(nextRequest.stream().anyMatch(ToolExecutionResultMessage.class::isInstance),
                 "LangChain4j 替换原始用户消息后仍应保留工具结果");
-        check(AiAssistantSession.memoryTokenBudget(16_000) >= 16_000,
-                "16,000 字符搜索预算应至少对应 16,000 token 的保守窗口");
+        check(AiAssistantSession.memoryTokenBudget(16_000) >= 8_000
+                        && AiAssistantSession.memoryTokenBudget(16_000) < 16_000,
+                "16,000 字符搜索预算应换算成合理的 token 窗口，而不是 1:1 扩大");
+        check(AiAssistantSession.memoryTokenBudget(64_000) <= 40_000,
+                "64,000 字符上限不能直接变成 64,000 token，避免请求上下文无谓膨胀");
         check(AiAssistantSession.toolCallingRoundTrips(1) == 4,
                 "快速档位必须容纳预算外工具尝试后再生成最终回答");
         check(AiAssistantSession.toolCallingRoundTrips(3) == 6,

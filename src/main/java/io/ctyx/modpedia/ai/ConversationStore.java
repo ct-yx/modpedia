@@ -281,11 +281,18 @@ public final class ConversationStore {
                     message.markdown(),
                     5
             );
-            String markdown = SourceCitationParser.removeCitationMarkup(message.markdown());
-            if (markdown.isBlank() && !sources.isEmpty()) {
-                markdown = "已根据本地手册整理，详细依据见下方来源。";
+            // 旧会话也保留引用在正文中的原始位置。客户端会按行隐藏协议文本并绘制
+            // 可点击标注；如果旧记录只有来源协议而没有可见正文，才使用兼容提示。
+            String markdown = message.markdown();
+            if (SourceCitationParser.removeCitationMarkup(markdown).isBlank() && !sources.isEmpty()) {
+                markdown = "已根据本地手册整理，详细依据已标注在相关正文后。";
             }
-            migratedMessages.add(new ChatMessage(message.role(), markdown, sources));
+            migratedMessages.add(new ChatMessage(
+                    message.role(),
+                    markdown,
+                    sources,
+                    message.followUpQuestions()
+            ));
             changed = true;
         }
         return changed

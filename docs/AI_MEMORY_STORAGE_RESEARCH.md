@@ -60,7 +60,7 @@ SQLite 方言，只有 H2、MySQL、PostgreSQL 三种方言；SQLite 兼容 Post
 ### 保留
 
 - `TokenWindowChatMemory`：它已经是 LangChain4j 官方上下文窗口实现，不需要另造窗口管理器。
-- `ConversationStore`：它保存 UI 历史、来源卡片和搜索轨迹，属于 ModPedia 产品数据模型，不是通用 ChatMemoryStore 的职责。
+- `ConversationStore`：它保存 UI 历史、正文来源标注和搜索轨迹，属于 ModPedia 产品数据模型，不是通用 ChatMemoryStore 的职责。
 - `repair`、重试时清理未完成工具轮次：这是针对网关失败恢复的业务策略，不应伪装成数据库能力；迁移后只对社区 store 读写结果执行。
 
 ### 验收重点
