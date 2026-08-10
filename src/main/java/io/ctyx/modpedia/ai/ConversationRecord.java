@@ -4,7 +4,7 @@ import io.ctyx.modpedia.client.ChatMessage;
 
 import java.util.List;
 
-/** 会话文件的可持久化结构。 */
+/** UI 会话文件的可持久化结构；memoryMessagesJson 仅用于旧版本上下文迁移。 */
 public record ConversationRecord(
         String id,
         String title,

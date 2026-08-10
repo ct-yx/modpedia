@@ -71,14 +71,21 @@ AiServices
   └── TokenWindowChatMemory    → token 窗口裁剪
           │
           ▼
-PersistentChatMemoryStore → ConversationStore → conversations/*.json
+PersistentChatMemoryStore
+  ├── Community SQL SQLChatMemoryStore → conversations/memory.sqlite
+  └── 旧版 memoryMessagesJson 一次性迁移
+ConversationStore → conversations/conversation-*.json
 ```
 
-`AiClient` 只负责构造 OpenAI Chat Completions 兼容模型和设置页的异步连通性测试。`PersistentChatMemoryStore` 只做 LangChain4j 序列化接口到本地会话文件的适配；上下文窗口、工具循环和流式协议由 LangChain4j 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
+`AiClient` 负责构造 OpenAI Chat Completions 兼容模型、设置页的异步连通性测试、`/models` 模型列表请求和全部模型批量兼容性测试。域名根地址在请求层自动补全 `/v1`，已经填写的自定义路径保持不变；HTML 响应和 401 响应转换为不含密钥的用户提示。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，避免上游返回 `No tool output found for function call`。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
 
-`SearchKnowledgeTool` 每轮返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、资料缺口和来源格式规则。
+持久化读写实际由 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore` 完成，ModPedia 只装配已有 SQLite 驱动、文件路径和四条 SQLite 方言 SQL。这样工具调用消息仍使用 LangChain4j 官方 JSON 序列化，原始 `tool_call_id` 不经过自研格式转换。旧版本会话中的 `memoryMessagesJson` 在首次读取时迁移到 `config/modpedia/conversations/memory.sqlite`，成功后清空旧字段；迁移失败则继续使用旧 JSON。
 
-历史会话的 UI 消息、来源卡片和 `SearchTrace` 保存到 `config/modpedia/conversations/`；知识正文不复制到会话文件。API Key 只从设置或 `MODPEDIA_API_KEY` 读取，不进入搜索轨迹和错误日志。
+`AiModelCompatibilityTester` 不参与正常回答链路，使用当前 API Key 读取 `/models` 后对每个模型验证四个能力：普通非流式、非流式工具结果续接、普通 SSE、流式工具结果续接。报告同时标记普通+工具可用和流式+工具可用，写入 `config/modpedia/diagnostics/ai-model-compatibility.{json,md}`；报告只保留接口主机、模型 ID、状态、耗时和脱敏错误，不保存 API Key。设置页批量按钮和 Gradle `aiModelCompatibility` 任务共用这套探测器。
+
+`SearchKnowledgeTool` 每轮返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`。`language=auto` 会同时查询当前语言和另一语言，再按文档 ID 去重合并；自然语言 `focus` 会归一化为标准值并参与段落排序。工具会优先保留查询实体锚点，避免“设置/前置条件/步骤”等通用词把示例页面抬到目标手册之前。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、资料缺口和来源格式规则。回答完成后只接受模型明确引用的来源，最多保留 5 个，并从 `[来源: document_id | 标注: ...]` 提取卡片标注；没有明确引用时不自动展示全部候选。
+
+历史会话的 UI 消息、来源卡片和 `SearchTrace` 保存到 `config/modpedia/conversations/conversation-*.json`；模型上下文单独保存到同目录的 `memory.sqlite`，知识正文不复制到会话文件。API Key 优先从设置读取，设置为空时回退到 `MODPEDIA_API_KEY`，不进入搜索轨迹和错误日志。设置保存后会原子替换并回读校验，失败会在页面显示。
 
 `AiSettings.mode` 支持 `AI` 和 `SEARCH_ONLY`。仅搜索模式复用相同的 `RetrievalService` 和会话持久化，但跳过模型初始化、API Key 读取和连接测试；`LocalSearchMessageFormatter` 将完整段落转换为带来源卡片的助手消息。
 
@@ -186,7 +193,7 @@ safeArea = viewport - 12px;
 
 - 生成 Markdown 与玩家自定义 Markdown 分离。
 - AI 只接收检索到的文档片段，不接收整本手册。
-- 每次回答记录来源文档 ID。
+- 每次回答只记录模型明确引用的来源文档 ID，并保存其简短用途标注。
 - API key 不进入日志、知识库和提交记录。
 
 ## 6. 当前类结构
@@ -224,6 +231,7 @@ io.ctyx.modpedia.ai/
 ├── PromptBuilder
 ├── ConversationRecord / ConversationStore
 ├── SearchTrace
+├── SQLiteDialect
 └── PersistentChatMemoryStore
 ```
 

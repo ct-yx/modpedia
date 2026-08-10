@@ -1,6 +1,7 @@
 package io.ctyx.modpedia.client;
 
 import io.ctyx.modpedia.ai.AiClient;
+import io.ctyx.modpedia.ai.AiModelCompatibilityTester;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ai.AiSettingsStore;
 import io.ctyx.modpedia.ai.AssistantMode;
@@ -12,8 +13,10 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
+import net.neoforged.fml.loading.FMLPaths;
 
 import java.util.Arrays;
+import java.util.List;
 
 /** 设置二级页面；控件随页面缩放，内容滚动，页脚固定。 */
 final class AiSettingsPanel {
@@ -68,11 +71,18 @@ final class AiSettingsPanel {
     private AssistantChoiceButton<Boolean> streaming;
     private AssistantPanelButton saveButton;
     private AssistantPanelButton testButton;
+    private AssistantPanelButton testAllModelsButton;
+    private AssistantPanelButton modelListButton;
     private AssistantPanelButton restoreButton;
     private AssistantPanelButton cancelButton;
+    private List<AiClient.ModelInfo> availableModels = List.of();
+    private String modelsEndpoint = "";
+    private boolean fetchingModels;
+    private long modelRequestId;
     private String status = "";
     private boolean statusError;
     private boolean testing;
+    private boolean testingModels;
 
     void init(
             AssistantScreen owner,
@@ -152,8 +162,22 @@ final class AiSettingsPanel {
 
         endpoint = textField(fieldLeft, y(content.top(), mainControlOffset(1)), fieldWidth, values.endpoint(),
                 "screen.modpedia.ai_endpoint_hint", false);
-        model = textField(fieldLeft, y(content.top(), mainControlOffset(2)), fieldWidth, values.model(),
+        int modelY = y(content.top(), mainControlOffset(2));
+        int modelButtonGap = scaled(5, 4);
+        int modelButtonWidth = modelButtonWidth(fieldWidth);
+        int modelFieldWidth = Math.max(1, fieldWidth - modelButtonGap - modelButtonWidth);
+        model = textField(fieldLeft, modelY, modelFieldWidth, values.model(),
                 "screen.modpedia.ai_model_hint", false);
+        modelListButton = new AssistantPanelButton(
+                font,
+                buttonStyle,
+                fieldLeft + modelFieldWidth + modelButtonGap,
+                modelY,
+                modelButtonWidth,
+                controlHeight,
+                this::modelListLabel,
+                this::fetchOrSelectModel
+        );
         apiKey = textField(fieldLeft, y(content.top(), mainControlOffset(3)), fieldWidth, values.apiKey(),
                 "screen.modpedia.ai_api_key_hint", true);
         apiKey.setFormatter((value, cursor) -> FormattedCharSequence.forward(
@@ -204,6 +228,7 @@ final class AiSettingsPanel {
         owner.addSettingsContentWidget(mode);
         owner.addSettingsContentWidget(endpoint);
         owner.addSettingsContentWidget(model);
+        owner.addSettingsContentWidget(modelListButton);
         owner.addSettingsContentWidget(apiKey);
         owner.addSettingsContentWidget(intensity);
         owner.addSettingsContentWidget(streaming);
@@ -357,6 +382,12 @@ final class AiSettingsPanel {
         return pageBounds().contains(mouseX, mouseY);
     }
 
+    void cancelPendingModelRequest() {
+        modelRequestId++;
+        fetchingModels = false;
+        testingModels = false;
+    }
+
     boolean contentContains(double mouseX, double mouseY) {
         return contentBounds().contains(mouseX, mouseY);
     }
@@ -373,22 +404,29 @@ final class AiSettingsPanel {
 
     private void createFooterButtons(AssistantScreen owner, int fieldLeft, int fieldWidth) {
         Bounds footer = footerBounds();
-        boolean twoRows = footerButtonRows > 1;
+        // 兼容性诊断是批量动作，和单模型连接测试并列放在同一个统一按钮网格中。
+        // 五个按钮在窄窗口也固定为两行，避免压缩后文字互相覆盖。
+        boolean twoRows = true;
         int buttonsBottom = Math.max(footer.top() + controlHeight, footer.bottom() - footerBottomPadding);
         if (twoRows) {
-            int buttonWidth = Math.max(1, (fieldWidth - buttonGap) / 2);
+            int firstRowWidth = Math.max(1, (fieldWidth - buttonGap * 2) / 3);
+            int secondRowWidth = Math.max(1, (fieldWidth - buttonGap) / 2);
             int rowTwo = Math.max(footer.top(), buttonsBottom - controlHeight);
             int rowOne = Math.max(
                     footer.top() + footerStatusHeight + footerStatusGap,
                     rowTwo - controlHeight - buttonGap
             );
-            saveButton = button("screen.modpedia.save", this::saveSettings, fieldLeft, rowOne, buttonWidth);
+            saveButton = button("screen.modpedia.save", this::saveSettings, fieldLeft, rowOne, firstRowWidth);
             testButton = button("screen.modpedia.test_connection", this::testConnection,
-                    fieldLeft + buttonWidth + buttonGap, rowOne, buttonWidth);
+                    fieldLeft + firstRowWidth + buttonGap, rowOne, firstRowWidth);
+            testAllModelsButton = button("screen.modpedia.ai_test_all_models", this::testAllModels,
+                    fieldLeft + (firstRowWidth + buttonGap) * 2, rowOne,
+                    Math.max(1, fieldWidth - (firstRowWidth + buttonGap) * 2));
             restoreButton = button("screen.modpedia.restore_defaults", this::restoreDefaults,
-                    fieldLeft, rowTwo, buttonWidth);
+                    fieldLeft, rowTwo, secondRowWidth);
             cancelButton = button("gui.cancel", owner::closeSettingsPanel,
-                    fieldLeft + buttonWidth + buttonGap, rowTwo, buttonWidth);
+                    fieldLeft + secondRowWidth + buttonGap, rowTwo,
+                    Math.max(1, fieldWidth - secondRowWidth - buttonGap));
         } else {
             int buttonWidth = Math.max(1, (fieldWidth - buttonGap * 3) / 4);
             int y = Math.max(
@@ -406,6 +444,7 @@ final class AiSettingsPanel {
         }
         owner.addSettingsFooterWidget(saveButton);
         owner.addSettingsFooterWidget(testButton);
+        owner.addSettingsFooterWidget(testAllModelsButton);
         owner.addSettingsFooterWidget(restoreButton);
         owner.addSettingsFooterWidget(cancelButton);
     }
@@ -425,8 +464,10 @@ final class AiSettingsPanel {
 
     private EditBox textField(int x, int y, int fieldWidth, String value, String hintKey, boolean secret) {
         EditBox field = new EditBox(font, x, y, fieldWidth, controlHeight, Component.translatable(hintKey));
-        field.setValue(value == null ? "" : value);
+        // EditBox 默认 maxLength 是 32；先设置上限再写入值，否则 64 位 API Key
+        // 在页面重建时会先被截成 32 位，随后再点击任意控件就只剩一半圆点。
         field.setMaxLength(512);
+        field.setValue(value == null ? "" : value);
         field.setHint(Component.translatable(hintKey));
         field.setBordered(true);
         field.setTextColor(TEXT_COLOR);
@@ -456,12 +497,101 @@ final class AiSettingsPanel {
         if (model != null) model.active = ai;
         if (apiKey != null) apiKey.active = ai;
         if (streaming != null) streaming.active = ai;
-        if (testButton != null) testButton.active = ai;
+        if (testButton != null) testButton.active = ai && !testingModels;
+        if (testAllModelsButton != null) testAllModelsButton.active = ai && !testingModels && !fetchingModels;
+        if (modelListButton != null) modelListButton.active = ai && !fetchingModels && !testingModels;
+    }
+
+    private int modelButtonWidth(int fieldWidth) {
+        int preferred = scaled(118, 86);
+        int minimum = scaled(86, 64);
+        return Math.min(Math.max(1, fieldWidth), Math.max(minimum, Math.min(preferred, fieldWidth / 3)));
+    }
+
+    private Component modelListLabel() {
+        if (fetchingModels) {
+            return Component.translatable("screen.modpedia.ai_fetch_models_loading");
+        }
+        if (!availableModels.isEmpty()) {
+            return Component.translatable("screen.modpedia.ai_model_list_count", availableModels.size());
+        }
+        return Component.translatable("screen.modpedia.ai_fetch_models");
+    }
+
+    private void fetchOrSelectModel() {
+        if (fetchingModels || mode == null || mode.getValue() == AssistantMode.SEARCH_ONLY) {
+            return;
+        }
+        String currentEndpoint = value(endpoint).strip();
+        if (!availableModels.isEmpty() && currentEndpoint.equals(modelsEndpoint)) {
+            String currentModel = value(model).strip();
+            int currentIndex = -1;
+            for (int index = 0; index < availableModels.size(); index++) {
+                if (availableModels.get(index).id().equals(currentModel)) {
+                    currentIndex = index;
+                    break;
+                }
+            }
+            int nextIndex = (currentIndex + 1 + availableModels.size()) % availableModels.size();
+            model.setValue(availableModels.get(nextIndex).id());
+            setStatus("已选择模型：" + availableModels.get(nextIndex).id(), false);
+            return;
+        }
+
+        AiSettings values = readSettings();
+        if (values.endpoint().isBlank()) {
+            setStatus("请先填写 API 地址。", true);
+            return;
+        }
+        if (values.effectiveApiKey().isBlank()) {
+            setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
+            return;
+        }
+        fetchingModels = true;
+        availableModels = List.of();
+        long requestId = ++modelRequestId;
+        modelsEndpoint = "";
+        setStatus("正在获取模型列表……", false);
+        applyModeEnabled(values.mode());
+        owner.rebuildAssistantWidgets();
+        AiClient.fetchModels(values, result -> Minecraft.getInstance().execute(() -> {
+            if (!owner.settingsPanelOpen() || requestId != modelRequestId) {
+                return;
+            }
+            fetchingModels = false;
+            if (result.failed()) {
+                availableModels = List.of();
+                modelsEndpoint = "";
+                setStatus(result.message(), true);
+            } else {
+                availableModels = result.models();
+                modelsEndpoint = value(endpoint).strip();
+                String normalized = AiClient.normalizedEndpoint(modelsEndpoint);
+                boolean endpointChanged = !normalized.equals(modelsEndpoint);
+                if (endpointChanged) {
+                    endpoint.setValue(normalized);
+                    modelsEndpoint = normalized;
+                }
+                setStatus(result.message() + (endpointChanged ? " 已自动补全 /v1。" : ""), false);
+                if (!availableModels.isEmpty()) {
+                    String currentModel = value(model).strip();
+                    boolean found = availableModels.stream().anyMatch(info -> info.id().equals(currentModel));
+                    if (!found) {
+                        model.setValue(availableModels.get(0).id());
+                    }
+                }
+            }
+            applyModeEnabled(readSettings().mode());
+            owner.rebuildAssistantWidgets();
+        }));
     }
 
     private void saveSettings() {
-        settingsStore.save(readSettings());
-        setStatus("已保存。", false);
+        boolean saved = settingsStore.save(readSettings());
+        setStatus(
+                saved ? "已保存并验证。" : "保存失败，请检查当前实例的配置目录。",
+                !saved
+        );
     }
 
     private void testConnection() {
@@ -491,12 +621,74 @@ final class AiSettingsPanel {
         }));
     }
 
+    private void testAllModels() {
+        AiSettings values = readSettings();
+        if (values.mode() == AssistantMode.SEARCH_ONLY) {
+            setStatus("仅搜索模式无需测试 AI 模型。", false);
+            return;
+        }
+        if (values.endpoint().isBlank()) {
+            setStatus("请先填写 API 地址。", true);
+            return;
+        }
+        if (values.effectiveApiKey().isBlank()) {
+            setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
+            return;
+        }
+        testingModels = true;
+        long requestId = ++modelRequestId;
+        setStatus("正在批量测试全部模型，期间无需逐个发送问题……", false);
+        applyModeEnabled(values.mode());
+        owner.rebuildAssistantWidgets();
+        AiClient.testAllModels(
+                values,
+                FMLPaths.CONFIGDIR.get().resolve("modpedia").resolve("diagnostics"),
+                2,
+                result -> Minecraft.getInstance().execute(() -> {
+                    if (!owner.settingsPanelOpen() || requestId != modelRequestId) {
+                        return;
+                    }
+                    testingModels = false;
+                    if (result.failed() || result.report() == null) {
+                        setStatus("批量测试失败：" + result.message(), true);
+                    } else {
+                        long core = result.report().models().stream()
+                                .filter(AiModelCompatibilityTester.ModelReport::usable)
+                                .count();
+                        long streamingReady = result.report().models().stream()
+                                .filter(AiModelCompatibilityTester.ModelReport::streamingUsable)
+                                .count();
+                        String recommended = result.report().models().stream()
+                                .filter(values.streaming()
+                                        ? AiModelCompatibilityTester.ModelReport::streamingUsable
+                                        : AiModelCompatibilityTester.ModelReport::usable)
+                                .map(AiModelCompatibilityTester.ModelReport::model)
+                                .findFirst()
+                                .orElse("无");
+                        setStatus(
+                                "完成：" + result.report().totalModels() + " 个；普通+工具 " + core
+                                        + " 个；流式+工具 " + streamingReady + " 个；推荐 " + recommended
+                                        + "。报告已保存到 diagnostics。",
+                                false
+                        );
+                    }
+                    applyModeEnabled(readSettings().mode());
+                    owner.rebuildAssistantWidgets();
+                })
+        );
+    }
+
     private void restoreDefaults() {
-        settingsStore.save(AiSettings.defaults());
+        boolean restored = settingsStore.save(AiSettings.defaults());
         endpoint = null;
         testing = false;
+        testingModels = false;
+        modelRequestId++;
         scrollOffset = 0;
-        setStatus("已恢复默认值。", false);
+        setStatus(
+                restored ? "已恢复默认值。" : "恢复默认失败，请检查当前实例的配置目录。",
+                !restored
+        );
         owner.rebuildAssistantWidgets();
     }
 
@@ -538,7 +730,7 @@ final class AiSettingsPanel {
     }
 
     private int footerRows(int fieldWidth) {
-        return compactLayout() || fieldWidth < 480 ? 2 : 1;
+        return 2;
     }
 
     private int advancedControlOffset(int index) {

@@ -138,6 +138,30 @@ dependencies {
             strictly "[${langchain4j_version}, 1.19)"
         }
     }
+    // langchain4j-open-ai 和 JDK HTTP 实现的接口是独立模块。只声明上层模块时，
+    // ModDev 的 Jar-in-Jar 产物不会自动把这些传递依赖放入最终模组，导致 SPI
+    // 服务实现与 HttpClientBuilderFactory 来自不同的类加载器，运行时出现
+    // "JdkHttpClientBuilderFactory not a subtype"。
+    jarJar(implementation("dev.langchain4j:langchain4j-core:${langchain4j_version}")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly "[${langchain4j_version}, 1.19)"
+        }
+    }
+    // Community SQL 提供成熟的 ChatMemoryStore 读写、JSON 序列化和 SQL 生命周期。
+    // ModPedia 只保留 SQLite DataSource 与方言装配，不再维护完整持久化适配器。
+    jarJar(implementation("dev.langchain4j:langchain4j-community-sql:${langchain4j_community_sql_version}")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly "[${langchain4j_community_sql_version}, 1.19)"
+        }
+    }
+    jarJar(implementation("dev.langchain4j:langchain4j-http-client:${langchain4j_version}")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly "[${langchain4j_version}, 1.19)"
+        }
+    }
     jarJar(implementation("dev.langchain4j:langchain4j-http-client-jdk:${langchain4j_version}")) {
         exclude group: "org.slf4j", module: "slf4j-api"
         version {
@@ -146,7 +170,50 @@ dependencies {
     }
     additionalRuntimeClasspath "dev.langchain4j:langchain4j:${langchain4j_version}"
     additionalRuntimeClasspath "dev.langchain4j:langchain4j-open-ai:${langchain4j_version}"
+    additionalRuntimeClasspath "dev.langchain4j:langchain4j-core:${langchain4j_version}"
+    additionalRuntimeClasspath "dev.langchain4j:langchain4j-community-sql:${langchain4j_community_sql_version}"
+    additionalRuntimeClasspath "dev.langchain4j:langchain4j-http-client:${langchain4j_version}"
     additionalRuntimeClasspath "dev.langchain4j:langchain4j-http-client-jdk:${langchain4j_version}"
+
+    // LangChain4j 的运行时依赖也要显式进入 Jar-in-Jar；否则开发环境能运行，
+    // 独立安装的发布 JAR 会在真正请求模型时缺少 Jackson、tokenizer 或 OpenNLP。
+    jarJar(implementation("com.fasterxml.jackson.core:jackson-annotations:2.22")) {
+        version {
+            strictly '[2.22, 2.23)'
+        }
+    }
+    jarJar(implementation("com.fasterxml.jackson.core:jackson-core:2.22.1")) {
+        version {
+            strictly '[2.22.1, 2.23)'
+        }
+    }
+    jarJar(implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")) {
+        version {
+            strictly '[2.22.1, 2.23)'
+        }
+    }
+    jarJar(implementation("org.apache.opennlp:opennlp-tools:2.5.9")) {
+        exclude group: "org.slf4j", module: "slf4j-api"
+        version {
+            strictly '[2.5.9, 2.6)'
+        }
+    }
+    jarJar(implementation("com.knuddels:jtokkit:1.1.0")) {
+        version {
+            strictly '[1.1.0, 1.2)'
+        }
+    }
+    jarJar(implementation("org.jspecify:jspecify:1.0.0")) {
+        version {
+            strictly '[1.0.0, 2.0)'
+        }
+    }
+    additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-annotations:2.22"
+    additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-core:2.22.1"
+    additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-databind:2.22.1"
+    additionalRuntimeClasspath "org.apache.opennlp:opennlp-tools:2.5.9"
+    additionalRuntimeClasspath "com.knuddels:jtokkit:1.1.0"
+    additionalRuntimeClasspath "org.jspecify:jspecify:1.0.0"
 
     // 基准报告和测试夹具直接读取 JSON；运行时 Gson 由 NeoForge 提供，测试侧显式声明编译路径。
     testImplementation "com.google.code.gson:gson:2.11.0"
@@ -204,6 +271,12 @@ def localizedSearchSelfTest = tasks.register('localizedSearchSelfTest', JavaExec
     mainClass = 'io.ctyx.modpedia.search.LocalizedSearchSelfTest'
 }
 
+def assistantUsageSelfTest = tasks.register('assistantUsageSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.AssistantUsageSelfTest'
+}
+
 def knowledgeDatabaseSelfTest = tasks.register('knowledgeDatabaseSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -256,6 +329,12 @@ def aiSettingsSelfTest = tasks.register('aiSettingsSelfTest', JavaExec) {
     mainClass = 'io.ctyx.modpedia.ai.AiSettingsSelfTest'
 }
 
+def aiClientSelfTest = tasks.register('aiClientSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiClientSelfTest'
+}
+
 def promptBuilderSelfTest = tasks.register('promptBuilderSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -268,10 +347,69 @@ def searchKnowledgeToolSelfTest = tasks.register('searchKnowledgeToolSelfTest', 
     mainClass = 'io.ctyx.modpedia.ai.SearchKnowledgeToolSelfTest'
 }
 
+def sourceCitationParserSelfTest = tasks.register('sourceCitationParserSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.SourceCitationParserSelfTest'
+}
+
 def localSearchMessageFormatterSelfTest = tasks.register('localSearchMessageFormatterSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.ai.LocalSearchMessageFormatterSelfTest'
+}
+
+def aiContextWindowSelfTest = tasks.register('aiContextWindowSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiContextWindowSelfTest'
+}
+
+def aiModelCompatibility = tasks.register('aiModelCompatibility', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiModelCompatibilityTester'
+    workingDir project.projectDir
+    if (project.hasProperty('aiSettingsFile')) {
+        systemProperty 'modpedia.aiSettings', project.property('aiSettingsFile')
+    }
+    if (project.hasProperty('aiReportDirectory')) {
+        systemProperty 'modpedia.aiReportDirectory', project.property('aiReportDirectory')
+    }
+    if (project.hasProperty('aiProbeParallelism')) {
+        systemProperty 'modpedia.aiProbeParallelism', project.property('aiProbeParallelism')
+    }
+}
+
+def aiModelCompatibilitySelfTest = tasks.register('aiModelCompatibilitySelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiModelCompatibilitySelfTest'
+}
+
+def aiLangChainSelfTest = tasks.register('aiLangChainSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiLangChainSelfTest'
+}
+
+def aiLiveModelProbe = tasks.register('aiLiveModelProbe', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiLiveModelProbe'
+    workingDir project.projectDir
+    if (project.hasProperty('aiSettingsFile')) {
+        systemProperty 'modpedia.aiSettings', project.property('aiSettingsFile')
+    }
+    if (project.hasProperty('knowledgeRoot')) {
+        systemProperty 'modpedia.knowledgeRoot', project.property('knowledgeRoot')
+    }
+}
+
+def markdownRendererSelfTest = tasks.register('markdownRendererSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.MarkdownRendererSelfTest'
 }
 
 tasks.named('test', Test) {
@@ -280,13 +418,20 @@ tasks.named('test', Test) {
     dependsOn assistantSecondaryLayoutSelfTest
     dependsOn appGuideAdapterSelfTest
     dependsOn localizedSearchSelfTest
+    dependsOn assistantUsageSelfTest
     dependsOn knowledgeDatabaseSelfTest
     dependsOn knowledgeBenchmarkFixtureSelfTest
     dependsOn conversationStoreSelfTest
     dependsOn aiSettingsSelfTest
+    dependsOn aiClientSelfTest
     dependsOn promptBuilderSelfTest
     dependsOn searchKnowledgeToolSelfTest
+    dependsOn sourceCitationParserSelfTest
     dependsOn localSearchMessageFormatterSelfTest
+    dependsOn aiContextWindowSelfTest
+    dependsOn aiModelCompatibilitySelfTest
+    dependsOn aiLangChainSelfTest
+    dependsOn markdownRendererSelfTest
     failOnNoDiscoveredTests = false
 }
 

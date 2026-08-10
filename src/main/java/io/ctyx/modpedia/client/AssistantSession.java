@@ -8,6 +8,10 @@ public interface AssistantSession {
 
     void submit(String prompt);
 
+    /** 直接显示内置说明，不发起 AI 请求。 */
+    default void showBuiltInGuide(String documentId) {
+    }
+
     void cancel();
 
     void retry();

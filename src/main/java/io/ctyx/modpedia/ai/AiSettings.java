@@ -1,6 +1,6 @@
 package io.ctyx.modpedia.ai;
 
-/** AI 客户端设置；密钥只在请求构造时读取。 */
+/** AI 客户端设置；设置页填写的密钥优先，留空时才回退到环境变量。 */
 public record AiSettings(
         AssistantMode mode,
         String endpoint,
@@ -17,7 +17,7 @@ public record AiSettings(
         mode = mode == null ? AssistantMode.AI : mode;
         endpoint = endpoint == null ? "" : endpoint.strip();
         model = model == null ? "" : model.strip();
-        apiKey = apiKey == null ? "" : apiKey;
+        apiKey = apiKey == null ? "" : apiKey.strip();
         intensity = intensity == null ? SearchIntensity.STANDARD : intensity;
         maxRounds = clamp(maxRounds, 1, 8);
         maxResults = clamp(maxResults, 1, 20);
@@ -42,8 +42,15 @@ public record AiSettings(
     }
 
     public String effectiveApiKey() {
-        String environment = System.getenv("MODPEDIA_API_KEY");
-        return environment == null || environment.isBlank() ? apiKey : environment.strip();
+        return resolveApiKey(apiKey, System.getenv("MODPEDIA_API_KEY"));
+    }
+
+    static String resolveApiKey(String configured, String environment) {
+        String configuredValue = configured == null ? "" : configured.strip();
+        if (!configuredValue.isBlank()) {
+            return configuredValue;
+        }
+        return environment == null ? "" : environment.strip();
     }
 
     public boolean configured() {
@@ -83,6 +90,21 @@ public record AiSettings(
                 next == null ? AssistantMode.AI : next,
                 endpoint,
                 model,
+                apiKey,
+                streaming,
+                intensity,
+                maxRounds,
+                maxResults,
+                maxContextChars,
+                timeoutSeconds
+        );
+    }
+
+    public AiSettings withModel(String next) {
+        return new AiSettings(
+                mode,
+                endpoint,
+                next,
                 apiKey,
                 streaming,
                 intensity,

@@ -2,6 +2,7 @@ package io.ctyx.modpedia.client;
 
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
 import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -9,6 +10,11 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
+import net.neoforged.fml.ModList;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -342,6 +348,15 @@ public final class AssistantScreen extends Screen {
         }
         for (SuggestionHit hit : suggestionHits) {
             if (hit.bounds().contains(mouseX, mouseY)) {
+                if (hit.directDocumentId() != null) {
+                    input.setValue("");
+                    input.setFocused(false);
+                    inputExpanded = false;
+                    session.showBuiltInGuide(hit.directDocumentId());
+                    scrollToEnd = true;
+                    rebuildWidgets();
+                    return true;
+                }
                 input.setValue(hit.text());
                 inputExpanded = true;
                 rebuildWidgets();
@@ -419,6 +434,9 @@ public final class AssistantScreen extends Screen {
 
     @Override
     public void onClose() {
+        if (settingsPanel != null) {
+            settingsPanel.cancelPendingModelRequest();
+        }
         if (bounds != null) {
             windowConfig.save(bounds);
         }
@@ -578,18 +596,14 @@ public final class AssistantScreen extends Screen {
         graphics.drawCenteredString(font, Component.translatable("screen.modpedia.welcome"), centerX, titleY, TEXT_COLOR);
         graphics.drawCenteredString(font, Component.translatable("screen.modpedia.welcome_hint"), centerX, titleY + 18, SUBTLE_TEXT_COLOR);
 
-        String[] suggestions = {
-                "如何开始使用这个模组？",
-                "这个机器需要什么材料？",
-                "帮我查找相关手册内容"
-        };
+        List<WelcomeSuggestion> suggestions = welcomeSuggestions();
         List<SuggestionHit> hits = new ArrayList<>();
         int y = titleY + 52;
-        for (String suggestion : suggestions) {
+        for (WelcomeSuggestion suggestion : suggestions) {
             if (y + 22 > area.bottom() - 8) {
                 break;
             }
-            int suggestionWidth = Math.min(area.width() - 24, Math.max(150, font.width(suggestion) + 24));
+            int suggestionWidth = Math.min(area.width() - 24, Math.max(150, font.width(suggestion.label()) + 24));
             int x = centerX - suggestionWidth / 2;
             graphics.fill(
                     x,
@@ -601,11 +615,78 @@ public final class AssistantScreen extends Screen {
                             : glassStyle.assistantBubbleColor()
             );
             graphics.renderOutline(x, y, suggestionWidth, 22, glassStyle.glowInnerColor());
-            graphics.drawCenteredString(font, Component.literal(suggestion), centerX, y + 7, SUBTLE_TEXT_COLOR);
-            hits.add(new SuggestionHit(new Bounds(x, y, suggestionWidth, 22), suggestion));
+            graphics.drawCenteredString(font, suggestion.label(), centerX, y + 7, SUBTLE_TEXT_COLOR);
+            hits.add(new SuggestionHit(
+                    new Bounds(x, y, suggestionWidth, 22),
+                    suggestion.query(),
+                    suggestion.directDocumentId()
+            ));
             y += 28;
         }
         suggestionHits = hits;
+    }
+
+    /**
+     * 欢迎页的建议必须是可执行的示例，而不是让模型猜“这个模组”指谁。
+     * 第一项固定指向 ModPedia；内容模组示例只在对应模组已加载且能找到注册名称时出现。
+     */
+    private List<WelcomeSuggestion> welcomeSuggestions() {
+        List<WelcomeSuggestion> suggestions = new ArrayList<>();
+        suggestions.add(new WelcomeSuggestion(
+                Component.translatable("screen.modpedia.suggestion.assistant"),
+                Component.translatable("screen.modpedia.suggestion.assistant_query").getString(),
+                BuiltInGuide.ASSISTANT_USAGE_DOCUMENT_ID
+        ));
+        addItemSuggestion(
+                suggestions,
+                "pneumaticcraft",
+                "pneumaticcraft:pressure_tube",
+                "screen.modpedia.suggestion.pressure_tube",
+                "screen.modpedia.suggestion.pressure_tube_query"
+        );
+        addItemSuggestion(
+                suggestions,
+                "ae2",
+                "ae2:controller",
+                "screen.modpedia.suggestion.ae2_controller",
+                "screen.modpedia.suggestion.ae2_controller_query"
+        );
+        return List.copyOf(suggestions);
+    }
+
+    private void addItemSuggestion(
+            List<WelcomeSuggestion> suggestions,
+            String modId,
+            String itemId,
+            String labelKey,
+            String queryKey
+    ) {
+        if (!ModList.get().isLoaded(modId)) {
+            return;
+        }
+        String displayName = registeredItemName(itemId);
+        if (displayName.isBlank()) {
+            return;
+        }
+        suggestions.add(new WelcomeSuggestion(
+                Component.translatable(labelKey, displayName),
+                Component.translatable(queryKey, displayName).getString(),
+                null
+        ));
+    }
+
+    private static String registeredItemName(String itemId) {
+        try {
+            ResourceLocation id = ResourceLocation.parse(itemId);
+            Item item = BuiltInRegistries.ITEM.getOptional(id).orElse(Items.AIR);
+            if (item == Items.AIR) {
+                return "";
+            }
+            String name = new net.minecraft.world.item.ItemStack(item).getHoverName().getString().strip();
+            return name.equals(itemId) ? "" : name;
+        } catch (RuntimeException ignored) {
+            return "";
+        }
     }
 
     private void drawMessage(GuiGraphics graphics, MessageBubble layout, Bounds area, int scroll) {
@@ -626,8 +707,17 @@ public final class AssistantScreen extends Screen {
         graphics.renderOutline(bubbleX, y, layout.width(), layout.height(), glassStyle.glowInnerColor());
 
         int textY = y + 7;
-        for (var line : layout.lines()) {
-            graphics.drawString(font, line, bubbleX + 12, textY, TEXT_COLOR, false);
+        for (MarkdownRenderer.RenderedLine line : layout.lines()) {
+            if (line.source().kind() == MarkdownLine.Kind.CODE) {
+                graphics.fill(
+                        bubbleX + 8,
+                        textY - 1,
+                        bubbleX + layout.width() - 8,
+                        textY + font.lineHeight,
+                        0x30152233
+                );
+            }
+            graphics.drawString(font, line.sequence(), bubbleX + 12, textY, TEXT_COLOR, false);
             textY += font.lineHeight;
         }
         for (SourceReference source : message.sources()) {
@@ -672,16 +762,29 @@ public final class AssistantScreen extends Screen {
                     false
             );
         } else if (currentState instanceof AssistantUiState.Error error) {
-            graphics.drawString(font, Component.literal(error.message()), area.left() + 12, y, ERROR_COLOR, false);
+            List<FormattedCharSequence> errorLines = font.split(
+                    Component.literal(error.message()),
+                    Math.max(80, area.width() - 24)
+            );
+            for (int index = 0; index < errorLines.size(); index++) {
+                graphics.drawString(
+                        font,
+                        errorLines.get(index),
+                        area.left() + 12,
+                        y + index * font.lineHeight,
+                        ERROR_COLOR
+                );
+            }
+            int hintY = y + errorLines.size() * font.lineHeight;
             graphics.drawString(
                     font,
                     Component.translatable("screen.modpedia.retry_hint"),
                     area.left() + 12,
-                    y + font.lineHeight,
+                    hintY,
                     SUBTLE_TEXT_COLOR,
                     false
             );
-            int retryY = Math.min(area.bottom() - 24, y + font.lineHeight * 2 + 6);
+            int retryY = Math.min(area.bottom() - 24, hintY + font.lineHeight + 6);
             retryBounds = new Bounds(area.left() + 12, retryY, 64, 20);
             graphics.fill(
                     retryBounds.left(),
@@ -711,7 +814,12 @@ public final class AssistantScreen extends Screen {
 
     private int stateNoticeHeight() {
         if (currentState instanceof AssistantUiState.Error) {
-            return font.lineHeight * 3 + 14;
+            Bounds area = messageBounds();
+            int lines = font.split(
+                    Component.literal(((AssistantUiState.Error) currentState).message()),
+                    Math.max(80, area.width() - 24)
+            ).size();
+            return font.lineHeight * (Math.max(1, lines) + 2) + 14;
         }
         if (currentState instanceof AssistantUiState.Loading
                 || currentState instanceof AssistantUiState.Conversation conversation && conversation.noResult()) {
@@ -968,6 +1076,11 @@ public final class AssistantScreen extends Screen {
     }
 
     private void toggleSecondaryPanel(SecondaryPanel panel) {
+        if (secondaryPanel == SecondaryPanel.SETTINGS
+                && (panel != SecondaryPanel.SETTINGS || secondaryPanel == panel)
+                && settingsPanel != null) {
+            settingsPanel.cancelPendingModelRequest();
+        }
         secondaryPanel = secondaryPanel == panel ? SecondaryPanel.NONE : panel;
         if (secondaryPanel == SecondaryPanel.HISTORY) {
             historyScrollOffset = 0;
@@ -976,6 +1089,9 @@ public final class AssistantScreen extends Screen {
     }
 
     private void closeSecondaryPanel() {
+        if (secondaryPanel == SecondaryPanel.SETTINGS && settingsPanel != null) {
+            settingsPanel.cancelPendingModelRequest();
+        }
         secondaryPanel = SecondaryPanel.NONE;
         rebuildWidgets();
     }
@@ -1230,7 +1346,10 @@ public final class AssistantScreen extends Screen {
         }
     }
 
-    private record SuggestionHit(Bounds bounds, String text) {
+    private record SuggestionHit(Bounds bounds, String text, String directDocumentId) {
+    }
+
+    private record WelcomeSuggestion(Component label, String query, String directDocumentId) {
     }
 
     private record HistoryHit(Bounds bounds, ConversationSummary summary) {

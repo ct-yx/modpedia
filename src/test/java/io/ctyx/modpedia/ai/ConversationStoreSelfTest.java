@@ -3,13 +3,14 @@ package io.ctyx.modpedia.ai;
 import io.ctyx.modpedia.client.ChatMessage;
 import io.ctyx.modpedia.client.ConversationSummary;
 import io.ctyx.modpedia.client.MessageRole;
+import io.ctyx.modpedia.client.SourceReference;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 
-/** 会话文件、历史操作和 LangChain4j memory JSON 适配器的纯 Java 回归测试。 */
+/** UI 会话文件、历史操作和旧版 memory JSON 兼容的纯 Java 回归测试。 */
 public final class ConversationStoreSelfTest {
     private ConversationStoreSelfTest() {
     }
@@ -36,6 +37,36 @@ public final class ConversationStoreSelfTest {
             check(first.equals(restored.activeId()), "重启后应恢复活动会话");
             check(restored.active().messages().size() == 2, "重启后应恢复会话消息");
             check("[memory-json]".equals(restored.memoryMessagesJson(first)), "重启后应恢复上下文 JSON");
+
+            ConversationStore migration = new ConversationStore(root.resolve("migration"));
+            String migrationId = migration.activeId();
+            migration.appendTrace(migrationId, new SearchTrace(
+                    "压力管", "zh_cn", "steps", 1, "READY", false,
+                    List.of(new SourceReference(
+                            "pneumaticcraft:patchouli_books/book/en_us/entries/tubes/pressure_tubes",
+                            "Pressure Tubes",
+                            "pneumaticcraft",
+                            "assets/pneumaticcraft/patchouli_books/book/en_us/entries/tubes/pressure_tubes.json"
+                    )),
+                    1L
+            ));
+            migration.appendMessage(migrationId, new ChatMessage(
+                    MessageRole.USER,
+                    "压力管怎么连接？",
+                    List.of()
+            ));
+            migration.appendMessage(migrationId, new ChatMessage(
+                    MessageRole.ASSISTANT,
+                    "答案。\n\n**来源**\n"
+                            + "[来源: pneumaticcraft:patchouli_books/book/en_us/entries/tubes/pressure_tubes | 连接与防漏气步骤]",
+                    List.of()
+            ));
+            ConversationStore migrated = new ConversationStore(root.resolve("migration"));
+            ChatMessage restoredAnswer = migrated.active().messages().get(1);
+            check(restoredAnswer.sources().size() == 1, "旧会话引用应迁移为来源卡片");
+            check("连接与防漏气步骤".equals(restoredAnswer.sources().get(0).annotation()),
+                    "迁移后的来源应保留 AI 标注");
+            check(!restoredAnswer.markdown().contains("[来源:"), "迁移后的正文不应保留原始引用标记");
 
             restored.delete(first);
             check(!first.equals(restored.activeId()), "删除活动会话后应切换到其他会话");

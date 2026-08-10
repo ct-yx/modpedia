@@ -12,6 +12,8 @@ public record SourceCard(SourceReference source, int left, int top, int width, i
 
     public void render(GuiGraphics graphics, Font font, int backgroundColor, int textColor) {
         graphics.fill(left, top, left + width, top + height, backgroundColor);
-        graphics.drawString(font, Component.literal("↗ " + source.title()), left + 4, top + 3, textColor, false);
+        String label = source.displayLabel().isBlank() ? source.documentId() : source.displayLabel();
+        label = font.plainSubstrByWidth(label, Math.max(1, width - 10));
+        graphics.drawString(font, Component.literal("↗ " + label), left + 4, top + 3, textColor, false);
     }
 }

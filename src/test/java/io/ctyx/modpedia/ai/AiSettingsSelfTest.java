@@ -18,7 +18,7 @@ public final class AiSettingsSelfTest {
                     AssistantMode.AI,
                     " https://example.invalid/v1 ",
                     " test-model ",
-                    "secret-value",
+                    " secret-value ",
                     false,
                     SearchIntensity.CUSTOM,
                     99,
@@ -26,7 +26,7 @@ public final class AiSettingsSelfTest {
                     100_000,
                     1
             );
-            store.save(settings);
+            check(store.save(settings), "设置保存后应能回读校验");
             AiSettings restored = store.load();
             check("https://example.invalid/v1".equals(restored.endpoint()), "API 地址应去除首尾空白");
             check("test-model".equals(restored.model()), "模型名称应去除首尾空白");
@@ -36,7 +36,11 @@ public final class AiSettingsSelfTest {
             check(restored.timeoutSeconds() == 10, "超时应限制到 10 秒");
             check(restored.effectiveMaxRounds() == 8, "自定义搜索预算应使用自定义轮数");
             check("secret-value".equals(restored.apiKey()),
-                    "设置文件应保存 API Key，读取日志时由调用层排除");
+                    "API Key 应去除复制时可能带入的首尾空白");
+            check("secret-value".equals(AiSettings.resolveApiKey("secret-value", "stale-environment-key")),
+                    "设置页填写的 Key 应优先于旧环境变量");
+            check("environment-key".equals(AiSettings.resolveApiKey("", " environment-key ")),
+                    "设置页为空时应回退到环境变量");
             check(restored.mode() == AssistantMode.AI, "旧版默认设置应使用 AI 模式");
 
             Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\"}");

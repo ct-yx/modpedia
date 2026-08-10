@@ -44,19 +44,35 @@ public final class AiSettingsStore {
         }
     }
 
-    public synchronized void save(AiSettings settings) {
+    /** 保存并回读校验；失败时返回 false，调用方可以在设置页明确提示用户。 */
+    public synchronized boolean save(AiSettings settings) {
         AiSettings actual = settings == null ? AiSettings.defaults() : settings;
+        Path temporary = null;
         try {
             Files.createDirectories(path.getParent());
-            Path temporary = Files.createTempFile(path.getParent(), "ai-", ".tmp");
+            temporary = Files.createTempFile(path.getParent(), "ai-", ".tmp");
             Files.writeString(temporary, GSON.toJson(actual), StandardCharsets.UTF_8);
             try {
                 Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException exception) {
                 Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
             }
-        } catch (IOException ignored) {
-            // 设置文件不可写时，当前进程继续使用内存设置。
+            AiSettings persisted = GSON.fromJson(
+                    Files.readString(path, StandardCharsets.UTF_8),
+                    AiSettings.class
+            );
+            return actual.equals(persisted);
+        } catch (IOException | RuntimeException ignored) {
+            // 设置文件不可写或回读校验失败时，当前进程仍可继续使用内存设置。
+            return false;
+        } finally {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (IOException ignored) {
+                    // 临时文件清理失败不影响当前设置状态。
+                }
+            }
         }
     }
 

@@ -63,6 +63,28 @@ public final class MockAssistantSession implements AssistantSession {
     }
 
     @Override
+    public void showBuiltInGuide(String documentId) {
+        if (!BuiltInGuide.isSupported(documentId) || isLoading()) {
+            return;
+        }
+        String markdown = BuiltInGuide.readMarkdown(documentId, retrievalService, SearchLanguage.ZH_CN)
+                .orElse("");
+        if (markdown.isBlank()) {
+            publish(new AssistantUiState.Error(
+                    state.messages(),
+                    "ModPedia 内置说明文档未找到，请按 F9 重建知识库后重试。"
+            ));
+            return;
+        }
+
+        lastPrompt = null;
+        List<ChatMessage> messages = new ArrayList<>(state.messages());
+        messages.add(new ChatMessage(MessageRole.USER, BuiltInGuide.prompt(), List.of()));
+        messages.add(new ChatMessage(MessageRole.ASSISTANT, markdown, List.of(BuiltInGuide.source())));
+        publish(new AssistantUiState.Conversation(messages, false));
+    }
+
+    @Override
     public void cancel() {
         requestSequence.incrementAndGet();
         if (isLoading()) {

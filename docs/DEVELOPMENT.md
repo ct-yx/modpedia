@@ -7,7 +7,8 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.0.0-beta.1` |
+| 发布版本 | `v1.0.0-beta.2` |
+| GitHub 发布状态 | 正式测试版 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
 | Java | `21` |
@@ -20,8 +21,10 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1
+https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2
 ```
+
+后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
 
 ## 1. Mod 工程基础清单
 
@@ -76,11 +79,21 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1
 ## 5. AI、历史与仅搜索清单
 
 - [x] 使用 LangChain4j 管理 Chat Memory、工具调用轮次、上下文窗口和流式响应。
+- [x] 使用 LangChain4j Community SQL `SQLChatMemoryStore` 持久化上下文，SQLite 只保留本地方言和路径装配。
+- [x] 旧版 `memoryMessagesJson` 首次读取时迁移到 `config/modpedia/conversations/memory.sqlite`，迁移失败保留旧数据。
 - [x] `search_knowledge` 返回完整 Markdown 段落、来源、匹配分、`returned_count` 和 `has_more`。
 - [x] 证据不足时支持改写查询、跨语言补搜和已返回文档排除。
+- [x] `language=auto` 合并双语候选、实体锚点过滤通用词误命中，并归一化中文自然语言 `focus`。
+- [x] 重试或上游中断后清理没有工具结果的持久化调用，避免后续请求复用损坏的工具消息链。
 - [x] 快速、标准、深入和自定义搜索预算可配置。
 - [x] 历史会话保存用户/助手消息、来源卡片和 SearchTrace，不复制知识正文。
-- [x] API Key 仅用于认证，不写入日志和会话；支持环境变量覆盖。
+- [x] API Key 仅用于认证，不写入日志和会话；设置页非空值优先，空白时回退到环境变量。
+- [x] AI 设置保存使用原子替换并回读校验，失败时不会显示“已保存”。
+- [x] `AiClient` 支持 `/models` 模型列表、模型 ID 去重排序、根地址自动补全 `/v1` 和 HTML/401 友好错误提示。
+- [x] 设置页模型名称右侧提供“获取模型列表”，再次点击可循环切换已获取模型。
+- [x] 设置页提供“批量测试模型”，一次性测试 `/models` 返回的全部模型，不要求玩家逐个模型手测；报告写入 `config/modpedia/diagnostics/`。
+- [x] 兼容性探测分别覆盖普通请求、非流式工具续接、普通 SSE 和流式工具续接，并区分普通+工具可用与流式+工具可用。
+- [x] 503、429、网络超时和孤立工具调用自动重试一次；明确的配置错误直接显示，不重复请求。
 - [x] 设置页支持 `AI` / `SEARCH_ONLY`；仅搜索模式跳过 API 配置和网络请求。
 - [x] Mock 会话与真实 AI 会话接口兼容，支持离线 UI/搜索测试。
 - [~] 使用真实模型回归多问题补搜、流式输出、取消、超时和历史恢复。
@@ -92,6 +105,13 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
 ./gradlew test
 ./gradlew build
 git diff --check
+# AI HTTP 地址、模型列表和错误提示夹具
+./gradlew aiClientSelfTest
+# 批量测试当前 API 的全部模型（不会打印或写入 API Key）
+./gradlew aiModelCompatibility \
+  -PaiSettingsFile=run/config/modpedia/ai.json \
+  -PaiReportDirectory=build/reports/modpedia \
+  -PaiProbeParallelism=2
 ```
 
 按改动范围补充：
@@ -115,21 +135,25 @@ git diff --check
 
 - [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
 - [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
-- [x] 构建产物 `build/libs/modpedia-1.0.0-beta.1.jar` 已生成。
+- [x] 构建产物 `build/libs/modpedia-1.0.0-beta.2.jar` 已生成。
 - [x] `SHA256SUMS` 与发布 JAR 校验一致。
-- [x] GitHub `main` 已推送，标签 `v1.0.0-beta.1` 已推送。
-- [x] GitHub 预发布资产包含 JAR、校验、更新日志、安装说明和已知限制。
+- [x] GitHub `main` 已推送，标签 `v1.0.0-beta.2` 已推送。
+- [x] GitHub 发布资产包含 JAR、校验、更新日志、安装说明和已知限制。
 - [~] 在真实图形客户端完成小窗口 UI、三种手册跳转和完整整合包回归。
-- [ ] Beta 反馈收集后决定是否发布 `beta.2` 或进入稳定版准备。
+- [ ] 完成 M0 稳定版门槛后发布 `v1.0.0`。
 
-## 8. 后续开发清单
+## 8. 后续开发入口
 
-- [ ] 增加大型整合包实测报告和扫描覆盖率报告。
-- [ ] 补充更多自定义手册格式和页面节点适配器。
-- [ ] 在规则检索基准不达标时增加预构建段落索引。
-- [ ] 评估向量检索；只有 SQLite 规则检索和段落索引仍不足时再引入。
-- [ ] 增加设置导入/导出和更细粒度的主题配置界面。
-- [ ] 补充客户端截图自动化或可重复的图形回归环境。
+后续开发不在本清单中重复维护，统一参见[开发路线](ROADMAP.md)。当前顺序为：
+
+```text
+M0 Beta 稳定性收尾
+→ M1 大型整合包知识库 / M2 客户端 UI 稳定 / M3 AI 可靠性
+→ M4 发布与维护能力
+→ M5 可选语义检索
+```
+
+本清单继续保留每次实现和发布时的验收复选框。
 
 ## 9. 分支、提交与评审规范
 
@@ -218,7 +242,7 @@ INSTALL.md
 KNOWN_LIMITATIONS.md
 ```
 
-推送版本标签后，`.github/workflows/release.yml` 会在 GitHub Actions 中重新测试、构建、生成校验并创建预发布。发布完成后从远端下载 JAR，执行：
+推送版本标签后，`.github/workflows/release.yml` 会在 GitHub Actions 中重新测试、构建、生成校验并创建发布。发布完成后从远端下载 JAR，执行：
 
 ```bash
 shasum -a 256 -c SHA256SUMS
@@ -226,7 +250,7 @@ shasum -a 256 -c SHA256SUMS
 
 最后确认：
 
-- [ ] 发布页为预发布状态，版本号与 JAR 文件名一致。
+- [ ] 发布页为正式发布状态，版本号与 JAR 文件名一致。
 - [ ] 发布资产可下载，SHA-256 校验通过。
 - [ ] 安装说明与当前最小尺寸、依赖版本和快捷键一致。
 - [ ] 已知限制明确说明手册覆盖率、AI API 和图形客户端回归范围。

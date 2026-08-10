@@ -242,7 +242,11 @@ public final class ConversationStore {
                                 ConversationRecord.class
                         );
                         if (record != null && !record.id().isBlank()) {
-                            records.put(record.id(), record);
+                            ConversationRecord migrated = migrateCitationMessages(record);
+                            records.put(migrated.id(), migrated);
+                            if (migrated != record) {
+                                persist(migrated);
+                            }
                         }
                     } catch (IOException | RuntimeException ignored) {
                         // 单个损坏会话隔离，其他会话继续可用。
@@ -260,6 +264,41 @@ public final class ConversationStore {
             // 首次启动或目录不可读时，在内存中创建新会话。
         }
         ensureActive();
+    }
+
+    private ConversationRecord migrateCitationMessages(ConversationRecord record) {
+        List<ChatMessage> migratedMessages = new ArrayList<>();
+        boolean changed = false;
+        for (ChatMessage message : record.messages()) {
+            if (message == null || message.role() != io.ctyx.modpedia.client.MessageRole.ASSISTANT
+                    || message.sources() == null || !message.sources().isEmpty()
+                    || SourceCitationParser.parse(message.markdown()).isEmpty()) {
+                migratedMessages.add(message);
+                continue;
+            }
+            List<io.ctyx.modpedia.client.SourceReference> sources = SourceCitationParser.selectSources(
+                    record.searchTraces(),
+                    message.markdown(),
+                    5
+            );
+            String markdown = SourceCitationParser.removeCitationMarkup(message.markdown());
+            if (markdown.isBlank() && !sources.isEmpty()) {
+                markdown = "已根据本地手册整理，详细依据见下方来源。";
+            }
+            migratedMessages.add(new ChatMessage(message.role(), markdown, sources));
+            changed = true;
+        }
+        return changed
+                ? new ConversationRecord(
+                        record.id(),
+                        record.title(),
+                        record.createdAt(),
+                        record.updatedAt(),
+                        migratedMessages,
+                        record.searchTraces(),
+                        record.memoryMessagesJson()
+                )
+                : record;
     }
 
     private void ensureActive() {

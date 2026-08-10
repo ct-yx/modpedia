@@ -19,8 +19,11 @@ final class SearchTextNormalizer {
     private static final Pattern SEPARATOR_PATTERN = Pattern.compile("[\\s\\p{Punct}\\p{IsPunctuation}]+", Pattern.UNICODE_CHARACTER_CLASS);
     private static final Set<String> STOP_WORDS = Set.of(
             "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "is",
-            "it", "of", "on", "or", "the", "to", "what", "where", "which", "with", "怎么", "如何",
-            "什么", "哪个", "哪些", "怎么做", "可以", "需要", "这个", "那个"
+            "it", "of", "on", "or", "the", "to", "what", "where", "which", "with", "step", "steps",
+            "procedure", "procedures", "setup", "prerequisite", "prerequisites", "requirement",
+            "requirements", "usage", "instructions", "start", "begin", "using", "怎么", "如何",
+            "什么", "哪个", "哪些", "怎么做", "如何使用", "使用方法", "用法", "可以", "需要", "这个", "那个",
+            "设置", "前置", "前置条件", "前提", "条件", "步骤", "操作", "操作步骤", "防止"
     );
 
     private SearchTextNormalizer() {

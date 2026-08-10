@@ -1,0 +1,6 @@
+{
+  "name": "modpedia.patchouli.category.example.name",
+  "description": "modpedia.patchouli.category.example.description",
+  "icon": "minecraft:writable_book",
+  "sortnum": 10
+}

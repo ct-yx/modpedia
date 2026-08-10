@@ -186,17 +186,21 @@ heading_path / segment_markdown / score / matched_terms
 returned_count / has_more
 ```
 
-模型先检查实体、步骤、配方、前置条件和版本是否齐全；证据明显不足时改写查询或切换中文/英文资料继续搜索。程序用搜索强度限制轮数、每轮结果数和上下文字符预算，并抑制重复查询与已实际返回的文档。
+模型先检查实体、步骤、配方、前置条件和版本是否齐全；证据明显不足时改写查询或切换中文/英文资料继续搜索。玩家可以使用显示名称和自然语言，不必自行知道 ID。程序用搜索强度限制轮数、每轮结果数和上下文字符预算，并抑制重复查询与已实际返回的文档。
+
+回答中的来源卡片只来自本轮搜索轨迹，模型使用 `[来源: document_id | 标注: ...]` 选择并说明最相关的 3–5 个来源；未明确引用的候选结果不会自动变成跳转链接。
 
 设置中的 `mode=SEARCH_ONLY` 会跳过模型请求，直接把同一份 SQLite 检索结果格式化为完整 Markdown 消息和来源卡片；该模式仍保存用户消息、查询语言、轮次和命中文档 ID，切换回 `AI` 时不会覆盖原 API 配置。
 
-通用上下文管理由 LangChain4j `TokenWindowChatMemory` 完成，消息序列化使用其 `ChatMessageSerializer`。ModPedia 只把序列化结果、玩家可见消息和搜索轨迹保存到：
+通用上下文管理由 LangChain4j `TokenWindowChatMemory` 完成；持久化读写使用 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore`，消息序列化仍使用 LangChain4j 官方 `ChatMessageSerializer`。ModPedia 只装配 SQLite DataSource 和本地方言，不再自研完整的 ChatMemoryStore。运行时数据保存到：
 
 ```text
 config/modpedia/conversations/
+├── conversation-*.json  # UI 历史、来源卡片和搜索轨迹
+└── memory.sqlite        # Community SQL 持久化模型上下文
 ```
 
-历史文件保存查询和来源 ID，不复制 `segment_markdown`；知识正文的唯一事实副本仍是 JAR 资源、`generated/*.md` 和 `custom/*.md`，SQLite 只是派生检索库。这样可以独立重建知识库，也可以在不膨胀会话文件的情况下调整上下文窗口。
+旧版本会话文件中的 `memoryMessagesJson` 会在首次读取对应会话时迁移到 `memory.sqlite`，成功后清空旧字段；SQLite 写入失败时保留旧 JSON 并继续使用它。历史文件保存查询和来源 ID，不复制 `segment_markdown`；知识正文的唯一事实副本仍是 JAR 资源、`generated/*.md` 和 `custom/*.md`，知识 SQLite 与 AI 上下文 SQLite 分开维护。这样可以独立重建知识库，也可以在不膨胀 UI 历史文件的情况下调整上下文窗口。
 
 ## 9. 当前实现
 

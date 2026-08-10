@@ -1,0 +1,28 @@
+{
+  "name": "modpedia.patchouli.entry.introduction.name",
+  "category": "modpedia:overview",
+  "icon": "minecraft:book",
+  "sortnum": 0,
+  "pages": [
+    {
+      "type": "patchouli:text",
+      "title": "modpedia.patchouli.entry.introduction.page1_title",
+      "text": "modpedia.patchouli.entry.introduction.page1"
+    },
+    {
+      "type": "patchouli:text",
+      "title": "modpedia.patchouli.entry.introduction.page2_title",
+      "text": "modpedia.patchouli.entry.introduction.page2"
+    },
+    {
+      "type": "patchouli:text",
+      "title": "modpedia.patchouli.entry.introduction.page3_title",
+      "text": "modpedia.patchouli.entry.introduction.page3"
+    },
+    {
+      "type": "patchouli:text",
+      "title": "modpedia.patchouli.entry.introduction.page4_title",
+      "text": "modpedia.patchouli.entry.introduction.page4"
+    }
+  ]
+}

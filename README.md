@@ -3,13 +3,14 @@
 ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读取已安装模组中的手册资源，转换为统一 Markdown，写入 SQLite 检索库，再以搜索结果或 AI 回答的方式呈现，并保留原手册来源跳转。
 
 [![Build](https://github.com/ct-yx/modpedia/actions/workflows/build.yml/badge.svg)](https://github.com/ct-yx/modpedia/actions/workflows/build.yml)
-[![Beta Release](https://img.shields.io/github/v/release/ct-yx/modpedia?include_prereleases&label=beta)](https://github.com/ct-yx/modpedia/releases)
+[![Release](https://img.shields.io/github/v/release/ct-yx/modpedia?include_prereleases&label=release)](https://github.com/ct-yx/modpedia/releases)
 
 ## 当前版本
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.0.0-beta.1** |
+| Mod | **v1.0.0-beta.2** |
+| 发布状态 | GitHub 正式测试版 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
 | Java | **21** |
@@ -17,7 +18,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 | 客户端 UI 依赖 | ModernUI **3.12.0.2** |
 | 作者 | **ctyx** |
 
-首个测试版的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1)。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2)。下一稳定版本目标为 `v1.0.0`。
 
 ## 快速安装
 
@@ -34,7 +35,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.0.0-beta.1.jar**。
+1. 下载 **modpedia-1.0.0-beta.2.jar**。
 2. 将 ModPedia 和 ModernUI JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 按 **K** 打开助手。
@@ -59,11 +60,16 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 
 在设置中选择“AI 回答”，填写：
 
-- API 地址：兼容 Chat Completions 的接口地址；
-- 模型名称；
-- API Key：设置页输入，或使用环境变量 MODPEDIA_API_KEY。
+- API 地址：兼容 Chat Completions 的 API 根地址，通常以 `/v1` 结尾；如果只填写域名，客户端会自动补全 `/v1`；
+- 模型名称：可以点击右侧“获取模型列表”，成功后再次点击按钮在返回的模型之间切换；
+- API Key：优先使用设置页输入；设置页留空时才使用环境变量 MODPEDIA_API_KEY。
+- 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/diagnostics/`。
 
-模型可以调用 search_knowledge。当配方、步骤、前置条件或版本证据不足时，会继续改写查询并补充检索；最终回答只引用本轮实际搜索到的来源。
+如果连接测试提示“API 地址返回了网页内容”，说明地址指向了网页或服务根页面，而不是 API 端点；优先检查 `/v1` 路径。模型列表和连接测试都不会把 API Key 写入日志。
+
+批量测试把模型分为“普通+工具可用”和“流式+工具可用”。如果当前开启流式响应，应优先选择报告中流式工具链通过的模型；某些图片、实时或 Codex 账户专用模型即使出现在列表中，也可能不适用于当前 Chat Completions 工具调用链。
+
+模型可以调用 search_knowledge。当配方、步骤、前置条件或版本证据不足时，会继续改写查询并补充检索；最终只展示 3–5 个本轮实际搜索到且由模型标注用途的相关来源。
 
 默认搜索预算：
 
@@ -173,6 +179,7 @@ src/main/java/io/ctyx/modpedia/
 
 docs/
 ├── ARCHITECTURE.md
+├── AI_MEMORY_STORAGE_RESEARCH.md
 ├── DEVELOPMENT.md
 └── KNOWLEDGE_BASE.md
 ~~~
@@ -228,10 +235,11 @@ build/reports/modpedia/knowledge-benchmark.md
 - [Mod 开发清单](docs/DEVELOPMENT.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
+- [后续开发路线](docs/ROADMAP.md)
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Beta Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.1)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-beta.2)
 
 ## 作者与许可证
 
