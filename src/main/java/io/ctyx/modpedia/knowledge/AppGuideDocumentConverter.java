@@ -145,7 +145,12 @@ public final class AppGuideDocumentConverter implements GuideDocumentConverter {
                 List.copyOf(keywordSet),
                 source.version(),
                 sourcePath,
-                markdown
+                markdown,
+                source.contentKind(),
+                source.sourceId(),
+                source.collectionId(),
+                source.originType(),
+                source.metadataJson()
         );
     }
 
@@ -181,7 +186,12 @@ public final class AppGuideDocumentConverter implements GuideDocumentConverter {
                 keywords,
                 source.version(),
                 sourcePath,
-                frontMatter(id, source, title, "general", sourcePath, keywords) + "\n" + body.trim() + "\n"
+                frontMatter(id, source, title, "general", sourcePath, keywords) + "\n" + body.trim() + "\n",
+                source.contentKind(),
+                source.sourceId(),
+                source.collectionId(),
+                source.originType(),
+                source.metadataJson()
         );
     }
 
@@ -423,6 +433,11 @@ public final class AppGuideDocumentConverter implements GuideDocumentConverter {
                 + "keywords: [" + String.join(", ", keywords.stream().map(this::quote).toList()) + "]\n"
                 + "source_version: " + quote(source.version()) + "\n"
                 + "source_path: " + quote(sourcePath) + "\n"
+                + "content_kind: " + quote(source.contentKind().id()) + "\n"
+                + "source_id: " + quote(source.sourceId()) + "\n"
+                + "collection_id: " + quote(source.collectionId()) + "\n"
+                + "origin_type: " + quote(source.originType()) + "\n"
+                + "priority: " + source.priority() + "\n"
                 + "---\n";
     }
 

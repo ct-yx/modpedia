@@ -9,11 +9,18 @@ import dev.langchain4j.agent.tool.Tool;
 import io.ctyx.modpedia.client.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
+import io.ctyx.modpedia.search.KnowledgeScope;
 import io.ctyx.modpedia.search.SearchQuery;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
 import io.ctyx.modpedia.search.SearchTextNormalizer;
+import io.ctyx.modpedia.task.TaskKnowledgeStore;
+import io.ctyx.modpedia.task.TaskQuery;
+import io.ctyx.modpedia.task.TaskQueryMode;
+import io.ctyx.modpedia.task.TaskResponse;
+import io.ctyx.modpedia.task.TaskResult;
+import io.ctyx.modpedia.task.TaskStatus;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -73,6 +80,7 @@ public final class SearchKnowledgeTool {
     private final int maxResults;
     private final int maxContextChars;
     private final int maxRounds;
+    private final TaskKnowledgeStore taskStore;
     private final AtomicInteger roundCounter;
     private final Consumer<SearchTrace> traceSink;
     private final Set<String> seenQueries = new HashSet<>();
@@ -89,7 +97,7 @@ public final class SearchKnowledgeTool {
             Consumer<SearchTrace> traceSink
     ) {
         this(retrievalService, defaultLanguage, maxResults, maxContextChars, round,
-                Integer.MAX_VALUE, traceSink);
+                Integer.MAX_VALUE, new TaskKnowledgeStore(retrievalService.knowledgeRoot()), traceSink);
     }
 
     /** 创建带硬搜索轮数上限的工具；旧构造器保留给纯搜索测试和兼容调用方。 */
@@ -102,6 +110,21 @@ public final class SearchKnowledgeTool {
             int maxRounds,
             Consumer<SearchTrace> traceSink
     ) {
+        this(retrievalService, defaultLanguage, maxResults, maxContextChars, round, maxRounds,
+                new TaskKnowledgeStore(retrievalService.knowledgeRoot()), traceSink);
+    }
+
+    /** 允许测试或客户端注入任务存储；文本手册和任务运行表仍指向同一个 knowledge.db。 */
+    public SearchKnowledgeTool(
+            RetrievalService retrievalService,
+            SearchLanguage defaultLanguage,
+            int maxResults,
+            int maxContextChars,
+            int round,
+            int maxRounds,
+            TaskKnowledgeStore taskStore,
+            Consumer<SearchTrace> traceSink
+    ) {
         this.retrievalService = retrievalService;
         this.defaultLanguage = defaultLanguage == null || defaultLanguage == SearchLanguage.AUTO
                 ? SearchLanguage.ZH_CN
@@ -110,6 +133,9 @@ public final class SearchKnowledgeTool {
         this.maxContextChars = Math.max(4_000, maxContextChars);
         this.roundCounter = new AtomicInteger(Math.max(1, round));
         this.maxRounds = Math.max(1, Math.min(8, maxRounds));
+        this.taskStore = taskStore == null
+                ? new TaskKnowledgeStore(retrievalService.knowledgeRoot())
+                : taskStore;
         this.traceSink = traceSink == null ? ignored -> { } : traceSink;
     }
 
@@ -172,7 +198,8 @@ public final class SearchKnowledgeTool {
         List<SearchResponse> responses = searchLanguages(
                 normalizedQuery,
                 requestedLanguage,
-                Math.max(32, Math.min(256, maxResults * 8 + excluded.size() * 4))
+                Math.max(32, Math.min(256, maxResults * 8 + excluded.size() * 4)),
+                KnowledgeScope.MOD_MANUAL
         );
         List<SearchResult> candidates = mergeCandidates(responses);
         candidates = keepEntityMatches(candidates, normalizedQuery);
@@ -212,10 +239,252 @@ public final class SearchKnowledgeTool {
                 normalizedQuery, normalizedLanguage, normalizedFocus);
     }
 
+    @Tool(
+            name = "search_wiki",
+            value = "搜索整合包作者指南、任务 Wiki 和其他本地 Wiki，返回完整 Markdown 段落。"
+    )
+    public String searchWiki(
+            @P(name = "query", value = "Wiki 查询词或自然语言问题") String query,
+            @P(name = "language", value = "auto、zh_cn、en_us 或 neutral", defaultValue = "auto", required = false)
+            String language,
+            @P(name = "limit", value = "结果数量，范围 1 到 20", defaultValue = "8", required = false)
+            Integer limit,
+            @P(name = "collection_ids", value = "限定 Wiki 集合 ID 数组", defaultValue = "[]", required = false)
+            List<String> collectionIds
+    ) {
+        String normalizedQuery = query == null ? "" : query.strip();
+        SearchLanguage requestedLanguage = parseLanguage(language);
+        String normalizedLanguage = requestedLanguage.code();
+        int requestedLimit = limit == null ? Math.min(8, maxResults) : Math.max(1, Math.min(maxResults, limit));
+        JsonObject output = new JsonObject();
+        int currentRound = roundCounter.getAndIncrement();
+        output.addProperty("query", normalizedQuery);
+        output.addProperty("language", normalizedLanguage);
+        output.addProperty("scope", "wiki");
+        output.addProperty("round", currentRound);
+        if (currentRound > maxRounds) {
+            return finish(output, currentRound, SearchStatus.NO_MATCH, List.of(), false,
+                    "已达到搜索预算，请根据已返回资料整理回答。",
+                    normalizedQuery, normalizedLanguage, "related");
+        }
+        if (normalizedQuery.isBlank()) {
+            return finish(output, currentRound, SearchStatus.EMPTY_QUERY, List.of(), false,
+                    "查询为空", normalizedQuery, normalizedLanguage, "related");
+        }
+
+        String queryKey = "wiki|" + normalizedLanguage + "|" + queryKey(normalizedQuery);
+        if (!seenQueries.add(queryKey)) {
+            return finish(output, currentRound, SearchStatus.NO_MATCH, List.of(), false,
+                    "重复 Wiki 查询，请改写集合名称、章节标题或具体关键词。",
+                    normalizedQuery, normalizedLanguage, "related");
+        }
+        List<SearchResponse> responses = searchLanguages(
+                normalizedQuery,
+                requestedLanguage,
+                Math.max(16, Math.min(256, maxResults * 8)),
+                KnowledgeScope.WIKI
+        );
+        List<SearchResult> candidates = keepEntityMatches(mergeCandidates(responses), normalizedQuery);
+        if (collectionIds != null && !collectionIds.isEmpty()) {
+            Set<String> wanted = collectionIds.stream()
+                    .filter(value -> value != null && !value.isBlank())
+                    .map(String::strip)
+                    .collect(java.util.stream.Collectors.toSet());
+            candidates = candidates.stream()
+                    .filter(result -> wanted.contains(result.collectionId()))
+                    .toList();
+        }
+        List<SearchResult> selected = uniqueByDocument(candidates.stream()
+                .filter(result -> !seenSegments.contains(resultKey(result)))
+                .sorted(focusComparator("related"))
+                .limit(requestedLimit)
+                .toList());
+        boolean hasMore = candidates.size() > selected.size();
+        return finish(
+                output,
+                currentRound,
+                selected.isEmpty() ? combinedStatus(responses) : SearchStatus.READY,
+                selected,
+                hasMore,
+                selected.isEmpty() ? "当前没有匹配的 Wiki 文档" : "",
+                normalizedQuery,
+                normalizedLanguage,
+                "related"
+        );
+    }
+
+    @Tool(
+            name = "search_tasks",
+            value = "查询可选任务模组的本地运行快照。区分任务定义和玩家实时进度；" +
+                    "NEXT 返回候选下一步，DETAILS 返回任务要求和奖励，BLOCKED 返回阻塞原因，" +
+                    "SEARCH 按名称或 ID 搜索。随机奖励必须按候选列表处理，不能当成确定奖励。"
+    )
+    public String searchTasks(
+            @P(name = "mode", value = "NEXT、DETAILS、BLOCKED 或 SEARCH，也支持中文描述",
+                    defaultValue = "SEARCH", required = false)
+            String mode,
+            @P(name = "query", value = "任务名称、任务 ID 或缺失条件；NEXT 可留空",
+                    defaultValue = "", required = false)
+            String query,
+            @P(name = "quest_id", value = "精确任务 ID，可留空", defaultValue = "", required = false)
+            String questId,
+            @P(name = "limit", value = "结果数量，范围 1 到 20", defaultValue = "8", required = false)
+            Integer limit,
+            @P(name = "collection_ids", value = "任务来源集合或世界作用域 ID 数组",
+                    defaultValue = "[]", required = false)
+            List<String> collectionIds
+    ) {
+        TaskQueryMode requestedMode = parseTaskMode(mode);
+        String normalizedQuery = query == null ? "" : query.strip();
+        String normalizedQuestId = questId == null ? "" : questId.strip();
+        int requestedLimit = limit == null ? Math.min(8, maxResults) : Math.max(1, Math.min(maxResults, limit));
+        int currentRound = roundCounter.getAndIncrement();
+        JsonObject output = new JsonObject();
+        output.addProperty("scope", "task_runtime");
+        output.addProperty("mode", requestedMode.name());
+        output.addProperty("query", normalizedQuery);
+        output.addProperty("quest_id", normalizedQuestId);
+        output.addProperty("round", currentRound);
+
+        if (currentRound > maxRounds) {
+            return finishTask(output, currentRound, requestedMode, normalizedQuery, normalizedQuestId,
+                    new TaskResponse(TaskStatus.NO_MATCH,
+                            new TaskQuery(requestedMode, normalizedQuery, normalizedQuestId, requestedLimit, collectionIds),
+                            List.of(), "已达到搜索预算，请根据已返回任务资料整理回答。"), requestedLimit,
+                    "已达到搜索预算，请根据已返回任务资料整理回答，并列出仍缺失的任务进度资料。");
+        }
+
+        TaskResponse response = taskStore.query(new TaskQuery(
+                requestedMode,
+                normalizedQuery,
+                normalizedQuestId,
+                requestedLimit,
+                collectionIds
+        ));
+        return finishTask(
+                output,
+                currentRound,
+                requestedMode,
+                normalizedQuery,
+                normalizedQuestId,
+                response,
+                requestedLimit,
+                response.error()
+        );
+    }
+
+    private String finishTask(
+            JsonObject output,
+            int round,
+            TaskQueryMode mode,
+            String query,
+            String questId,
+            TaskResponse response,
+            int limit,
+            String hint
+    ) {
+        JsonArray quests = new JsonArray();
+        Map<String, SourceReference> sources = new LinkedHashMap<>();
+        for (TaskResult result : response.results()) {
+            JsonObject quest = new JsonObject();
+            quest.addProperty("quest_id", result.questId());
+            quest.addProperty("title", result.title());
+            quest.addProperty("description_markdown", result.descriptionMarkdown());
+            quest.addProperty("status", result.status());
+            quest.addProperty("visible", result.visible());
+            quest.addProperty("optional", result.optional());
+            quest.addProperty("scope_key", result.scopeKey());
+            quest.addProperty("snapshot_id", result.snapshotId());
+            quest.addProperty("progress_available", result.progressAvailable());
+            quest.add("unmet_dependencies", JSON.toJsonTree(result.unmetDependencies()));
+
+            JsonArray requirements = new JsonArray();
+            for (TaskResult.TaskRequirementResult requirement : result.requirements()) {
+                JsonObject item = new JsonObject();
+                item.addProperty("task_id", requirement.taskId());
+                item.addProperty("type", requirement.type());
+                item.addProperty("title", requirement.title());
+                item.addProperty("target_id", requirement.targetId());
+                item.addProperty("current", requirement.current());
+                item.addProperty("required", requirement.required());
+                item.addProperty("completed", requirement.completed());
+                requirements.add(item);
+            }
+            quest.add("requirements", requirements);
+
+            JsonArray rewards = new JsonArray();
+            for (TaskResult.TaskRewardResult reward : result.rewards()) {
+                JsonObject item = new JsonObject();
+                boolean random = isRandomReward(reward);
+                item.addProperty("reward_id", reward.rewardId());
+                item.addProperty("type", reward.type());
+                item.addProperty("title", reward.title());
+                item.addProperty("guaranteed", reward.guaranteed() && !random);
+                item.addProperty("is_random", random);
+                item.addProperty("guaranteed_statement", random ? "false" : Boolean.toString(reward.guaranteed()));
+                item.add("candidates", JSON.toJsonTree(reward.candidates()));
+                rewards.add(item);
+            }
+            quest.add("rewards", rewards);
+            quest.addProperty("source_path", result.sourcePath());
+            quests.add(quest);
+
+            String documentId = "task:" + result.snapshotId() + "/" + result.questId();
+            sources.putIfAbsent(documentId, new SourceReference(
+                    documentId,
+                    result.title().isBlank() ? result.questId() : result.title(),
+                    "task",
+                    result.sourcePath()
+            ));
+        }
+        output.addProperty("status", response.status().name());
+        output.addProperty("returned_count", quests.size());
+        output.addProperty("has_more", quests.size() >= limit && response.status() == TaskStatus.READY);
+        output.addProperty("new_source_count", sources.size());
+        output.addProperty("data_definition", "task_static_definition");
+        output.addProperty("data_progress", quests.isEmpty() ? "unavailable" : "task_runtime_progress");
+        output.add("results", quests);
+        if (!hint.isBlank()) {
+            output.addProperty("hint", hint);
+        }
+        traceSink.accept(new SearchTrace(
+                query.isBlank() ? questId : query,
+                "neutral",
+                mode.name().toLowerCase(Locale.ROOT),
+                round,
+                response.status().name(),
+                quests.size() >= limit && response.status() == TaskStatus.READY,
+                List.copyOf(sources.values()),
+                System.currentTimeMillis()
+        ));
+        return JSON.toJson(output);
+    }
+
+    private static boolean isRandomReward(TaskResult.TaskRewardResult reward) {
+        String type = normalize(reward.type() + " " + reward.title());
+        return reward.candidates().size() > 1
+                || type.contains("random")
+                || type.contains("loot")
+                || type.contains("箱")
+                || type.contains("随机");
+    }
+
+    private static TaskQueryMode parseTaskMode(String value) {
+        String normalized = normalize(value).replace(" ", "");
+        return switch (normalized) {
+            case "next", "下一步", "当前主线", "主线", "接下来" -> TaskQueryMode.NEXT;
+            case "details", "detail", "详情", "要求", "任务要求" -> TaskQueryMode.DETAILS;
+            case "blocked", "block", "卡住", "阻塞", "为什么卡住" -> TaskQueryMode.BLOCKED;
+            case "wiki", "说明" -> TaskQueryMode.WIKI;
+            default -> TaskQueryMode.SEARCH;
+        };
+    }
+
     private List<SearchResponse> searchLanguages(
             String query,
             SearchLanguage requestedLanguage,
-            int candidateLimit
+            int candidateLimit,
+            KnowledgeScope scope
     ) {
         List<SearchResponse> responses = new ArrayList<>();
         if (requestedLanguage == SearchLanguage.AUTO) {
@@ -226,19 +495,25 @@ public final class SearchKnowledgeTool {
                     ? SearchLanguage.EN_US
                     : SearchLanguage.ZH_CN;
             // AUTO 不再等到主语言完全无结果才切换；两种语言都查，再按文档和分数合并。
-            responses.add(searchOne(query, primary, candidateLimit));
-            responses.add(searchOne(query, alternate, candidateLimit));
+            responses.add(searchOne(query, primary, candidateLimit, scope));
+            responses.add(searchOne(query, alternate, candidateLimit, scope));
         } else {
-            responses.add(searchOne(query, requestedLanguage, candidateLimit));
+            responses.add(searchOne(query, requestedLanguage, candidateLimit, scope));
         }
         return responses;
     }
 
-    private SearchResponse searchOne(String query, SearchLanguage language, int candidateLimit) {
+    private SearchResponse searchOne(
+            String query,
+            SearchLanguage language,
+            int candidateLimit,
+            KnowledgeScope scope
+    ) {
         return retrievalService.searchForExpansion(new SearchQuery(
                 query,
                 SearchQuery.MAX_LIMIT,
-                language
+                language,
+                scope
         ), candidateLimit);
     }
 
@@ -493,6 +768,9 @@ public final class SearchKnowledgeTool {
             document.addProperty("title", result.title());
             document.addProperty("source_mod", result.sourceMod());
             document.addProperty("source_type", result.sourceType());
+            document.addProperty("content_kind", result.contentKind());
+            document.addProperty("source_id", result.sourceId());
+            document.addProperty("collection_id", result.collectionId());
             document.addProperty("category", result.category());
             document.addProperty("source_version", result.sourceVersion());
             document.addProperty("source_path", result.sourcePath());

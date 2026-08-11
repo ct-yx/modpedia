@@ -51,16 +51,38 @@ https://github.com/ct-yx/modpedia/releases/tag/v0.2.0
 ## 3. 知识库与检索清单
 
 - [x] 自动手册转换为完整 Markdown，并保留标题、列表、代码块和未知节点。
-- [x] SQLite 保存完整 Markdown、段落索引、标题路径和 FTS 数据。
+- [x] SQLite Schema v5 保存完整 Markdown、段落索引、标题路径和 FTS 数据；旧派生结构直接删除重建。
 - [x] `custom/*.md` 按稳定 ID、语言和 SHA-256 指纹启动增量导入。
 - [x] 新增、修改、删除自定义文档均在事务内同步 SQLite、段落和 FTS。
 - [x] 自定义文档优先级高于自动手册，原始 Markdown 保持为事实源。
 - [x] 支持中文双字词、英文大小写、ID、标题、关键词、路径和同义词匹配。
 - [x] 搜索结果按完整段落返回，每篇文档保留一个最高分段落。
 - [x] `reload()` 原子替换快照，并兼容旧版 Markdown/JSON 索引。
-- [x] 双语 10× 基准记录 p50/p95/p99，搜索 p95 目标为 `≤50 ms`。
+- [x] 双语 10× 基准记录冷/热 p50/p95/p99、SQLite/FTS/dbstat 大小和查询计划，搜索 p95 目标为 `≤50 ms`。
+- [x] FTS5 使用 external-content，正文从 `segments` 事实表读取；Schema/索引创建后执行 `PRAGMA optimize`，全量/大批量变更执行 FTS5 optimize/merge，小增量跳过完整合并。
+- [x] FTS 查询按 `rank` 排序，避免 `bm25(...)` 的排序临时表；性能自测覆盖短语、删除、增量更新和事务回滚。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
 - [ ] 只有基准证明必要时才引入段落预索引或向量检索。
+
+### 3.1 统一知识库与任务联动
+
+- [x] 统一使用 `config/modpedia/knowledge/knowledge.db`，Schema v5 同时包含文本知识和 `task_*` 运行表。
+- [x] 用 `content_kind` 区分 `mod_manual`、`wiki` 和 `task_runtime`，用 `source_type` 区分 JAR、Markdown、Wiki 和任务快照格式。
+- [x] 增加 `knowledge_sources` 来源注册表和 `sources/<source-id>/source.json` 扩展目录。
+- [x] APP/Modonomicon 书籍支持 `knowledge.content_kind`、`source-overrides.json` 和 `source.json` 分类覆盖；整合包作者指南可以归入 Wiki。
+- [x] 旧数据库结构不迁移：发现旧 Schema 或缺少任务表时删除派生数据库并从原始来源重建。
+- [x] 文本重建和任务同步使用不同表及事务；手册重建不会删除任务快照，任务同步不会修改 FTS。
+- [x] 内置 FTB Quests Wiki 作为 `wiki_markdown` 来源，后台更新失败时保留内置或本地缓存。
+- [x] FTB Quests、JEI、Jade 仅作为可选联动；ModernUI 是当前客户端唯一必需的外部 Mod。
+- [x] 不导入 JEI 配方；仅解析物品 ID、渲染本地化名称并尝试 Shift+左键配方跳转。
+- [~] 用真实 FTB Quests、JEI、Jade 客户端版本回归任务快照、配方界面和视线目标识别。
+
+### 3.2 物品与来源渲染协议
+
+- [x] 支持 `[[item:namespace:path|显示名称]]` 和 `[[tag:namespace:path|显示名称]]`。
+- [x] 普通显示区域渲染名称，支持协议令牌和模型直接输出的已注册 `namespace:path`；按住 Ctrl 显示稳定 ID，未知 ID 保留原文。
+- [x] 来源标注只来自本轮真实搜索轨迹，并嵌入正文对应位置；点击优先跳转原手册，失败时回退来源预览，不自动堆叠所有候选来源。
+- [~] 在真实整合包中确认模组语言表、JEI 运行时和物品点击命中区域的一致性。
 
 ## 4. 客户端 UI 清单
 

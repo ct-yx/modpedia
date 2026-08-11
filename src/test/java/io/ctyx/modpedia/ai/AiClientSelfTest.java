@@ -96,6 +96,8 @@ public final class AiClientSelfTest {
                 "Grok OAuth 上游错误应提示兼容模型");
         check(AiClient.isRetryableFailure(new IllegalStateException("HTTP 503 upstream unavailable")),
                 "503 应允许自动重试");
+        check(AiClient.isRetryableFailure(new IllegalStateException("temporary unavailable")),
+                "网关返回 temporary unavailable 应允许自动重试");
         check(AiClient.isRetryableFailure(new IllegalStateException("No tool output found for function call fc-1")),
                 "孤立工具调用应允许自动清理后重试");
         check(!AiClient.isRetryableFailure(new IllegalStateException("HTTP 400 invalid model")),

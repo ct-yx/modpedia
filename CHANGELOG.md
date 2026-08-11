@@ -1,5 +1,14 @@
 # 更新日志
 
+## 未发布：统一知识库与可选联动
+
+- 统一使用 Schema v5 的 `knowledge.db` 保存模组手册、Wiki 和任务运行数据；旧结构检测后删除派生库并从原始来源重建。
+- FTS5 改为 external-content，完整 Markdown 从 `segments` 事实表读取；加入 `PRAGMA optimize`、大批量 optimize/merge、`rank` 排序和冷/热双语性能基准。
+- 增加 `knowledge_sources` 来源注册表、`sources/<source-id>/` Wiki 目录和 APP/Modonomicon 书籍的 `content_kind` 分类覆盖。
+- 增加 FTB Quests 任务快照、依赖、进度和随机奖励响应；内置任务 Wiki 在后台尝试更新，网络失败时保留本地副本。
+- 增加 JEI 配方跳转、Jade 视线目标插入和物品 ID/名称渲染协议；FTB Quests、JEI、Jade 均保持可选。
+- 更新 README、架构、知识库、开发清单、路线和已知限制，明确手册框架与内容模组的边界。
+
 ## v0.2.0
 
 完成 M0 稳定性收尾的大部分自动化与链路维护工作。

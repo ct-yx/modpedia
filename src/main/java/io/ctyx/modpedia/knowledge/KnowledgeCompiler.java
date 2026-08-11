@@ -46,9 +46,11 @@ public final class KnowledgeCompiler {
         Path knowledgeRoot = configDirectory.resolve("modpedia").resolve("knowledge");
         Path generatedRoot = knowledgeRoot.resolve("generated");
         Path customRoot = knowledgeRoot.resolve("custom");
+        Path sourcesRoot = knowledgeRoot.resolve("sources");
         Path cacheRoot = knowledgeRoot.resolve("cache");
         Files.createDirectories(generatedRoot);
         Files.createDirectories(customRoot);
+        Files.createDirectories(sourcesRoot);
         Files.createDirectories(cacheRoot);
 
         List<String> warnings = new ArrayList<>();
@@ -128,13 +130,15 @@ public final class KnowledgeCompiler {
                                 source.fingerprint(),
                                 entry.relativePath(),
                                 languageOf(document.sourcePath()),
-                                0,
+                                source.priority(),
                                 document
                         )
                 );
                 generatedCount++;
             }
         }
+
+        loadWikiSources(knowledgeRoot, documents, databaseInputs, warnings);
 
         int removedCount = removeRemovedGenerated(
                 knowledgeRoot,
@@ -205,7 +209,13 @@ public final class KnowledgeCompiler {
                     source.sourceType(),
                     content,
                     source.fingerprint(),
-                    source.translations()
+                    source.translations(),
+                    source.contentKind(),
+                    source.sourceId(),
+                    source.collectionId(),
+                    source.priority(),
+                    source.originType(),
+                    source.metadataJson()
             );
             result.add(new DocumentEntry(markdownConverter.convert(cachedSource), relativePath));
         }
@@ -300,12 +310,12 @@ public final class KnowledgeCompiler {
                     databaseInputs.put(
                             sourceKey,
                             new KnowledgeDatabase.DocumentInput(
-                                    sourceKey,
-                                    fingerprint,
-                                    relativePath,
-                                    metadata.language(),
-                                    100,
-                                    document
+                                sourceKey,
+                                fingerprint,
+                                relativePath,
+                                metadata.language(),
+                                metadata.priority(),
+                                document
                             )
                     );
                     count++;
@@ -324,6 +334,36 @@ public final class KnowledgeCompiler {
             }
         }
         return count;
+    }
+
+    private void loadWikiSources(
+            Path knowledgeRoot,
+            Map<String, DocumentEntry> documents,
+            Map<String, KnowledgeDatabase.DocumentInput> databaseInputs,
+            List<String> warnings
+    ) {
+        try {
+            List<KnowledgeSourceImporter.ImportedKnowledgeDocument> imported = new WikiSourceLoader()
+                    .load(knowledgeRoot, warnings);
+            for (KnowledgeSourceImporter.ImportedKnowledgeDocument entry : imported) {
+                KnowledgeDocument document = entry.document();
+                documents.put(document.id(), new DocumentEntry(document, entry.relativePath()));
+                String sourceKey = "wiki:" + document.sourceId() + ":" + entry.relativePath();
+                databaseInputs.put(
+                        sourceKey,
+                        new KnowledgeDatabase.DocumentInput(
+                                sourceKey,
+                                entry.fingerprint(),
+                                entry.relativePath(),
+                                entry.language(),
+                                entry.priority(),
+                                document
+                        )
+                );
+            }
+        } catch (IOException | RuntimeException exception) {
+            warnings.add("导入 Wiki 来源失败：" + messageOf(exception));
+        }
     }
 
     private String languageOf(String path) {
@@ -363,6 +403,10 @@ public final class KnowledgeCompiler {
             value.put("path", entry.relativePath());
             value.put("source_mod", document.sourceMod());
             value.put("source_type", document.sourceType());
+            value.put("content_kind", document.contentKind().id());
+            value.put("source_id", document.sourceId());
+            value.put("collection_id", document.collectionId());
+            value.put("origin_type", document.originType());
             value.put("title", document.title());
             value.put("category", document.category());
             value.put("keywords", document.keywords());

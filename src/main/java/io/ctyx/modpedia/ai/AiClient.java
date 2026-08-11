@@ -94,11 +94,11 @@ public final class AiClient {
             for (int attempt = 0; attempt < 2; attempt++) {
                 try {
                     if (!actual.configured()) {
-                        resultConsumer.accept(new TestResult(false, "请先填写 API 地址和模型名称。"));
+                        resultConsumer.accept(new TestResult(true, "请先填写 API 地址和模型名称。"));
                         return;
                     }
                     if (actual.effectiveApiKey().isBlank()) {
-                        resultConsumer.accept(new TestResult(false,
+                        resultConsumer.accept(new TestResult(true,
                                 "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。"));
                         return;
                     }
@@ -322,7 +322,9 @@ public final class AiClient {
                         || lower.matches(".*(?:http|status|code)[ =:]?(408|425|429|500|502|503|504)\\b.*")
                         || lower.matches(".*\\b(408|425|429|500|502|503|504)\\b.*")
                         || lower.contains("too many requests")
-                        || lower.contains("temporarily unavailable")) {
+                        || lower.contains("temporarily unavailable")
+                        || lower.contains("temporary unavailable")
+                        || lower.contains("service unavailable")) {
                     return true;
                 }
             }

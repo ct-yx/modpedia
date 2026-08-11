@@ -27,7 +27,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 1. 安装 Minecraft **1.21.1**。
 2. 安装 NeoForge **21.1.x**。
 3. 安装 Java **21**。
-4. 安装客户端 ModernUI：从 [3.12.0.4 Release](https://github.com/BloCamLimb/ModernUI-MC/releases/tag/3.12.0.4) 下载：
+4. 安装客户端 ModernUI：从 [3.12.0.2 Release](https://github.com/BloCamLimb/ModernUI-MC/releases/tag/3.12.0.2) 下载：
 
    ~~~text
    ModernUI-NeoForge-1.21.1-3.12.0.2-universal.jar
@@ -42,6 +42,14 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 5. 等待首次知识库构建完成；需要立即重建时按 **F9**。
 
 ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作为可选手册适配对象存在，实际正文来自整合包中安装的内容模组。
+
+除 ModernUI 外，所有联动模组均为可选：
+
+- **FTB Quests**：进入世界后读取任务定义和当前玩家进度，写入同一个 `knowledge.db` 的 `task_*` 表；任务 Wiki 作为独立的 `content_kind=wiki` 来源导入，不与模组手册混在检索范围内。
+- **JEI**：不导入配方数据库。回答正文中的已注册物品 ID（包括模型直接输出的 `namespace:path`）按需解析为本地化名称，按住 Ctrl 显示 ID，按住 Shift 点击物品名称时尝试打开 JEI 配方界面。
+- **Jade**：在 Jade 已安装时记录当前视线下的方块物品，打开助手后可一键插入物品 ID；显示区域默认显示名称，按住 Ctrl 才显示 ID。
+
+缺少这些联动模组时，助手、手册扫描、SQLite 搜索和 AI 仍可正常加载；缺少 ModernUI 时客户端不满足当前发布包的必需依赖。
 
 ## 第一次使用
 
@@ -130,10 +138,26 @@ Patchouli、GuideME 和 Modonomicon 主要是手册框架或前置库，框架 J
 config/modpedia/knowledge/
 ├── generated/       # 自动扫描手册生成的 Markdown
 ├── custom/          # 玩家维护的 Markdown 源文件
+├── sources/         # 可扩展 Wiki 来源集合及 documents/**/*.md
 ├── cache/           # 构建报告、扫描缓存和索引
+├── manifest.json    # 当前文档清单
+├── keyword-index.json
 ├── knowledge.db     # SQLite 派生搜索库
 └── state.json       # JAR 与资源指纹
 ~~~
+
+`knowledge.db` 使用 Schema v5。模组手册、Wiki 和任务运行数据共用这个文件，但通过
+`content_kind`、`source_type`、`origin_type` 和 `collection_id` 分开检索；早期测试版发现
+旧 Schema 时会删除并从 JAR、`custom/`、`sources/` 和任务 Wiki 全量重建，原始文件不会删除。
+
+FTS5 使用 `content='segments'` 的 external-content 结构：完整 Markdown 仍从
+`documents`/`segments` 读取，检索索引不再保存 `segments_fts_content` 正文副本。全量或大批量
+导入后执行 FTS5 optimize/merge，小规模增量更新只执行 `PRAGMA optimize`；查询按 `rank` 排序，
+避免额外的排序临时表。
+
+通用 Wiki 来源放在 `sources/<source-id>/`，最少包含 `source.json` 和
+`documents/**/*.md`。`source.json` 用来声明来源集合、语言、版本和优先级，未来可以增加
+整合包作者指南或其他 Wiki，而不改变核心表结构。
 
 ### 自定义文档
 
@@ -175,14 +199,27 @@ src/main/java/io/ctyx/modpedia/
 ├── ai/           # AI 客户端、工具调用、上下文和会话
 ├── knowledge/    # 手册扫描、转换、增量构建和自定义导入
 ├── search/       # SQLite、FTS 和规则检索
+├── task/         # 任务快照、进度、依赖、奖励和查询
 └── client/       # NeoForge 客户端 UI、来源预览和手册跳转
 
 docs/
 ├── ARCHITECTURE.md
 ├── AI_MEMORY_STORAGE_RESEARCH.md
 ├── DEVELOPMENT.md
-└── KNOWLEDGE_BASE.md
+├── KNOWLEDGE_BASE.md
+└── ROADMAP.md
 ~~~
+
+模型正文中的可选物品和来源协议为：
+
+~~~text
+[[item:namespace:path|显示名称]]
+[[tag:namespace:path|显示名称]]
+[[source:document_id|来源说明]]
+~~~
+
+ID 保存在搜索结果和会话轨迹中，普通显示区域渲染为本地化名称；未注册的 ID 保留原文。来源标注按钮会嵌入回答中对应引用所在行，点击后优先跳转原手册页面，目标暂不可用时打开来源预览。未安装 JEI 或目标不存在时，
+物品仍作为普通文本显示，不影响回答。
 
 ### 本地运行
 
@@ -216,6 +253,10 @@ build/reports/modpedia/knowledge-benchmark.json
 build/reports/modpedia/knowledge-benchmark.md
 ~~~
 
+基准会从当前 `run/mods/` 和 Downloads 语料重新构建临时 v5 数据库，不依赖旧的运行库；同时
+记录中文/英文、ID、多词和无结果查询的冷/热 p50/p95/p99、SQLite/FTS/dbstat 大小、查询计划，
+并比较 contentful 与 external-content 以及 optimize 前后结果。
+
 详细的 Mod 开发清单、手动回归和发布流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
 ## 已知限制
@@ -225,6 +266,8 @@ build/reports/modpedia/knowledge-benchmark.md
 - 手册框架没有正文时只作为依赖型 JAR 统计；正文覆盖率取决于内容模组。
 - 具体来源跳转依赖目标手册模组的客户端公开入口；入口缺失时保留来源预览。
 - AI 回答需要玩家自行配置兼容 API；仅搜索模式可以完全离线使用。
+- FTB Quests 的运行时快照只在检测到任务模组并进入世界后生成；任务 Wiki 网络更新失败时使用内置副本。
+- JEI 配方跳转和 Jade 目标识别依赖各自客户端运行时 API，缺少或版本不匹配时仅关闭对应按钮。
 - 当前仅搜索使用规则检索，向量检索仍属于后续增强方向。
 - 首次启动或 F9 重建期间，知识库尚未完成时搜索结果可能暂时为空。
 
@@ -235,6 +278,7 @@ build/reports/modpedia/knowledge-benchmark.md
 - [Mod 开发清单](docs/DEVELOPMENT.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
+- [AI 持久化方案调研](docs/AI_MEMORY_STORAGE_RESEARCH.md)
 - [后续开发路线](docs/ROADMAP.md)
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)

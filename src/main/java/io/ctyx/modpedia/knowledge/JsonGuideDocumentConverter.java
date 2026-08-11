@@ -39,8 +39,22 @@ public final class JsonGuideDocumentConverter implements GuideDocumentConverter 
         String id = source.modId() + ":" + normalizeId(removeExtension(documentSourcePath(source)));
         String category = categoryOf(source.path());
         String markdown = frontMatter(id, source, title, category, keywords) + "\n" + body.trim() + "\n";
-        return new KnowledgeDocument(id, source.modId(), source.sourceType(), title, category, keywords,
-                source.version(), source.path(), markdown);
+        return new KnowledgeDocument(
+                id,
+                source.modId(),
+                source.sourceType(),
+                title,
+                category,
+                keywords,
+                source.version(),
+                source.path(),
+                markdown,
+                source.contentKind(),
+                source.sourceId(),
+                source.collectionId(),
+                source.originType(),
+                source.metadataJson()
+        );
     }
 
     private String renderRoot(JsonElement root, Map<String, String> translations) {
@@ -180,6 +194,11 @@ public final class JsonGuideDocumentConverter implements GuideDocumentConverter 
                 + "keywords: [" + String.join(", ", keywords.stream().map(this::quote).toList()) + "]\n"
                 + "source_version: " + quote(source.version()) + "\n"
                 + "source_path: " + quote(source.path()) + "\n"
+                + "content_kind: " + quote(source.contentKind().id()) + "\n"
+                + "source_id: " + quote(source.sourceId()) + "\n"
+                + "collection_id: " + quote(source.collectionId()) + "\n"
+                + "origin_type: " + quote(source.originType()) + "\n"
+                + "priority: " + source.priority() + "\n"
                 + "---\n";
     }
 

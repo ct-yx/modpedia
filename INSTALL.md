@@ -5,6 +5,7 @@
 - Minecraft `1.21.1`
 - NeoForge `21.1.244` 或兼容的 `21.1.x`
 - Java `21`
+- 客户端 ModernUI `3.12.0.2`（ModPedia 当前版本的必需客户端依赖）
 
 ## 安装
 
@@ -14,6 +15,8 @@
 4. 按 `K` 打开助手，按 `F9` 手动重建知识库。
 
 ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。手册框架是可选适配对象，实际手册正文来自对应内容模组的 JAR。
+
+FTB Quests、JEI、Jade 也是可选联动，不影响 ModPedia 基础加载：分别提供任务快照/任务 Wiki、物品配方跳转和视线目标插入。
 
 ## 工作模式
 

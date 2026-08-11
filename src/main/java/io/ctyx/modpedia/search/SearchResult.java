@@ -14,8 +14,42 @@ public record SearchResult(
         String headingPath,
         String segmentMarkdown,
         int score,
-        List<String> matchedTerms
+        List<String> matchedTerms,
+        String contentKind,
+        String sourceId,
+        String collectionId
 ) {
+    public SearchResult(
+            String documentId,
+            String title,
+            String sourceMod,
+            String sourceType,
+            String category,
+            String sourceVersion,
+            String sourcePath,
+            String headingPath,
+            String segmentMarkdown,
+            int score,
+            List<String> matchedTerms
+    ) {
+        this(
+                documentId,
+                title,
+                sourceMod,
+                sourceType,
+                category,
+                sourceVersion,
+                sourcePath,
+                headingPath,
+                segmentMarkdown,
+                score,
+                matchedTerms,
+                "mod_manual",
+                sourceMod,
+                sourceMod
+        );
+    }
+
     public SearchResult {
         documentId = documentId == null ? "" : documentId;
         title = title == null ? "" : title;
@@ -27,5 +61,8 @@ public record SearchResult(
         headingPath = headingPath == null ? "" : headingPath;
         segmentMarkdown = segmentMarkdown == null ? "" : segmentMarkdown;
         matchedTerms = matchedTerms == null ? List.of() : List.copyOf(matchedTerms);
+        contentKind = contentKind == null || contentKind.isBlank() ? "mod_manual" : contentKind;
+        sourceId = sourceId == null ? "" : sourceId;
+        collectionId = collectionId == null ? "" : collectionId;
     }
 }

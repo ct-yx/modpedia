@@ -29,6 +29,7 @@ public final class AssistantScreen extends Screen {
     private static final int TEXT_COLOR = 0xFFF3F6FA;
     private static final int SUBTLE_TEXT_COLOR = 0xFFB8C3D3;
     private static final int ERROR_COLOR = 0xFFFFB4AB;
+    private static final int TARGET_INSERT_WIDTH = 18;
 
     private final Screen previousScreen;
     private final AssistantSession session;
@@ -39,6 +40,7 @@ public final class AssistantScreen extends Screen {
     private WindowBounds bounds;
     private AssistantInput input;
     private boolean inputExpanded;
+    private boolean targetButtonVisible;
     private AssistantGlassConfig.Style glassStyle = AssistantGlassConfig.load();
     private AssistantUiState currentState;
     private boolean listening;
@@ -51,6 +53,7 @@ public final class AssistantScreen extends Screen {
     private double scrollOffset;
     private boolean scrollToEnd = true;
     private List<SourceCard> sourceCards = List.of();
+    private List<ItemHit> itemHits = List.of();
     private List<SuggestionHit> suggestionHits = List.of();
     private SourceReference previewSource;
     private String previewStatus = "";
@@ -91,6 +94,9 @@ public final class AssistantScreen extends Screen {
         if (!draft.isBlank()) {
             inputExpanded = true;
         }
+        targetButtonVisible = inputExpanded
+                && secondaryPanel == SecondaryPanel.NONE
+                && JadeTargetStore.current() != null;
         constrainBounds();
         clearWidgets();
         settingsContentWidgets.clear();
@@ -150,6 +156,13 @@ public final class AssistantScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        boolean shouldShowTargetButton = inputExpanded
+                && secondaryPanel == SecondaryPanel.NONE
+                && JadeTargetStore.current() != null;
+        if (shouldShowTargetButton != targetButtonVisible) {
+            targetButtonVisible = shouldShowTargetButton;
+            rebuildWidgets();
+        }
         if (secondaryPanel == SecondaryPanel.NONE && inputExpanded && input != null && input.isFocused()) {
             input.setFocused(true);
         }
@@ -335,12 +348,24 @@ public final class AssistantScreen extends Screen {
             }
             return true;
         }
+        if (inputExpanded && targetInsertBounds().contains(mouseX, mouseY)) {
+            insertLookTarget();
+            return true;
+        }
         if (retryBounds != null && retryBounds.contains(mouseX, mouseY)) {
             session.retry();
             scrollToEnd = true;
             return true;
         }
         if (messageBounds().contains(mouseX, mouseY)) {
+            if (hasShiftDown()) {
+                for (ItemHit hit : itemHits) {
+                    if (hit.bounds().contains(mouseX, mouseY)) {
+                        JeiRecipeNavigator.open(hit.reference().id());
+                        return true;
+                    }
+                }
+            }
             for (SourceCard card : sourceCards) {
                 if (card.contains(mouseX, mouseY)) {
                     openSourceOrPreview(card.source());
@@ -497,7 +522,7 @@ public final class AssistantScreen extends Screen {
         // 欢迎语、建议文字和输入控件也不会出现在二级页面文字之上。
         if (secondaryPanel == SecondaryPanel.NONE) {
             drawMessages(graphics, mouseX, mouseY);
-            drawInputChrome(graphics);
+            drawInputChrome(graphics, mouseX, mouseY);
         } else if (secondaryPanel == SecondaryPanel.HISTORY) {
             renderHistoryPage(graphics, mouseX, mouseY);
         } else if (secondaryPanel == SecondaryPanel.SETTINGS && settingsPanel != null) {
@@ -514,7 +539,7 @@ public final class AssistantScreen extends Screen {
         updateCursor(edge);
     }
 
-    private void drawInputChrome(GuiGraphics graphics) {
+    private void drawInputChrome(GuiGraphics graphics, int mouseX, int mouseY) {
         if (!inputExpanded) {
             Bounds trigger = inputTriggerBounds();
             graphics.fill(
@@ -541,6 +566,32 @@ public final class AssistantScreen extends Screen {
         Bounds row = inputRowBounds();
         Bounds send = sendBounds();
         graphics.renderOutline(row.left() - 1, row.top() - 1, row.width() + 2, row.height() + 2, glassStyle.glowInnerColor());
+        Bounds targetButton = targetInsertBounds();
+        JadeTargetStore.Target target = JadeTargetStore.current();
+        if (targetButtonVisible && target != null) {
+            boolean hovered = targetButton.contains(mouseX, mouseY);
+            graphics.fill(
+                    targetButton.left(),
+                    targetButton.top(),
+                    targetButton.right(),
+                    targetButton.bottom(),
+                    hovered ? glassStyle.glowInnerColor() : glassStyle.assistantBubbleColor()
+            );
+            graphics.renderOutline(
+                    targetButton.left(),
+                    targetButton.top(),
+                    targetButton.width(),
+                    targetButton.height(),
+                    glassStyle.glowInnerColor()
+            );
+            graphics.drawCenteredString(
+                    font,
+                    Component.literal("⌖"),
+                    targetButton.left() + targetButton.width() / 2,
+                    targetButton.top() + Math.max(1, (targetButton.height() - font.lineHeight) / 2),
+                    hovered ? TEXT_COLOR : glassStyle.accentColor()
+            );
+        }
         int color = input != null && input.hasText() && !session.isLoading()
                 ? glassStyle.accentColor()
                 : SUBTLE_TEXT_COLOR;
@@ -559,7 +610,8 @@ public final class AssistantScreen extends Screen {
         List<MessageBubble> layouts = MessageList.layout(
                 visibleMessages,
                 font,
-                area.width() - CONTENT_PADDING * 2
+                area.width() - CONTENT_PADDING * 2,
+                hasControlDown()
         );
         int messageContentHeight = layouts.isEmpty() ? 0 : layouts.get(layouts.size() - 1).bottom();
         int contentHeight = messageContentHeight + (layouts.isEmpty() ? 0 : stateNoticeHeight());
@@ -570,6 +622,7 @@ public final class AssistantScreen extends Screen {
         }
         scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset));
         sourceCards = new ArrayList<>();
+        itemHits = new ArrayList<>();
         suggestionHits = new ArrayList<>();
         retryBounds = null;
 
@@ -727,6 +780,7 @@ public final class AssistantScreen extends Screen {
                 );
             }
             graphics.drawString(font, line.sequence(), bubbleX + 12, textY, TEXT_COLOR, false);
+                recordItemHits(line, bubbleX + 12, textY);
             textY += font.lineHeight;
             if (!line.annotations().isEmpty()) {
                 int annotationWidth = Math.max(1, layout.width() - 20);
@@ -1373,12 +1427,70 @@ public final class AssistantScreen extends Screen {
 
     private Bounds inputFieldBounds() {
         Bounds row = inputRowBounds();
+        int targetWidth = targetButtonVisible ? TARGET_INSERT_WIDTH + FloatingAssistantWindow.INPUT_GAP : 0;
         return new Bounds(
                 row.left(),
                 row.top(),
-                Math.max(1, row.width() - FloatingAssistantWindow.SEND_BUTTON_SIZE - FloatingAssistantWindow.INPUT_GAP),
+                Math.max(1, row.width() - FloatingAssistantWindow.SEND_BUTTON_SIZE
+                        - FloatingAssistantWindow.INPUT_GAP - targetWidth),
                 row.height()
         );
+    }
+
+    private Bounds targetInsertBounds() {
+        if (!targetButtonVisible || !inputExpanded || secondaryPanel != SecondaryPanel.NONE) {
+            return new Bounds(0, 0, 0, 0);
+        }
+        Bounds send = sendBounds();
+        return new Bounds(
+                send.left() - FloatingAssistantWindow.INPUT_GAP - TARGET_INSERT_WIDTH,
+                send.top(),
+                TARGET_INSERT_WIDTH,
+                send.height()
+        );
+    }
+
+    private void insertLookTarget() {
+        if (input == null) {
+            return;
+        }
+        JadeTargetStore.Target target = JadeTargetStore.current();
+        if (target == null || target.itemId().isBlank()) {
+            return;
+        }
+        String token = "[[item:" + target.itemId() + "|" + target.displayName() + "]]";
+        String value = input.getValue();
+        input.setValue(value.isBlank() ? token : value + " " + token);
+        input.setFocused(true);
+    }
+
+    private void recordItemHits(
+            MarkdownRenderer.RenderedLine line,
+            int textLeft,
+            int textTop
+    ) {
+        if (line.items().isEmpty() || line.source().kind() == MarkdownLine.Kind.CODE) {
+            return;
+        }
+        String text = line.source().text();
+        int searchFrom = 0;
+        for (ItemReference reference : line.items()) {
+            String display = reference.displayText();
+            if (display.isBlank()) {
+                continue;
+            }
+            int start = text.indexOf(display, searchFrom);
+            if (start < 0) {
+                start = text.indexOf(display);
+            }
+            if (start < 0) {
+                continue;
+            }
+            int left = textLeft + font.width(text.substring(0, start));
+            Bounds hit = new Bounds(left, textTop, Math.max(1, font.width(display)), font.lineHeight);
+            itemHits = append(itemHits, new ItemHit(hit, reference));
+            searchFrom = start + display.length();
+        }
     }
 
     private Bounds previewBounds() {
@@ -1434,6 +1546,9 @@ public final class AssistantScreen extends Screen {
     }
 
     private record HistoryHit(Bounds bounds, ConversationSummary summary) {
+    }
+
+    private record ItemHit(Bounds bounds, ItemReference reference) {
     }
 
     private enum SecondaryPanel {

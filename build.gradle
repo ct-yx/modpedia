@@ -283,6 +283,18 @@ def knowledgeDatabaseSelfTest = tasks.register('knowledgeDatabaseSelfTest', Java
     mainClass = 'io.ctyx.modpedia.search.KnowledgeDatabaseSelfTest'
 }
 
+def knowledgeFtsPerformanceSelfTest = tasks.register('knowledgeFtsPerformanceSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.KnowledgeFtsPerformanceSelfTest'
+}
+
+def taskKnowledgeStoreSelfTest = tasks.register('taskKnowledgeStoreSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.task.TaskKnowledgeStoreSelfTest'
+}
+
 def knowledgeBenchmark = tasks.register('knowledgeBenchmark', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -416,6 +428,9 @@ def aiLiveModelProbe = tasks.register('aiLiveModelProbe', JavaExec) {
     if (project.hasProperty('knowledgeRoot')) {
         systemProperty 'modpedia.knowledgeRoot', project.property('knowledgeRoot')
     }
+    if (project.hasProperty('aiProbeQuestion')) {
+        systemProperty 'modpedia.aiProbeQuestion', project.property('aiProbeQuestion')
+    }
 }
 
 def markdownRendererSelfTest = tasks.register('markdownRendererSelfTest', JavaExec) {
@@ -432,6 +447,8 @@ tasks.named('test', Test) {
     dependsOn localizedSearchSelfTest
     dependsOn assistantUsageSelfTest
     dependsOn knowledgeDatabaseSelfTest
+    dependsOn knowledgeFtsPerformanceSelfTest
+    dependsOn taskKnowledgeStoreSelfTest
     dependsOn knowledgeBenchmarkFixtureSelfTest
     dependsOn conversationStoreSelfTest
     dependsOn aiSettingsSelfTest

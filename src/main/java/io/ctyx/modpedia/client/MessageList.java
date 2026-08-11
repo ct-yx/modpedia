@@ -10,6 +10,15 @@ public final class MessageList {
     }
 
     public static List<MessageBubble> layout(List<ChatMessage> messages, Font font, int contentWidth) {
-        return MessageBubble.layout(messages, font, contentWidth);
+        return MessageBubble.layout(messages, font, contentWidth, false);
+    }
+
+    public static List<MessageBubble> layout(
+            List<ChatMessage> messages,
+            Font font,
+            int contentWidth,
+            boolean showIds
+    ) {
+        return MessageBubble.layout(messages, font, contentWidth, showIds);
     }
 }

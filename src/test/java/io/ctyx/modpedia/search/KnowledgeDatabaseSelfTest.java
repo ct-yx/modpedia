@@ -32,6 +32,14 @@ public final class KnowledgeDatabaseSelfTest {
                     "自定义笔记",
                     "人工导入的完整 Markdown 内容。"
             ));
+            Path lowPriority = custom.resolve("low-priority.md");
+            write(lowPriority, customDocument(
+                    "custom:low-priority",
+                    "neutral",
+                    "低优先级自定义文档",
+                    "低优先级自定义内容。",
+                    20
+            ));
             Path chinese = custom.resolve("bilingual-zh.md");
             write(chinese, customDocument(
                     "custom:bilingual",
@@ -67,6 +75,17 @@ public final class KnowledgeDatabaseSelfTest {
             Path database = KnowledgeDatabase.path(knowledgeRoot);
             check(Files.isRegularFile(database), "首次启动应生成 SQLite 数据库");
             check(KnowledgeDatabase.isUsable(database), "SQLite 数据库应可用且包含 FTS5 表");
+            KnowledgeDatabase.DatabaseStats stats = KnowledgeDatabase.inspect(database);
+            check("external-content".equals(stats.ftsStorage()), "当前 FTS5 应使用 external-content");
+            check(stats.ftsContentBytes() == 0, "FTS 不应重复保存正文内容表");
+            check(stats.ftsRowCount() == stats.segmentCount(), "FTS 与 segments 段落数应一致");
+            check(KnowledgeDatabase.explainSearchPlan(
+                            database,
+                            SearchQuery.of("人工导入"),
+                            SearchLanguage.ZH_CN,
+                            Map.of()
+                    ).stream().noneMatch(value -> value.contains("TEMP B-TREE")),
+                    "FTS5 rank 排序不应产生排序临时表");
 
             RetrievalService service = new RetrievalService(knowledgeRoot);
             check(service.search("人工导入").hasResults(), "新增 custom 文档应可搜索");
@@ -91,6 +110,8 @@ public final class KnowledgeDatabaseSelfTest {
 
             Map<String, KnowledgeDatabase.CachedDocument> cached =
                     KnowledgeDatabase.readCachedCustomDocuments(database);
+            check(cached.containsKey("custom/low-priority.md"),
+                    "自定义文档复用必须按 custom 来源识别，不能依赖 priority >= 100");
             KnowledgeDatabase.SyncResult reused = KnowledgeDatabase.sync(
                     knowledgeRoot,
                     cached.values().stream().map(KnowledgeDatabase.CachedDocument::input).toList(),
@@ -171,12 +192,23 @@ public final class KnowledgeDatabaseSelfTest {
     }
 
     private static String customDocument(String id, String language, String title, String body) {
+        return customDocument(id, language, title, body, 100);
+    }
+
+    private static String customDocument(
+            String id,
+            String language,
+            String title,
+            String body,
+            int priority
+    ) {
         return "---\n"
                 + "id: '" + id + "'\n"
                 + "source_type: 'manual_annotation'\n"
                 + "custom_note: keep\n"
                 + "language: '" + language + "'\n"
                 + "title: '" + title + "'\n"
+                + "priority: " + priority + "\n"
                 + "keywords: ['" + title + "']\n"
                 + "---\n\n"
                 + "# " + title + "\n\n"

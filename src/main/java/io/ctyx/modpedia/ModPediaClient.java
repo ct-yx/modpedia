@@ -4,10 +4,14 @@ import com.mojang.blaze3d.platform.InputConstants;
 import io.ctyx.modpedia.ai.AiAssistantSession;
 import io.ctyx.modpedia.client.AssistantScreen;
 import io.ctyx.modpedia.client.AssistantSession;
+import io.ctyx.modpedia.client.FtbQuestsClientAdapter;
+import io.ctyx.modpedia.client.JadeTargetStore;
 import io.ctyx.modpedia.client.ManualSourceNavigator;
 import io.ctyx.modpedia.client.MockAssistantSession;
 import io.ctyx.modpedia.client.FloatingAssistantWindow;
+import io.ctyx.modpedia.client.TaskWikiSyncService;
 import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
+import io.ctyx.modpedia.task.TaskKnowledgeStore;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -20,6 +24,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.fml.loading.FMLPaths;
 
 /** 客户端入口，负责启动知识库构建和注册手动重建入口。 */
 @Mod(value = ModPedia.MOD_ID, dist = Dist.CLIENT)
@@ -39,6 +44,9 @@ public final class ModPediaClient {
     static final AssistantSession ASSISTANT_SESSION = Boolean.getBoolean("modpedia.ai.mock")
             ? new MockAssistantSession()
             : new AiAssistantSession();
+    static final FtbQuestsClientAdapter FTB_QUESTS = new FtbQuestsClientAdapter(
+            new TaskKnowledgeStore(FMLPaths.CONFIGDIR.get().resolve("modpedia").resolve("knowledge"))
+    );
 
     public ModPediaClient(IEventBus modEventBus, ModContainer modContainer) {
         ModPedia.LOGGER.info("Loading ModPedia client components");
@@ -54,6 +62,7 @@ public final class ModPediaClient {
 
     static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(KnowledgeUpdateService::startAsync);
+        event.enqueueWork(TaskWikiSyncService::startAsync);
     }
 }
 
@@ -65,6 +74,9 @@ final class ModPediaClientEvents {
     @SubscribeEvent
     static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
+        FtbQuestsClientAdapter adapter = ModPediaClient.FTB_QUESTS;
+        adapter.tick(minecraft);
+        JadeTargetStore.tick(minecraft);
         if (ModPediaClient.OPEN_ASSISTANT.consumeClick()) {
             if (minecraft.screen instanceof AssistantScreen assistantScreen) {
                 assistantScreen.onClose();

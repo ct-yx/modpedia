@@ -1,6 +1,8 @@
 package io.ctyx.modpedia.client;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /** Markdown 消息解析和样式转换回归测试，不启动 Minecraft 渲染窗口。 */
 public final class MarkdownRendererSelfTest {
@@ -66,10 +68,52 @@ public final class MarkdownRendererSelfTest {
         check(annotations.size() == 1, "正文中的来源标记应解析为一个来源标注");
         check("启动条件和操作步骤".equals(annotations.get(0).displayLabel()),
                 "正文来源标注应保留模型写的用途说明");
+        List<SourceReference> protocolAnnotations = MarkdownRenderer.sourceAnnotations(
+                new MarkdownLine(
+                        "结论见 [[source:demo:guide/pressure|启动条件和操作步骤]]。",
+                        MarkdownLine.Kind.PARAGRAPH,
+                        0
+                ),
+                List.of(annotatedSource)
+        );
+        check(protocolAnnotations.size() == 1
+                        && "启动条件和操作步骤".equals(protocolAnnotations.get(0).displayLabel()),
+                "[[source:...]] 协议也应绑定到正文行的手册跳转按钮");
         check(MarkdownRenderer.sourceAnnotations(
                 new MarkdownLine("[来源: other:unsearched]", MarkdownLine.Kind.PARAGRAPH, 0),
                 List.of(annotatedSource)
         ).isEmpty(), "未出现在本轮搜索结果中的 ID 不得生成跳转按钮");
+
+        ItemTokenParser.Parsed rawItem = ItemTokenParser.parse(
+                "需要 ae2:controller 和 [[item:minecraft:iron_ingot|错误显示名]]。",
+                false,
+                id -> Optional.ofNullable(Map.of(
+                        "ae2:controller", "ME 控制器",
+                        "minecraft:iron_ingot", "铁锭"
+                ).get(id))
+        );
+        check(rawItem.text().equals("需要 ME 控制器 和 铁锭。"),
+                "回答中的裸物品 ID 和协议物品 ID 都应转换为本地化名称");
+        check(rawItem.references().size() == 2
+                        && rawItem.references().get(0).id().equals("ae2:controller"),
+                "物品显示文本必须保留原始 ID 供配方跳转");
+        ItemTokenParser.Parsed visibleIds = ItemTokenParser.parse(
+                "需要 ae2:controller 和 [[item:minecraft:iron_ingot|铁锭]]。",
+                true,
+                id -> Optional.ofNullable(Map.of(
+                        "ae2:controller", "ME 控制器",
+                        "minecraft:iron_ingot", "铁锭"
+                ).get(id))
+        );
+        check(visibleIds.text().equals("需要 ae2:controller 和 minecraft:iron_ingot。"),
+                "Ctrl 模式应显示原始物品 ID");
+        ItemTokenParser.Parsed unknown = ItemTokenParser.parse(
+                "普通路径 example:unknown/path 不应被改写。",
+                false,
+                id -> Optional.empty()
+        );
+        check(unknown.text().equals("普通路径 example:unknown/path 不应被改写。"),
+                "未注册的 namespace:path 不得误改为物品名称");
 
         String longText = "这是一段用于检查布局输入的很长文本，".repeat(20);
         check(MarkdownParser.parse(longText).size() == 1,

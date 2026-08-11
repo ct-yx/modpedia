@@ -168,6 +168,25 @@ public final class AppGuideAdapterSelfTest {
         check(categoryDocument.id().endsWith("/basics/__category"), "分类资源应生成分类概览文档");
         check(!categoryDocument.sourcePath().contains("entry="), "分类概览不能伪造条目跳转");
 
+        KnowledgeDocument wikiDocument = converter.convertAll(new ScannedResource(
+                "pack", "Pack Guide", "1.0.0",
+                "data/pack/modonomicon/books/guide/entries/start.json", "app_json",
+                "{\"book_id\":\"guide\",\"entries\":[{\"id\":\"start\",\"title\":\"开始\",\"pages\":[{\"type\":\"text\",\"text\":\"Wiki 内容\"}]}]}",
+                "fingerprint-wiki",
+                Map.of(),
+                io.ctyx.modpedia.knowledge.KnowledgeContentKind.WIKI,
+                "pack-guide",
+                "example-pack",
+                60,
+                "local_file",
+                "{\"content_kind\":\"wiki\"}"
+        )).getFirst();
+        check(wikiDocument.contentKind() == io.ctyx.modpedia.knowledge.KnowledgeContentKind.WIKI,
+                "APP 书籍被标记为 Wiki 时必须保留内容类型");
+        check("pack-guide".equals(wikiDocument.sourceId())
+                        && "example-pack".equals(wikiDocument.collectionId()),
+                "APP Wiki 必须保留来源 ID 和集合 ID");
+
         KnowledgeCompiler compiler = new KnowledgeCompiler();
         KnowledgeCompiler.CompileResult first = compiler.compile(
                 config,

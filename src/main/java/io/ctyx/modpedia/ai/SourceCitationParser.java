@@ -13,6 +13,10 @@ import java.util.regex.Pattern;
 
 /** 解析模型回答中的来源标记，不把模型未检索过的 ID 直接交给客户端跳转。 */
 public final class SourceCitationParser {
+    private static final Pattern SOURCE_TOKEN = Pattern.compile(
+            "\\[\\[source:([^|\\]]+)(?:\\|([^\\]]*))?\\]\\]",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+    );
     private static final Pattern PATTERN = Pattern.compile(
             "\\[(?:来源|source)\\s*[:：]\\s*(\\[[^\\]]+\\]\\([^)]*\\)|[^\\]|]+?)"
                     + "(?:\\s*[|｜]\\s*(?:(?:标注|说明|label|annotation)\\s*[:：]\\s*)?([^\\]]+?))?\\]",
@@ -28,9 +32,25 @@ public final class SourceCitationParser {
             return List.of();
         }
         Matcher matcher = PATTERN.matcher(answer);
-        List<Citation> citations = new ArrayList<>();
+        List<LocatedCitation> located = new ArrayList<>();
         List<int[]> citationRanges = new ArrayList<>();
+        Matcher sourceToken = SOURCE_TOKEN.matcher(answer);
+        while (sourceToken.find()) {
+            String documentId = cleanDocumentId(sourceToken.group(1));
+            if (!documentId.isBlank()) {
+                located.add(new LocatedCitation(
+                        sourceToken.start(),
+                        new Citation(documentId, sourceToken.group(2) == null
+                                ? ""
+                                : sourceToken.group(2).strip())
+                ));
+            }
+            citationRanges.add(new int[]{sourceToken.start(), sourceToken.end()});
+        }
         while (matcher.find()) {
+            if (insideAny(matcher.start(), matcher.end(), citationRanges)) {
+                continue;
+            }
             String rawDocument = matcher.group(1);
             String documentId = cleanDocumentId(rawDocument);
             if (documentId.isBlank()) {
@@ -41,7 +61,10 @@ public final class SourceCitationParser {
             if (annotation.isBlank() && link != null && !link.label().equalsIgnoreCase(documentId)) {
                 annotation = link.label();
             }
-            citations.add(new Citation(documentId, annotation));
+            located.add(new LocatedCitation(
+                    matcher.start(),
+                    new Citation(documentId, annotation)
+            ));
             citationRanges.add(new int[]{matcher.start(), matcher.end()});
         }
 
@@ -59,12 +82,16 @@ public final class SourceCitationParser {
             if (documentId.isBlank()) {
                 continue;
             }
-            citations.add(new Citation(
-                    documentId,
-                    looksLikeDocumentId(target) && !label.equalsIgnoreCase(documentId) ? label : ""
+            located.add(new LocatedCitation(
+                    linkMatcher.start(),
+                    new Citation(
+                            documentId,
+                            looksLikeDocumentId(target) && !label.equalsIgnoreCase(documentId) ? label : ""
+                    )
             ));
         }
-        return List.copyOf(citations);
+        located.sort(java.util.Comparator.comparingInt(LocatedCitation::start));
+        return located.stream().map(LocatedCitation::citation).toList();
     }
 
     /**
@@ -77,7 +104,8 @@ public final class SourceCitationParser {
         if (answer == null || answer.isBlank()) {
             return answer == null ? "" : answer;
         }
-        String result = PATTERN.matcher(answer).replaceAll("");
+        String result = SOURCE_TOKEN.matcher(answer).replaceAll("");
+        result = PATTERN.matcher(result).replaceAll("");
         result = result.replaceAll(
                 "(?im)^\\s*(?:[*_`#>\\-+ ]*)(?:来源|sources?)(?:\\s*[:：])?\\s*(?:[*_`#>\\-+ ]*)$",
                 ""
@@ -196,5 +224,8 @@ public final class SourceCitationParser {
     }
 
     private record LinkParts(String label, String target) {
+    }
+
+    private record LocatedCitation(int start, Citation citation) {
     }
 }

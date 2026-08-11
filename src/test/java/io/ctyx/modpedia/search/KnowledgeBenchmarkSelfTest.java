@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -52,10 +53,6 @@ public final class KnowledgeBenchmarkSelfTest {
                 "modpedia.benchmark.knowledgeRoot",
                 projectRoot.resolve("run/config/modpedia/knowledge")
         );
-        if (!Files.isRegularFile(knowledgeRoot.resolve("manifest.json"))) {
-            throw new IllegalStateException("找不到现有知识库：" + knowledgeRoot);
-        }
-
         Path runMods = propertyPath("modpedia.benchmark.runMods", projectRoot.resolve("run/mods"));
         Path downloads = propertyPath(
                 "modpedia.benchmark.downloads",
@@ -80,6 +77,9 @@ public final class KnowledgeBenchmarkSelfTest {
 
         List<Path> baselineJars = JarCorpusLoader.discoverJars(runMods);
         List<Path> expandedJars = mergeJars(baselineJars, JarCorpusLoader.discoverJars(downloads));
+        if (baselineJars.isEmpty()) {
+            throw new IllegalStateException("找不到当前实例 JAR 语料：" + runMods);
+        }
         List<JarCorpusLoader.ResourceRoot> roots = List.of(
                 new JarCorpusLoader.ResourceRoot(
                         projectRoot.resolve("src/main/resources"),
@@ -141,6 +141,20 @@ public final class KnowledgeBenchmarkSelfTest {
             ));
         }
 
+        LoadedScenario comparisonCorpus = loadScenario(
+                "fts-comparison",
+                expandedJars,
+                roots,
+                JarCorpusLoader.LanguageMode.ZH_CN
+        );
+        FtsComparison comparison = compareFtsStorage(
+                comparisonCorpus,
+                knowledgeRoot,
+                searchBudgetMs,
+                warmupSamples,
+                searchSamples
+        );
+
         Files.createDirectories(reportDirectory);
         Path jsonPath = reportDirectory.resolve("knowledge-benchmark.json");
         Path markdownPath = reportDirectory.resolve("knowledge-benchmark.md");
@@ -149,7 +163,8 @@ public final class KnowledgeBenchmarkSelfTest {
                 projectRoot.toString(),
                 searchBudgetMs,
                 SCALE_FACTOR,
-                reports
+                reports,
+                comparison
         );
         Files.writeString(jsonPath, JSON.toJson(report), StandardCharsets.UTF_8);
         Files.writeString(markdownPath, toMarkdown(report), StandardCharsets.UTF_8);
@@ -236,6 +251,13 @@ public final class KnowledgeBenchmarkSelfTest {
             long changedNanos = System.nanoTime() - changedStart;
 
             Path resultRoot = changed.knowledgeRoot();
+            if (!Files.isRegularFile(KnowledgeDatabase.path(resultRoot))) {
+                throw new IllegalStateException(
+                        "基准编译没有生成当前版本 SQLite：" + resultRoot
+                                + "；冷构建警告=" + cold.report().warnings()
+                                + "；变更构建警告=" + changed.report().warnings()
+                );
+            }
             long reloadStart = System.nanoTime();
             RetrievalService service = new RetrievalService(resultRoot);
             service.reload();
@@ -254,7 +276,7 @@ public final class KnowledgeBenchmarkSelfTest {
                 );
             }
             SearchMetrics search = benchmarkSearch(
-                    service,
+                    KnowledgeDatabase.path(resultRoot),
                     measuredFiles.documents(),
                     language,
                     searchBudgetMs,
@@ -409,7 +431,7 @@ public final class KnowledgeBenchmarkSelfTest {
     }
 
     private static SearchMetrics benchmarkSearch(
-            RetrievalService service,
+            Path databasePath,
             List<ManifestDocument> documents,
             JarCorpusLoader.LanguageMode language,
             long budgetMs,
@@ -418,46 +440,79 @@ public final class KnowledgeBenchmarkSelfTest {
     ) {
         List<QueryCase> cases = queryCases(documents, language);
         List<QueryMetrics> metrics = new ArrayList<>();
-        List<Long> allSamples = new ArrayList<>();
-        for (QueryCase queryCase : cases) {
-            for (int index = 0; index < warmupSamples; index++) {
-                service.search(queryCase.query());
+        List<Long> allHotSamples = new ArrayList<>();
+        List<Long> allColdSamples = new ArrayList<>();
+        SearchLanguage searchLanguage = language == JarCorpusLoader.LanguageMode.ZH_CN
+                ? SearchLanguage.ZH_CN
+                : SearchLanguage.EN_US;
+        try (KnowledgeDatabase.Reader hotReader = KnowledgeDatabase.openReader(databasePath)) {
+            for (QueryCase queryCase : cases) {
+                SearchQuery searchQuery = SearchQuery.of(queryCase.query());
+                for (int index = 0; index < warmupSamples; index++) {
+                    hotReader.search(searchQuery, searchLanguage, Map.of());
+                }
+                long[] hotSamples = new long[searchSamples];
+                long[] coldSamples = new long[searchSamples];
+                SearchResponse last = null;
+                SearchResponse lastCold = null;
+                for (int index = 0; index < searchSamples; index++) {
+                    long hotStart = System.nanoTime();
+                    last = hotReader.search(searchQuery, searchLanguage, Map.of());
+                    hotSamples[index] = System.nanoTime() - hotStart;
+                    allHotSamples.add(hotSamples[index]);
+
+                    long coldStart = System.nanoTime();
+                    try (KnowledgeDatabase.Reader coldReader = KnowledgeDatabase.openReader(databasePath)) {
+                        lastCold = coldReader.search(searchQuery, searchLanguage, Map.of());
+                    } catch (SQLException exception) {
+                        throw new IllegalStateException("冷查询打开 SQLite 失败", exception);
+                    }
+                    coldSamples[index] = System.nanoTime() - coldStart;
+                    allColdSamples.add(coldSamples[index]);
+                }
+                Arrays.sort(hotSamples);
+                Arrays.sort(coldSamples);
+                boolean passed = queryCase.mustMatch()
+                        ? last != null && last.status() == SearchStatus.READY && last.hasResults()
+                        : last != null && last.status() == SearchStatus.NO_MATCH;
+                boolean coldPassed = queryCase.mustMatch()
+                        ? lastCold != null && lastCold.status() == SearchStatus.READY && lastCold.hasResults()
+                        : lastCold != null && lastCold.status() == SearchStatus.NO_MATCH;
+                metrics.add(new QueryMetrics(
+                        queryCase.name(),
+                        queryCase.query(),
+                        queryCase.mustMatch(),
+                        passed && coldPassed,
+                        last == null ? SearchStatus.INDEX_ERROR : last.status(),
+                        last == null ? 0 : last.results().size(),
+                        millis(percentile(hotSamples, 50)),
+                        millis(percentile(hotSamples, 95)),
+                        millis(percentile(hotSamples, 99)),
+                        millis(percentile(coldSamples, 50)),
+                        millis(percentile(coldSamples, 95)),
+                        millis(percentile(coldSamples, 99))
+                ));
             }
-            long[] samples = new long[searchSamples];
-            SearchResponse last = null;
-            for (int index = 0; index < searchSamples; index++) {
-                long start = System.nanoTime();
-                last = service.search(queryCase.query());
-                samples[index] = System.nanoTime() - start;
-                allSamples.add(samples[index]);
-            }
-            Arrays.sort(samples);
-            boolean passed = queryCase.mustMatch()
-                    ? last != null && last.status() == SearchStatus.READY && last.hasResults()
-                    : last != null && last.status() == SearchStatus.NO_MATCH;
-            metrics.add(new QueryMetrics(
-                    queryCase.name(),
-                    queryCase.query(),
-                    queryCase.mustMatch(),
-                    passed,
-                    last == null ? SearchStatus.INDEX_ERROR : last.status(),
-                    last == null ? 0 : last.results().size(),
-                    millis(percentile(samples, 50)),
-                    millis(percentile(samples, 95)),
-                    millis(percentile(samples, 99))
-            ));
+        } catch (SQLException exception) {
+            throw new IllegalStateException("打开 SQLite 基准连接失败", exception);
         }
-        long[] all = allSamples.stream().mapToLong(Long::longValue).toArray();
-        Arrays.sort(all);
-        double overallP95 = millis(percentile(all, 95));
+        long[] hot = allHotSamples.stream().mapToLong(Long::longValue).toArray();
+        long[] cold = allColdSamples.stream().mapToLong(Long::longValue).toArray();
+        Arrays.sort(hot);
+        Arrays.sort(cold);
+        double hotP95 = millis(percentile(hot, 95));
+        double coldP95 = millis(percentile(cold, 95));
         boolean casesPassed = metrics.stream().allMatch(QueryMetrics::passed);
         return new SearchMetrics(
                 budgetMs,
-                millis(percentile(all, 50)),
-                overallP95,
-                millis(percentile(all, 99)),
+                millis(percentile(hot, 50)),
+                hotP95,
+                millis(percentile(hot, 99)),
+                millis(percentile(cold, 50)),
+                coldP95,
+                millis(percentile(cold, 99)),
                 casesPassed,
-                overallP95 <= budgetMs,
+                hotP95 <= budgetMs,
                 List.copyOf(metrics)
         );
     }
@@ -544,7 +599,128 @@ public final class KnowledgeBenchmarkSelfTest {
         return normalized.substring(bodyStart).trim();
     }
 
-    private static MeasuredFiles measureFiles(Path knowledgeRoot) throws IOException {
+    private static FtsComparison compareFtsStorage(
+            LoadedScenario loaded,
+            Path existingKnowledgeRoot,
+            long searchBudgetMs,
+            int warmupSamples,
+            int searchSamples
+    ) throws Exception {
+        List<FtsVariantReport> variants = new ArrayList<>();
+        for (String storage : List.of("contentful", "external-content")) {
+            Path temporaryConfig = Files.createTempDirectory("modpedia-fts-comparison-");
+            try {
+                copyCustomDocuments(
+                        existingKnowledgeRoot.resolve("custom"),
+                        temporaryConfig.resolve("modpedia/knowledge/custom")
+                );
+                KnowledgeCompiler compiler = new KnowledgeCompiler();
+                long buildStart = System.nanoTime();
+                KnowledgeCompiler.CompileResult build = withProperties(
+                        Map.of(
+                                "modpedia.benchmark.fts.storage", storage,
+                                "modpedia.benchmark.fts.optimize", "false"
+                        ),
+                        () -> compiler.compile(
+                                temporaryConfig,
+                                scanResult(loaded.corpus().resources(), loaded.corpus().stats()),
+                                true
+                        )
+                );
+                double coldBuildMs = millis(System.nanoTime() - buildStart);
+                Path database = KnowledgeDatabase.path(build.knowledgeRoot());
+                MeasuredFiles measured = measureFiles(build.knowledgeRoot());
+                List<QueryCase> cases = queryCases(
+                        measured.documents(),
+                        JarCorpusLoader.LanguageMode.ZH_CN
+                );
+                SearchMetrics beforeSearch = withProperties(
+                        Map.of("modpedia.benchmark.fts.storage", storage),
+                        () -> benchmarkSearch(
+                                database,
+                                measured.documents(),
+                                JarCorpusLoader.LanguageMode.ZH_CN,
+                                searchBudgetMs,
+                                warmupSamples,
+                                searchSamples
+                        )
+                );
+                SearchQuery planQuery = cases.isEmpty()
+                        ? SearchQuery.of("ae2:controller")
+                        : SearchQuery.of(cases.get(0).query());
+                KnowledgeDatabase.OptimizationStats optimization = withProperties(
+                        Map.of(
+                                "modpedia.benchmark.fts.storage", storage,
+                                "modpedia.benchmark.fts.optimize", "true"
+                        ),
+                        () -> KnowledgeDatabase.optimize(
+                                database,
+                                planQuery,
+                                SearchLanguage.ZH_CN,
+                                Map.of(),
+                                true
+                        )
+                );
+                SearchMetrics afterSearch = withProperties(
+                        Map.of("modpedia.benchmark.fts.storage", storage),
+                        () -> benchmarkSearch(
+                                database,
+                                measured.documents(),
+                                JarCorpusLoader.LanguageMode.ZH_CN,
+                                searchBudgetMs,
+                                warmupSamples,
+                                searchSamples
+                        )
+                );
+                variants.add(new FtsVariantReport(
+                        storage,
+                        coldBuildMs,
+                        optimization.before(),
+                        optimization.after(),
+                        optimization,
+                        beforeSearch,
+                        afterSearch
+                ));
+            } finally {
+                deleteTree(temporaryConfig);
+            }
+        }
+        return new FtsComparison(
+                "expanded",
+                JarCorpusLoader.LanguageMode.ZH_CN.preferredLocale(),
+                List.copyOf(variants)
+        );
+    }
+
+    @FunctionalInterface
+    private interface ThrowingSupplier<T> {
+        T get() throws Exception;
+    }
+
+    private static <T> T withProperties(
+            Map<String, String> values,
+            ThrowingSupplier<T> supplier
+    ) throws Exception {
+        Map<String, String> previous = new LinkedHashMap<>();
+        values.forEach((key, value) -> {
+            previous.put(key, System.getProperty(key));
+            System.setProperty(key, value);
+        });
+        try {
+            return supplier.get();
+        } finally {
+            values.keySet().forEach(key -> {
+                String old = previous.get(key);
+                if (old == null) {
+                    System.clearProperty(key);
+                } else {
+                    System.setProperty(key, old);
+                }
+            });
+        }
+    }
+
+    private static MeasuredFiles measureFiles(Path knowledgeRoot) throws IOException, SQLException {
         Path manifestPath = knowledgeRoot.resolve("manifest.json");
         Path keywordPath = knowledgeRoot.resolve("keyword-index.json");
         Path statePath = knowledgeRoot.resolve("state.json");
@@ -600,7 +776,8 @@ public final class KnowledgeBenchmarkSelfTest {
                 markdownBytes,
                 size(manifestPath),
                 size(keywordPath),
-                size(statePath)
+                size(statePath),
+                KnowledgeDatabase.inspect(KnowledgeDatabase.path(knowledgeRoot))
         );
         return new MeasuredFiles(metrics, List.copyOf(documents));
     }
@@ -691,9 +868,11 @@ public final class KnowledgeBenchmarkSelfTest {
         StringBuilder output = new StringBuilder();
         output.append("# ModPedia 知识库规模基准\n\n")
                 .append("生成时间：").append(report.generatedAt()).append("\n\n")
-                .append("搜索预算：p95 ≤ ").append(report.searchBudgetMs()).append(" ms\n\n")
-                .append("| 场景 | 语言 | JAR | 来源 | 文档 | 关键词 | 段落 | 装载 ms | 冷构建 ms | 增量 ms | 变更 ms | reload ms | 搜索 p95 ms | 预算 |\n")
-                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+                .append("搜索预算：热查询 p95 ≤ ").append(report.searchBudgetMs()).append(" ms\n\n")
+                .append("冷查询定义：每次新建并关闭 JDBC Reader；不宣称清空操作系统页缓存。\n\n")
+                .append("本轮未引入 prefix index、trigram、detail=column/none、WAL 或向量库。\n\n")
+                .append("| 场景 | 语言 | JAR | 来源 | 文档 | 关键词 | 段落 | DB KiB | FTS KiB | FTS 正文 KiB | 装载 ms | 冷构建 ms | 增量 ms | 变更 ms | reload ms | 热 p95 ms | 冷 p95 ms | 预算 |\n")
+                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
         for (ScenarioReport scenario : report.scenarios()) {
             output.append('|').append(scenario.scenario())
                     .append('|').append(scenario.language())
@@ -702,12 +881,16 @@ public final class KnowledgeBenchmarkSelfTest {
                     .append('|').append(scenario.files().documentCount())
                     .append('|').append(scenario.files().keywordCount())
                     .append('|').append(scenario.files().segmentCount())
+                    .append('|').append(formatBytes(scenario.files().database().databaseBytes()))
+                    .append('|').append(formatBytes(scenario.files().database().ftsBytes()))
+                    .append('|').append(formatBytes(scenario.files().database().ftsContentBytes()))
                     .append('|').append(format(scenario.build().sourceLoadMs()))
                     .append('|').append(format(scenario.build().coldBuildMs()))
                     .append('|').append(format(scenario.build().incrementalBuildMs()))
                     .append('|').append(format(scenario.build().changedBuildMs()))
                     .append('|').append(format(scenario.build().reloadMs()))
                     .append('|').append(format(scenario.search().overallP95Ms()))
+                    .append('|').append(format(scenario.search().coldOverallP95Ms()))
                     .append('|').append(scenario.search().withinBudget() ? "PASS" : "OVER")
                     .append('|').append('\n');
         }
@@ -726,6 +909,12 @@ public final class KnowledgeBenchmarkSelfTest {
                     .append(scenario.files().manifestBytes()).append("/")
                     .append(scenario.files().keywordIndexBytes()).append("/")
                     .append(scenario.files().stateBytes()).append('\n')
+                    .append("- SQLite/FTS/FTS 正文/FTS 索引 字节：")
+                    .append(scenario.files().database().databaseBytes()).append("/")
+                    .append(scenario.files().database().ftsBytes()).append("/")
+                    .append(scenario.files().database().ftsContentBytes()).append("/")
+                    .append(scenario.files().database().ftsIndexBytes()).append('\n')
+                    .append("- FTS 存储：").append(scenario.files().database().ftsStorage()).append('\n')
                     .append("- 语言文件：").append(scenario.corpus().languageFileCount()).append('\n')
                     .append("- 本地化页面回退/跳过：").append(scenario.corpus().skippedLocalePageCount()).append('\n')
                     .append("- 无手册资源的依赖型 JAR：")
@@ -735,8 +924,8 @@ public final class KnowledgeBenchmarkSelfTest {
                     .append("- 缺少的必需依赖（仅用于报告，不阻断离线基准）：")
                     .append(joinOrNone(scenario.corpus().missingRequiredDependencies())).append("\n\n")
                     .append("查询结果：\n\n")
-                    .append("| 查询 | 通过 | 状态 | p50 ms | p95 ms | p99 ms | 结果数 |\n")
-                    .append("|---|---|---|---:|---:|---:|---:|\n");
+                    .append("| 查询 | 通过 | 状态 | 热 p50 | 热 p95 | 热 p99 | 冷 p50 | 冷 p95 | 冷 p99 | 结果数 |\n")
+                    .append("|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n");
             for (QueryMetrics query : scenario.search().queries()) {
                 output.append('|').append(query.name())
                         .append('|').append(query.passed() ? "PASS" : "FAIL")
@@ -744,10 +933,38 @@ public final class KnowledgeBenchmarkSelfTest {
                         .append('|').append(format(query.p50Ms()))
                         .append('|').append(format(query.p95Ms()))
                         .append('|').append(format(query.p99Ms()))
+                        .append('|').append(format(query.coldP50Ms()))
+                        .append('|').append(format(query.coldP95Ms()))
+                        .append('|').append(format(query.coldP99Ms()))
                         .append('|').append(query.resultCount())
                         .append('|').append('\n');
             }
             output.append('\n');
+        }
+        output.append("\n## FTS5 存储与 optimize A/B\n\n")
+                .append("当前生产默认使用 external-content；contentful 仅用于同一语料的基准对照。\n\n")
+                .append("| 存储 | 冷构建 ms | 优化前 DB KiB | 优化后 DB KiB | 优化前 FTS KiB | 优化后 FTS KiB | 优化前 FTS 正文 KiB | 优化后 FTS 正文 KiB | 优化前热 p95 | 优化后热 p95 |\n")
+                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+        for (FtsVariantReport variant : report.ftsComparison().variants()) {
+            output.append('|').append(variant.storage())
+                    .append('|').append(format(variant.coldBuildMs()))
+                    .append('|').append(formatBytes(variant.beforeOptimize().databaseBytes()))
+                    .append('|').append(formatBytes(variant.afterOptimize().databaseBytes()))
+                    .append('|').append(formatBytes(variant.beforeOptimize().ftsBytes()))
+                    .append('|').append(formatBytes(variant.afterOptimize().ftsBytes()))
+                    .append('|').append(formatBytes(variant.beforeOptimize().ftsContentBytes()))
+                    .append('|').append(formatBytes(variant.afterOptimize().ftsContentBytes()))
+                    .append('|').append(format(variant.beforeSearch().overallP95Ms()))
+                    .append('|').append(format(variant.afterSearch().overallP95Ms()))
+                    .append('|').append('\n');
+        }
+        output.append('\n');
+        for (FtsVariantReport variant : report.ftsComparison().variants()) {
+            output.append("### ").append(variant.storage()).append(" optimize 细节\n\n")
+                    .append("- PRAGMA optimize：").append(format(variant.optimization().pragmaOptimizeMs())).append(" ms\n")
+                    .append("- FTS5 optimize/merge：").append(format(variant.optimization().ftsOptimizeMs())).append(" ms\n")
+                    .append("- 优化前查询计划：").append(String.join("；", variant.optimization().planBefore())).append("\n")
+                    .append("- 优化后查询计划：").append(String.join("；", variant.optimization().planAfter())).append("\n\n");
         }
         return output.toString();
     }
@@ -760,6 +977,10 @@ public final class KnowledgeBenchmarkSelfTest {
         return String.format(Locale.ROOT, "%.2f", value);
     }
 
+    private static String formatBytes(long bytes) {
+        return String.format(Locale.ROOT, "%.2f", bytes / 1024.0);
+    }
+
     private record LoadedScenario(JarCorpusLoader.LoadedCorpus corpus, long loadNanos) {
     }
 
@@ -768,7 +989,8 @@ public final class KnowledgeBenchmarkSelfTest {
             String projectRoot,
             long searchBudgetMs,
             int scaleFactor,
-            List<ScenarioReport> scenarios
+            List<ScenarioReport> scenarios,
+            FtsComparison ftsComparison
     ) {
     }
 
@@ -804,7 +1026,8 @@ public final class KnowledgeBenchmarkSelfTest {
             long markdownBytes,
             long manifestBytes,
             long keywordIndexBytes,
-            long stateBytes
+            long stateBytes,
+            KnowledgeDatabase.DatabaseStats database
     ) {
     }
 
@@ -816,6 +1039,9 @@ public final class KnowledgeBenchmarkSelfTest {
             double overallP50Ms,
             double overallP95Ms,
             double overallP99Ms,
+            double coldOverallP50Ms,
+            double coldOverallP95Ms,
+            double coldOverallP99Ms,
             boolean queryCasesPassed,
             boolean withinBudget,
             List<QueryMetrics> queries
@@ -831,7 +1057,28 @@ public final class KnowledgeBenchmarkSelfTest {
             int resultCount,
             double p50Ms,
             double p95Ms,
-            double p99Ms
+            double p99Ms,
+            double coldP50Ms,
+            double coldP95Ms,
+            double coldP99Ms
+    ) {
+    }
+
+    private record FtsComparison(
+            String scenario,
+            String language,
+            List<FtsVariantReport> variants
+    ) {
+    }
+
+    private record FtsVariantReport(
+            String storage,
+            double coldBuildMs,
+            KnowledgeDatabase.DatabaseStats beforeOptimize,
+            KnowledgeDatabase.DatabaseStats afterOptimize,
+            KnowledgeDatabase.OptimizationStats optimization,
+            SearchMetrics beforeSearch,
+            SearchMetrics afterSearch
     ) {
     }
 

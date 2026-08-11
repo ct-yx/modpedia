@@ -56,9 +56,12 @@ public final class KnowledgeUpdateService {
 
     private static void build(boolean forceRebuild, String reason) {
         try {
-            LocalGuideScanner.ScanResult scanResult = new LocalGuideScanner().scan();
+            java.nio.file.Path configDirectory = FMLPaths.CONFIGDIR.get();
+            LocalGuideScanner.ScanResult scanResult = new LocalGuideScanner().scan(
+                    configDirectory.resolve("modpedia").resolve("knowledge")
+            );
             KnowledgeCompiler.CompileResult result = new KnowledgeCompiler().compile(
-                    FMLPaths.CONFIGDIR.get(),
+                    configDirectory,
                     scanResult,
                     forceRebuild
             );

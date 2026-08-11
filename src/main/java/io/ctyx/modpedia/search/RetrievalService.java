@@ -49,6 +49,11 @@ public final class RetrievalService {
         this.synonymsPath = this.knowledgeRoot.resolve("..").normalize().resolve("search-synonyms.json");
     }
 
+    /** 返回当前知识库根目录；任务运行数据与文本检索共用同一个 knowledge.db。 */
+    public Path knowledgeRoot() {
+        return knowledgeRoot;
+    }
+
     /** 更新游戏当前语言；AUTO 查询会使用这个值。 */
     public void setLanguage(SearchLanguage language) {
         defaultLanguage = language == null || language == SearchLanguage.AUTO

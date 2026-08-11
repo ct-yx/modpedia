@@ -28,6 +28,15 @@ public record MessageBubble(
     }
 
     public static List<MessageBubble> layout(List<ChatMessage> messages, Font font, int contentWidth) {
+        return layout(messages, font, contentWidth, false);
+    }
+
+    public static List<MessageBubble> layout(
+            List<ChatMessage> messages,
+            Font font,
+            int contentWidth,
+            boolean showIds
+    ) {
         List<MessageBubble> result = new ArrayList<>();
         int top = 0;
         int lastAssistantIndex = -1;
@@ -43,7 +52,8 @@ public record MessageBubble(
                     message.markdown(),
                     font,
                     maxWidth - 24,
-                    message.sources()
+                    message.sources(),
+                    showIds
             );
             int widest = lines.stream().mapToInt(line -> font.width(line.sequence())).max().orElse(80);
             int width = Math.min(maxWidth, Math.max(150, widest + 24));

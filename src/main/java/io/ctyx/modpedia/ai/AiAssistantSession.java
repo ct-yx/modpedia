@@ -969,7 +969,7 @@ public final class AiAssistantSession implements AssistantSession {
             return;
         }
         requestTraces.remove(request);
-        requestStartedNanos.remove(request);
+        Long startedNanos = requestStartedNanos.remove(request);
         streamingHandle = null;
         String reason = throwable == null
                 ? "请检查 AI 设置、网络连接和模型名称。"
@@ -977,7 +977,7 @@ public final class AiAssistantSession implements AssistantSession {
         ModPedia.LOGGER.warn(
                 "AI request failed: request={}, totalMs={}, type={}, reason={}",
                 request,
-                elapsedMillis(requestStartedNanos.remove(request)),
+                elapsedMillis(startedNanos),
                 throwable == null ? "unknown" : throwable.getClass().getName(),
                 sanitize(reason)
         );

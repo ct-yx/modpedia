@@ -39,6 +39,10 @@ public final class LocalGuideScanner {
             "^(assets|data)/([^/]+)/patchouli_books/([^/]+)/(zh_cn|en_us|[a-z]{2}_[a-z]{2})/(.+\\.(json|md))$",
             Pattern.CASE_INSENSITIVE
     );
+    private static final Pattern PATCHOULI_PATH = Pattern.compile(
+            "^(assets|data)/([^/]+)/patchouli_books/([^/]+)/(.+\\.(json|md))$",
+            Pattern.CASE_INSENSITIVE
+    );
     /**
      * These mods provide the book runtime only. A book resource is owned by the
      * namespace that contains the resource, not by the runtime framework.
@@ -50,8 +54,19 @@ public final class LocalGuideScanner {
     );
 
     public ScanResult scan() {
+        return scan(null);
+    }
+
+    /**
+     * 扫描当前实例的手册资源，并读取可选的来源分类覆盖文件。
+     *
+     * <p>扫描器不依赖具体内容模组。书籍根 JSON 中的 {@code knowledge} 字段可以把
+     * 同一种手册格式标记为 Wiki；外部覆盖文件用于无法修改 JAR 的整合包。</p>
+     */
+    public ScanResult scan(Path knowledgeRoot) {
         List<RawResource> rawResources = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
+        Map<String, SourceClassification> overrides = loadOverrides(knowledgeRoot, warnings);
 
         for (IModFileInfo fileInfo : ModList.get().getModFiles()) {
             IModFile modFile = fileInfo.getFile();
@@ -79,9 +94,23 @@ public final class LocalGuideScanner {
                         .sorted()
                         .toList();
                 Map<String, String> preferredPatchouliLocales = selectPatchouliLocales(relativePaths);
+                Map<String, SourceClassification> classifications = sourceClassifications(
+                        root,
+                        relativePaths,
+                        metadata,
+                        overrides,
+                        warnings
+                );
                 relativePaths.stream()
                         .filter(path -> isCandidate(path, preferredPatchouliLocales))
-                        .forEach(relativePath -> readResource(root, relativePath, metadata, rawResources, warnings));
+                        .forEach(relativePath -> readResource(
+                                root,
+                                relativePath,
+                                metadata,
+                                classifications,
+                                rawResources,
+                                warnings
+                        ));
             } catch (IOException | RuntimeException exception) {
                 warnings.add("扫描模组文件失败：" + modFile.getFileName() + "（" + exception.getClass().getSimpleName() + "）");
             }
@@ -98,7 +127,13 @@ public final class LocalGuideScanner {
                         resource.sourceType(),
                         resource.content(),
                         resource.fingerprint(),
-                        translations.getOrDefault(resource.namespace(), Map.of())
+                        translations.getOrDefault(resource.namespace(), Map.of()),
+                        resource.classification().contentKind(),
+                        resource.classification().sourceId(),
+                        resource.classification().collectionId(),
+                        resource.classification().priority(),
+                        resource.classification().originType(),
+                        resource.classification().metadataJson()
                 ))
                 .sorted(Comparator.comparing(ScannedResource::modId).thenComparing(ScannedResource::path))
                 .toList();
@@ -166,6 +201,7 @@ public final class LocalGuideScanner {
             Path root,
             String relativePath,
             Map<String, SourceMetadata> metadata,
+            Map<String, SourceClassification> classifications,
             List<RawResource> rawResources,
             List<String> warnings
     ) {
@@ -191,13 +227,18 @@ public final class LocalGuideScanner {
                 // 不把框架自身的示例或资源误当成知识来源。
                 return;
             }
+            SourceClassification classification = classifications.getOrDefault(
+                    classificationKey(relativePath),
+                    SourceClassification.defaultFor(namespace)
+            );
             rawResources.add(new RawResource(
                     namespace,
                     relativePath,
                     sourceType,
                     content,
                     sha256(bytes),
-                    metadata.getOrDefault(namespace, new SourceMetadata(namespace, "unknown"))
+                    metadata.getOrDefault(namespace, new SourceMetadata(namespace, "unknown")),
+                    classification
             ));
         } catch (IOException | RuntimeException exception) {
             warnings.add("读取知识文件失败：" + relativePath + "（" + exception.getClass().getSimpleName() + "）");
@@ -268,6 +309,248 @@ public final class LocalGuideScanner {
         return null;
     }
 
+    private Map<String, SourceClassification> sourceClassifications(
+            Path root,
+            List<String> paths,
+            Map<String, SourceMetadata> metadata,
+            Map<String, SourceClassification> overrides,
+            List<String> warnings
+    ) {
+        Map<String, SourceClassification> result = new HashMap<>();
+        for (String path : paths) {
+            String key = classificationKey(path);
+            if (key == null || result.containsKey(key)) {
+                continue;
+            }
+            String namespace = namespaceOf(path);
+            SourceClassification fallback = SourceClassification.defaultFor(namespace);
+            // 来源目录的 source.json 是默认分类的补充；source-overrides.json 用来
+            // 覆盖无法修改的 JAR；书籍 JSON 内的 knowledge 字段拥有最高优先级。
+            SourceClassification classification = readSourceClassification(root, path, fallback, warnings);
+            classification = mergeClassification(classification, overrides.get(key));
+            String rootPath = firstExistingBookRoot(root, path);
+            if (rootPath != null) {
+                try {
+                    JsonElement parsed = JsonParser.parseString(Files.readString(
+                            root.resolve(rootPath), StandardCharsets.UTF_8
+                    ));
+                    classification = classificationFromJson(parsed, classification, namespace, key);
+                } catch (IOException | RuntimeException exception) {
+                    warnings.add("解析书籍来源分类失败：" + rootPath);
+                }
+            }
+            result.put(key, classification);
+        }
+        return result;
+    }
+
+    private SourceClassification readSourceClassification(
+            Path root,
+            String path,
+            SourceClassification fallback,
+            List<String> warnings
+    ) {
+        String sourcePath = sourceResourcePath(path);
+        if (sourcePath == null || !Files.isRegularFile(root.resolve(sourcePath))) {
+            return fallback;
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(Files.readString(
+                    root.resolve(sourcePath), StandardCharsets.UTF_8
+            ));
+            return classificationFromJson(parsed, fallback, namespaceOf(path), sourcePath);
+        } catch (IOException | RuntimeException exception) {
+            warnings.add("解析来源 source.json 失败：" + sourcePath);
+            return fallback;
+        }
+    }
+
+    private SourceClassification mergeClassification(
+            SourceClassification base,
+            SourceClassification override
+    ) {
+        if (override == null) {
+            return base;
+        }
+        return new SourceClassification(
+                override.contentKind() == null ? base.contentKind() : override.contentKind(),
+                override.sourceId().isBlank() ? base.sourceId() : override.sourceId(),
+                override.collectionId().isBlank() ? base.collectionId() : override.collectionId(),
+                override.priority() < 0 ? base.priority() : override.priority(),
+                override.originType().isBlank() ? base.originType() : override.originType(),
+                override.metadataJson().isBlank() ? base.metadataJson() : override.metadataJson(),
+                override.title().isBlank() ? base.title() : override.title()
+        );
+    }
+
+    private SourceClassification classificationFromJson(
+            JsonElement parsed,
+            SourceClassification fallback,
+            String namespace,
+            String key
+    ) {
+        if (parsed == null || !parsed.isJsonObject()) {
+            return fallback;
+        }
+        JsonObject object = parsed.getAsJsonObject();
+        JsonElement metadataElement = object.get("knowledge");
+        JsonObject knowledge = metadataElement != null && metadataElement.isJsonObject()
+                ? metadataElement.getAsJsonObject()
+                : object;
+        if (!hasClassificationFields(knowledge)) {
+            return fallback;
+        }
+        String contentKind = stringValue(knowledge, "content_kind");
+        String sourceId = stringValue(knowledge, "source_id");
+        String collectionId = stringValue(knowledge, "collection_id");
+        String title = stringValue(knowledge, "title");
+        String originType = stringValue(knowledge, "origin_type");
+        int priority = intValue(knowledge, "priority", fallback.priority());
+        return new SourceClassification(
+                KnowledgeContentKind.parse(contentKind.isBlank() ? fallback.contentKind().id() : contentKind),
+                sourceId.isBlank() ? fallback.sourceId() : sourceId,
+                collectionId.isBlank() ? fallback.collectionId() : collectionId,
+                priority,
+                originType.isBlank() ? fallback.originType() : originType,
+                knowledge.toString(),
+                title.isBlank() ? fallback.title() : title
+        );
+    }
+
+    private boolean hasClassificationFields(JsonObject object) {
+        return object.has("content_kind")
+                || object.has("source_id")
+                || object.has("collection_id")
+                || object.has("title")
+                || object.has("origin_type")
+                || object.has("priority");
+    }
+
+    private Map<String, SourceClassification> loadOverrides(Path knowledgeRoot, List<String> warnings) {
+        if (knowledgeRoot == null) {
+            return Map.of();
+        }
+        Path path = knowledgeRoot.resolve("source-overrides.json");
+        if (!Files.isRegularFile(path)) {
+            return Map.of();
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8));
+            if (!parsed.isJsonObject()) {
+                throw new IllegalArgumentException("覆盖文件必须是 JSON 对象");
+            }
+            Map<String, SourceClassification> result = new HashMap<>();
+            for (Map.Entry<String, JsonElement> entry : parsed.getAsJsonObject().entrySet()) {
+                if (!entry.getValue().isJsonObject()) {
+                    continue;
+                }
+                JsonObject value = entry.getValue().getAsJsonObject();
+                String sourceId = stringValue(value, "source_id");
+                String collectionId = stringValue(value, "collection_id");
+                String kind = stringValue(value, "content_kind");
+                result.put(
+                        entry.getKey(),
+                        new SourceClassification(
+                                kind.isBlank() ? null : KnowledgeContentKind.parse(kind),
+                                sourceId,
+                                collectionId,
+                                value.has("priority") ? intValue(value, "priority", -1) : -1,
+                                stringValue(value, "origin_type"),
+                                value.toString(),
+                                stringValue(value, "title")
+                        )
+                );
+            }
+            return Map.copyOf(result);
+        } catch (IOException | RuntimeException exception) {
+            warnings.add("读取 source-overrides.json 失败");
+            return Map.of();
+        }
+    }
+
+    private String classificationKey(String path) {
+        Matcher matcher = PATCHOULI_PATH.matcher(path);
+        if (matcher.matches()) {
+            return "app:" + matcher.group(2) + "/" + matcher.group(3);
+        }
+        String lower = path.toLowerCase(Locale.ROOT);
+        int marker = lower.indexOf("/modonomicon/books/");
+        if (marker >= 0) {
+            String prefix = path.substring(0, marker);
+            String namespace = namespaceOf(path);
+            String tail = path.substring(marker + "/modonomicon/books/".length());
+            String book = tail.split("/")[0];
+            return "app:" + namespace + "/" + book;
+        }
+        return null;
+    }
+
+    private String rootResourcePath(String path) {
+        Matcher matcher = PATCHOULI_PATH.matcher(path);
+        if (matcher.matches()) {
+            String rest = matcher.group(4);
+            String prefix = path.substring(0, path.indexOf("patchouli_books/") + "patchouli_books/".length());
+            String book = matcher.group(3);
+            String locale = rest.startsWith("zh_cn/") || rest.startsWith("en_us/")
+                    ? rest.substring(0, rest.indexOf('/')) + "/"
+                    : "";
+            return prefix + book + "/" + locale + "book.json";
+        }
+        String lower = path.toLowerCase(Locale.ROOT);
+        int marker = lower.indexOf("/modonomicon/books/");
+        if (marker >= 0) {
+            String prefix = path.substring(0, marker + "/modonomicon/books/".length());
+            String tail = path.substring(marker + "/modonomicon/books/".length());
+            int slash = tail.indexOf('/');
+            String book = slash < 0 ? tail : tail.substring(0, slash);
+            return prefix + book + "/book.json";
+        }
+        return null;
+    }
+
+    private String firstExistingBookRoot(Path root, String path) {
+        String candidate = rootResourcePath(path);
+        if (candidate == null) {
+            return null;
+        }
+        if (Files.isRegularFile(root.resolve(candidate))) {
+            return candidate;
+        }
+        // 某些 Patchouli 数据会把 book.json 放在语言目录下；优先使用标准根路径，
+        // 但兼容这种资源布局，不让分类字段因目录差异失效。
+        String normalized = candidate.replace("/book.json", "");
+        for (String locale : List.of("zh_cn", "en_us")) {
+            String localized = normalized + "/" + locale + "/book.json";
+            if (Files.isRegularFile(root.resolve(localized))) {
+                return localized;
+            }
+        }
+        return null;
+    }
+
+    private String sourceResourcePath(String path) {
+        String bookRoot = rootResourcePath(path);
+        if (bookRoot == null) {
+            return null;
+        }
+        int slash = bookRoot.lastIndexOf('/');
+        return (slash < 0 ? "" : bookRoot.substring(0, slash + 1)) + "source.json";
+    }
+
+    private String stringValue(JsonObject object, String key) {
+        JsonElement value = object.get(key);
+        return value != null && value.isJsonPrimitive() ? value.getAsString() : "";
+    }
+
+    private int intValue(JsonObject object, String key, int fallback) {
+        try {
+            String value = stringValue(object, key);
+            return value.isBlank() ? fallback : Integer.parseInt(value);
+        } catch (RuntimeException exception) {
+            return fallback;
+        }
+    }
+
     private boolean potentialAppPath(String lowerPath) {
         // Do not classify every arbitrary books/entries JSON as a manual. The
         // format has a dedicated resource root; content mods own everything
@@ -306,8 +589,32 @@ public final class LocalGuideScanner {
             String sourceType,
             String content,
             String fingerprint,
-            SourceMetadata metadata
+            SourceMetadata metadata,
+            SourceClassification classification
     ) {
+    }
+
+    private record SourceClassification(
+            KnowledgeContentKind contentKind,
+            String sourceId,
+            String collectionId,
+            int priority,
+            String originType,
+            String metadataJson,
+            String title
+    ) {
+        static SourceClassification defaultFor(String namespace) {
+            String actual = namespace == null || namespace.isBlank() ? "unknown" : namespace;
+            return new SourceClassification(
+                    KnowledgeContentKind.MOD_MANUAL,
+                    actual,
+                    actual,
+                    0,
+                    "jar",
+                    "{}",
+                    actual
+            );
+        }
     }
 
     private record SourceMetadata(String name, String version) {
