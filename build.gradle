@@ -384,6 +384,11 @@ def workerTaskRuntimeFileSelfTest = tasks.register('workerTaskRuntimeFileSelfTes
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.worker.WorkerTaskRuntimeFileSelfTest'
+    // 本地文件读取的墙钟 p95 会受到 CI 机器负载、JIT、GC 和磁盘竞争影响。
+    // 默认只验证读取正确性；需要执行性能门禁时显式传入 -PstrictPerformance=true。
+    if (project.hasProperty('strictPerformance')) {
+        systemProperty 'modpedia.strictPerformance', project.property('strictPerformance').toString()
+    }
 }
 
 def workerGuideScannerSelfTest = tasks.register('workerGuideScannerSelfTest', JavaExec) {

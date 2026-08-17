@@ -9,7 +9,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v0.3.0** |
+| Mod | **v1.0.0** |
 | 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
@@ -18,7 +18,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v0.3.0)。此前的 `v0.2.0`、`v1.0.0-beta.1` 和 `v1.0.0-beta.2` 保留为历史版本标签；当前继续采用 `0.x` 版本序列。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0)。此前的 `v0.2.0`、`v0.3.0`、`v1.0.0-beta.1` 和 `v1.0.0-beta.2` 保留为历史版本标签；当前进入 `1.x` 稳定版本序列。
 
 ## 快速安装
 
@@ -30,7 +30,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 ### 安装步骤
 
-1. 下载 **modpedia-0.3.0.jar**。
+1. 下载 **modpedia-1.0.0.jar**。
 2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
@@ -159,6 +159,57 @@ FTS5 使用 `content='segments'` 的 external-content 结构：完整 Markdown �
 `documents/**/*.md`。`source.json` 用来声明来源集合、语言、版本和优先级，未来可以增加
 整合包作者指南或其他 Wiki，而不改变核心表结构。
 
+### 发布整合包时的 `config` 清理
+
+ModPedia 的 `config/modpedia/` 同时包含玩家运行时状态和整合包作者维护的知识源。发布整合包时，
+不要把本地玩家数据、派生索引或 API 配置一起打包。
+
+发布前移除以下运行时文件和派生文件：
+
+~~~text
+config/modpedia/ai.json                         # API 地址、模型和可能存在的 API Key
+config/modpedia/conversations/                 # 本地历史会话和上下文
+config/modpedia/diagnostics/                   # 模型测试和诊断报告
+config/modpedia/assistant-window.json          # 玩家个人窗口位置和尺寸
+config/modpedia/assistant-glass.json           # 玩家个人主题和透明度
+config/modpedia/knowledge/knowledge.db*
+config/modpedia/knowledge/generated/
+config/modpedia/knowledge/cache/
+config/modpedia/knowledge/manifest.json
+config/modpedia/knowledge/keyword-index.json
+config/modpedia/knowledge/state.json
+~~~
+
+这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
+数据库文件也属于派生文件，不应进入整合包。
+
+整合包作者需要随包保留的知识源如下：
+
+~~~text
+config/modpedia/knowledge/custom/**/*.md
+config/modpedia/knowledge/sources/<source-id>/source.json
+config/modpedia/knowledge/sources/<source-id>/documents/**/*.md
+config/modpedia/knowledge/source-overrides.json       # 使用 APP/Modonomicon 书籍分类覆盖时保留
+config/modpedia/search-synonyms.json                  # 自定义搜索同义词时可选保留
+~~~
+
+- `source.json` 描述一个 Wiki 来源的 ID、集合、语言、版本、优先级和 Markdown 根目录。
+- `documents/**/*.md` 是实际 Wiki 正文，启动时导入 `knowledge.db`；原文件始终保留。
+- `source-overrides.json` 位于 `knowledge/` 根目录，用于把 JAR 内的 APP/Modonomicon 书籍归类为
+  `wiki`，或覆盖其来源 ID、集合 ID和优先级；普通 `sources/<source-id>/` Wiki 不需要它。
+- `media.json` 当前版本没有被导入器读取，不是必需文件。若 Wiki 目录包含图片或其他原始媒体，
+  作者可以保留这些文件供后续媒体适配使用，但它们不会进入当前 SQLite 文本检索。
+
+最小的整合包作者 Wiki 结构为：
+
+~~~text
+config/modpedia/knowledge/
+├── sources/example-pack/
+│   ├── source.json
+│   └── documents/**/*.md
+└── custom/**/*.md
+~~~
+
 ### 自定义文档
 
 将人工维护的文件放入 custom/。使用稳定 id，建议声明语言：
@@ -286,7 +337,7 @@ build/reports/modpedia/knowledge-benchmark.md
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v0.3.0)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0)
 
 ## 作者与许可证
 

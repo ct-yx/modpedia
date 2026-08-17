@@ -3,13 +3,13 @@
 > 这份文档同时是 ModPedia 的 Mod 开发清单。每完成一项就勾选对应复选框；
 > `[~]` 表示代码已具备但仍需要真实游戏或整合包人工回归，`[ ]` 表示后续工作。
 
-本次合并前的具体变更、命令输出和测试 JAR 记录见[开发日志](DEVELOPMENT_LOG.md)。
+本次发布前的具体变更、命令输出和测试 JAR 记录见[开发日志](DEVELOPMENT_LOG.md)。
 
 ## 0. 当前版本快照
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v0.3.0` |
+| 发布版本 | `v1.0.0` |
 | GitHub 发布状态 | 正式发布，M0 自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
@@ -19,12 +19,12 @@
 | 作者 | `ctyx` |
 | 客户端 UI 依赖 | 无外部 UI 依赖；基于 NeoForge 原生 GUI API 自绘 |
 | 默认快捷键 | `K` 助手、`F9` 重建；`F8` 保留原版电影视角 |
-| 当前合并候选分支 | `agent/full-maintenance-checkpoint`，准备合并到 `main` |
+| 当前发布分支 | `main` |
 
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v0.3.0
+https://github.com/ct-yx/modpedia/releases/tag/v1.0.0
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
@@ -67,6 +67,8 @@ https://github.com/ct-yx/modpedia/releases/tag/v0.3.0
 - [x] 双语 10× 基准记录冷/热 p50/p95/p99、SQLite/FTS/dbstat 大小和查询计划，搜索 p95 目标为 `≤50 ms`。
 - [x] FTS5 使用 external-content，正文从 `segments` 事实表读取；Schema/索引创建后执行 `PRAGMA optimize`，全量/大批量变更执行 FTS5 optimize/merge，小增量跳过完整合并。
 - [x] FTS 查询按 `rank` 排序，避免 `bm25(...)` 的排序临时表；性能自测覆盖短语、删除、增量更新和事务回滚。
+- [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
+  `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
 - [ ] 只有基准证明必要时才引入段落预索引或向量检索。
 
@@ -165,7 +167,15 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v0.2.0 发布清单
+## 7. v1.0.0 发布清单
+
+- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.0.0`。
+- [x] `./gradlew test`、`./gradlew build`、严格 Worker 性能自测和 `git diff --check` 通过。
+- [x] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 已准备。
+- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.0.0`。
+- [~] 图形客户端、第三方手册跳转、可选联动和 Dedicated Server 的持续回归仍按已知限制记录。
+
+## 7.1 历史：v0.2.0 发布清单
 
 - [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
 - [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。

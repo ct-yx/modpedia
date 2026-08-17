@@ -5,7 +5,7 @@ source_type: builtin
 title: 知识库更新说明
 category: bootstrap
 keywords: ['知识库', '更新', '手册', 'Markdown']
-source_version: '0.3.0'
+source_version: '1.0.0'
 source_path: 'assets/modpedia/knowledge/bootstrap/knowledge-update.md'
 ---
 
