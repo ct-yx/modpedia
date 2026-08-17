@@ -141,14 +141,13 @@
           <p>这些文件可能包含玩家个人配置、API Key 或当前实例生成的知识库。整合包只应携带可复用的原始知识源。</p>
         </div>
         <div class="release-warning-grid">
-          <div>
-            <h3>发布前移除</h3>
+          <div class="release-warning-folder release-warning-folder-remove">
+            <div class="release-warning-folder-path"><span>01</span><strong>不需要保留</strong><code>REMOVE_BEFORE_RELEASE/</code></div>
+            <h3>发布整合包前移除</h3>
             <ul>
               <li><code>config/modpedia/ai.json</code></li>
               <li><code>config/modpedia/conversations/</code></li>
               <li><code>config/modpedia/diagnostics/</code></li>
-              <li><code>config/modpedia/assistant-window.json</code></li>
-              <li><code>config/modpedia/assistant-glass.json</code></li>
               <li><code>config/modpedia/knowledge/knowledge.db*</code></li>
               <li><code>config/modpedia/knowledge/generated/</code></li>
               <li><code>config/modpedia/knowledge/cache/</code></li>
@@ -157,18 +156,19 @@
               <li><code>config/modpedia/knowledge/state.json</code></li>
             </ul>
           </div>
-          <div>
-            <h3>随整合包保留</h3>
+          <div class="release-warning-folder release-warning-folder-keep">
+            <div class="release-warning-folder-path"><span>02</span><strong>需要保留</strong><code>KEEP_WITH_MODPACK/</code></div>
+            <h3>随整合包一起保留</h3>
             <ul>
               <li><code>config/modpedia/knowledge/custom/**/*.md</code></li>
               <li><code>config/modpedia/knowledge/sources/&lt;source-id&gt;/source.json</code></li>
               <li><code>config/modpedia/knowledge/sources/&lt;source-id&gt;/documents/**/*.md</code></li>
+              <li><code>config/modpedia/knowledge/sources/&lt;source-id&gt;/media.json</code></li>
               <li><code>config/modpedia/knowledge/source-overrides.json</code></li>
-              <li><code>config/modpedia/search-synonyms.json</code></li>
             </ul>
           </div>
         </div>
-        <p class="release-warning-footnote"><code>knowledge.db</code>、索引和缓存会在玩家首次启动或按 <kbd>F9</kbd> 重建时生成。当前版本不会读取 <code>media.json</code>。<a href="https://github.com/ct-yx/modpedia/blob/main/README.md#发布整合包时的-config-清理" target="_blank" rel="noreferrer">查看 README 中的完整规则 ↗</a></p>
+        <p class="release-warning-footnote"><code>knowledge.db</code>、索引和缓存会在玩家首次启动或按 <kbd>F9</kbd> 重建时生成。<code>media.json</code> 随来源目录保留，用于保留 Wiki 媒体元数据；当前文本检索只建立 Markdown 内容索引。<a href="https://github.com/ct-yx/modpedia/blob/main/README.md#发布整合包时的-config-清理" target="_blank" rel="noreferrer">查看 README 中的完整规则 ↗</a></p>
       </section>
     </main>
 
