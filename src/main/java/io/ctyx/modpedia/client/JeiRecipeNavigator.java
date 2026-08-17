@@ -8,7 +8,10 @@ import net.neoforged.fml.ModList;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /** JEI 可选联动；所有 API 访问均反射隔离，缺失或版本变化时返回 false。 */
 public final class JeiRecipeNavigator {
@@ -53,30 +56,64 @@ public final class JeiRecipeNavigator {
         return item == null ? ItemStack.EMPTY : new ItemStack(item);
     }
 
-    private static Object runtime() throws ReflectiveOperationException {
-        Class<?> api = Class.forName("mezz.jei.api.JeiApi");
-        for (String methodName : List.of("getJeiRuntime", "getRuntime")) {
-            Method method = find(api, methodName, 0);
-            if (method != null) {
-                method.setAccessible(true);
-                Object value = method.invoke(null);
-                if (value != null) {
-                    return value;
-                }
+    private static Object runtime() {
+        List<Class<?>> owners = new ArrayList<>(2);
+        // JEI 19.x exposes the runtime through Internal. The old public entry
+        // point is kept as a fallback for older JEI builds.
+        for (String className : List.of("mezz.jei.common.Internal", "mezz.jei.api.JeiApi")) {
+            try {
+                owners.add(Class.forName(className));
+            } catch (ClassNotFoundException | LinkageError ignored) {
             }
         }
-        for (String fieldName : List.of("jeiRuntime", "runtime")) {
-            try {
-                Field field = api.getDeclaredField(fieldName);
-                field.setAccessible(true);
-                Object value = field.get(null);
-                if (value != null) {
-                    return value;
+        return runtimeFrom(owners);
+    }
+
+    /**
+     * Resolves a JEI runtime from the candidate owner classes.
+     *
+     * Package-private so the pure Java regression test can exercise the
+     * current and legacy reflection contracts without loading Minecraft.
+     */
+    static Object runtimeFrom(List<Class<?>> owners) {
+        for (Class<?> owner : owners) {
+            if (owner == null) {
+                continue;
+            }
+            for (String methodName : List.of("getJeiRuntime", "getOptionalJeiRuntime", "getRuntime")) {
+                Method method = find(owner, methodName, 0);
+                if (method == null || !Modifier.isStatic(method.getModifiers())) {
+                    continue;
                 }
-            } catch (NoSuchFieldException ignored) {
+                try {
+                    method.setAccessible(true);
+                    Object value = unwrapOptional(method.invoke(null));
+                    if (value != null) {
+                        return value;
+                    }
+                } catch (ReflectiveOperationException | RuntimeException ignored) {
+                }
+            }
+            for (String fieldName : List.of("jeiRuntime", "runtime")) {
+                try {
+                    Field field = owner.getDeclaredField(fieldName);
+                    if (!Modifier.isStatic(field.getModifiers())) {
+                        continue;
+                    }
+                    field.setAccessible(true);
+                    Object value = unwrapOptional(field.get(null));
+                    if (value != null) {
+                        return value;
+                    }
+                } catch (NoSuchFieldException | IllegalAccessException | RuntimeException ignored) {
+                }
             }
         }
         return null;
+    }
+
+    private static Object unwrapOptional(Object value) {
+        return value instanceof Optional<?> optional ? optional.orElse(null) : value;
     }
 
     private static Object createFocus(Object runtime, ItemStack stack) {

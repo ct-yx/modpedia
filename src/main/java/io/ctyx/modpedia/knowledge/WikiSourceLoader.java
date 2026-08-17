@@ -17,17 +17,19 @@ import java.util.stream.Stream;
 public final class WikiSourceLoader {
     private final List<KnowledgeSourceImporter> importers = List.of(new MarkdownKnowledgeSourceImporter());
 
-    public List<KnowledgeSourceImporter.ImportedKnowledgeDocument> load(
+    public LoadResult load(
             Path knowledgeRoot,
             List<String> warnings
     ) throws IOException {
         Path sourcesRoot = knowledgeRoot.resolve("sources");
         Files.createDirectories(sourcesRoot);
         List<KnowledgeSourceImporter.ImportedKnowledgeDocument> result = new ArrayList<>();
+        boolean complete = true;
         try (Stream<Path> directories = Files.list(sourcesRoot)) {
             for (Path sourceDirectory : directories.filter(Files::isDirectory).sorted().toList()) {
                 KnowledgeSourceDescriptor descriptor = readDescriptor(sourceDirectory, warnings);
                 if (descriptor == null) {
+                    complete = false;
                     continue;
                 }
                 KnowledgeSourceImporter importer = importers.stream()
@@ -36,12 +38,18 @@ public final class WikiSourceLoader {
                         .orElse(null);
                 if (importer == null) {
                     warnings.add("没有可用的 Wiki 导入器：" + descriptor.sourceType());
+                    complete = false;
                     continue;
                 }
-                result.addAll(importer.importDocuments(sourceDirectory, descriptor));
+                try {
+                    result.addAll(importer.importDocuments(sourceDirectory, descriptor));
+                } catch (IOException | RuntimeException exception) {
+                    warnings.add("导入 Wiki 来源失败：" + sourceDirectory.getFileName());
+                    complete = false;
+                }
             }
         }
-        return List.copyOf(result);
+        return new LoadResult(List.copyOf(result), complete);
     }
 
     private KnowledgeSourceDescriptor readDescriptor(Path sourceDirectory, List<String> warnings) {
@@ -103,6 +111,15 @@ public final class WikiSourceLoader {
             return Integer.parseInt(text(object, key, Integer.toString(fallback)));
         } catch (RuntimeException exception) {
             return fallback;
+        }
+    }
+
+    public record LoadResult(
+            List<KnowledgeSourceImporter.ImportedKnowledgeDocument> documents,
+            boolean complete
+    ) {
+        public LoadResult {
+            documents = List.copyOf(documents == null ? List.of() : documents);
         }
     }
 }

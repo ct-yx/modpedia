@@ -1,7 +1,13 @@
 package io.ctyx.modpedia.knowledge;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -14,6 +20,7 @@ import java.util.stream.Stream;
 
 /** 导入可扩展 sources/<id>/documents 下的 Markdown Wiki 来源。 */
 public final class MarkdownKnowledgeSourceImporter implements KnowledgeSourceImporter {
+    private static final long MAX_DOCUMENT_BYTES = 8L * 1024L * 1024L;
     private final MarkdownDocumentConverter converter = new MarkdownDocumentConverter();
 
     @Override
@@ -28,7 +35,7 @@ public final class MarkdownKnowledgeSourceImporter implements KnowledgeSourceImp
     ) throws IOException {
         Path documentsRoot = sourceRoot.resolve(source.localRoot().isBlank() ? "documents" : source.localRoot());
         if (!Files.isDirectory(documentsRoot)) {
-            return List.of();
+            throw new IOException("Wiki 文档目录不存在：" + documentsRoot);
         }
 
         List<ImportedKnowledgeDocument> result = new ArrayList<>();
@@ -38,8 +45,8 @@ public final class MarkdownKnowledgeSourceImporter implements KnowledgeSourceImp
                     .filter(this::isMarkdown)
                     .sorted()
                     .toList()) {
-                byte[] bytes = Files.readAllBytes(path);
-                String content = new String(bytes, StandardCharsets.UTF_8);
+                byte[] bytes = readLimited(path);
+                String content = decodeUtf8(bytes, path);
                 String relative = sourceRoot.relativize(path).toString().replace('\\', '/');
                 ScannedResource scanned = new ScannedResource(
                         source.sourceId(),
@@ -80,6 +87,34 @@ public final class MarkdownKnowledgeSourceImporter implements KnowledgeSourceImp
         return metadata.validFrontMatter() && !metadata.language().isBlank()
                 ? metadata.language()
                 : fallback;
+    }
+
+    private byte[] readLimited(Path path) throws IOException {
+        try (InputStream input = Files.newInputStream(path)) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream(8192);
+            byte[] buffer = new byte[8192];
+            long total = 0L;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_DOCUMENT_BYTES) {
+                    throw new IOException("Wiki Markdown 超过大小上限：" + path);
+                }
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
+
+    private String decodeUtf8(byte[] bytes, Path path) throws IOException {
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+        try {
+            return decoder.decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException exception) {
+            throw new IOException("Wiki Markdown 不是有效 UTF-8：" + path, exception);
+        }
     }
 
     private static String sha256(byte[] bytes) {

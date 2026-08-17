@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 7,
   "document_front_matter": {
     "required": [
       "id",
@@ -63,8 +63,7 @@
       "task_quests",
       "task_dependencies",
       "task_tasks",
-      "task_rewards",
-      "task_progress"
+      "task_rewards"
     ]
   },
   "fts5": {

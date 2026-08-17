@@ -1,7 +1,9 @@
 package io.ctyx.modpedia.ai;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.langchain4j.exception.HttpException;
 import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
@@ -10,6 +12,7 @@ import java.net.URI;
 import java.net.ConnectException;
 import java.net.http.HttpTimeoutException;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
@@ -23,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 /**
  * LangChain4j OpenAI 兼容客户端适配器。
@@ -32,6 +36,7 @@ import java.util.function.Consumer;
  */
 public final class AiClient {
     private static final String GROK_TOOL_COMPATIBLE_MODEL = "grok-4.5-latest";
+    private static final Logger LOG = Logger.getLogger("ModPediaWorker");
     private static final ExecutorService TEST_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "modpedia-ai-connection-test");
         thread.setDaemon(true);
@@ -59,6 +64,9 @@ public final class AiClient {
                 // 从错误的类加载器发现 HttpClientBuilderFactory。
                 .httpClientBuilder(jdkHttpClientBuilder(actual))
                 .timeout(Duration.ofSeconds(actual.timeoutSeconds()))
+                // 业务层只负责一次明确的重试；关闭库内隐式重试，避免 503/超时
+                // 叠加成多轮请求后再进入 WorkerChatService 的重试分支。
+                .maxRetries(0)
                 .parallelToolCalls(false)
                 .build();
     }
@@ -91,39 +99,207 @@ public final class AiClient {
         AiSettings actual = settings == null ? AiSettings.defaults() : settings;
         Consumer<TestResult> resultConsumer = callback == null ? ignored -> { } : callback;
         TEST_EXECUTOR.execute(() -> {
-            for (int attempt = 0; attempt < 2; attempt++) {
-                try {
-                    if (!actual.configured()) {
-                        resultConsumer.accept(new TestResult(true, "请先填写 API 地址和模型名称。"));
-                        return;
-                    }
-                    if (actual.effectiveApiKey().isBlank()) {
-                        resultConsumer.accept(new TestResult(true,
-                                "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。"));
-                        return;
-                    }
-                    String response = blockingModel(actual).chat(
-                            "Reply with a short confirmation that the connection is working."
+            resultConsumer.accept(testConnectionBlocking(actual));
+        });
+    }
+
+    /**
+     * 设置页的连接测试只验证“地址、认证和所选模型能否完成一次最小 Chat Completions
+     * 请求”。这里故意不经过 LangChain4j 的模型封装：不同网关/新模型可能拒绝
+     * temperature、max_tokens 或其他可选字段，但这不代表 API Key 或地址错误。
+     * 实际对话仍继续使用 LangChain4j，以便保留工具调用和 SSE 能力。
+     */
+    static TestResult testConnectionBlocking(AiSettings settings) {
+        AiSettings actual = settings == null ? AiSettings.defaults() : settings;
+        if (!actual.configured()) {
+            return new TestResult(true, "请先填写 API 地址和模型名称。", 0, 0);
+        }
+        if (actual.effectiveApiKey().isBlank()) {
+            return new TestResult(true,
+                    "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", 0, 0);
+        }
+
+        URI uri;
+        try {
+            uri = URI.create(stripTrailingSlash(normalizedEndpoint(actual.endpoint()))
+                    + "/chat/completions");
+        } catch (IllegalArgumentException exception) {
+            return new TestResult(true,
+                    "API 地址格式无效，请填写完整的 http(s) 地址。", 0, 0);
+        }
+
+        JsonObject payload = new JsonObject();
+        payload.addProperty("model", effectiveModelName(actual.model()));
+        com.google.gson.JsonArray messages = new com.google.gson.JsonArray();
+        JsonObject user = new JsonObject();
+        user.addProperty("role", "user");
+        user.addProperty("content", "Reply only with OK.");
+        messages.add(user);
+        payload.add("messages", messages);
+        payload.addProperty("stream", false);
+        String requestBody = payload.toString();
+
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder(uri)
+                        .timeout(Duration.ofSeconds(actual.timeoutSeconds()))
+                        .header("Authorization", "Bearer " + actual.effectiveApiKey())
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                        .build();
+                HttpResponse<String> response = HTTP_CLIENT.send(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                );
+                int status = response.statusCode();
+                String body = response.body() == null ? "" : response.body().strip();
+                String retryAfter = retryAfter(response.headers());
+                if (attempt == 1 && retryableStatus(status) && retryAfter.isBlank()) {
+                    sleepQuietly(350L);
+                    continue;
+                }
+                if (status < 200 || status >= 300) {
+                    TestResult result = new TestResult(
+                            true,
+                            friendlyHttpFailure(
+                                    status,
+                                    body,
+                                    actual.effectiveApiKey(),
+                                    retryAfter
+                            ),
+                            status,
+                            attempt
                     );
-                    boolean empty = response == null || response.isBlank();
-                    resultConsumer.accept(new TestResult(
-                            empty,
-                            empty
-                                    ? "请求完成，但模型返回了空内容。"
-                                    : "连接成功。"
-                    ));
-                    return;
-                } catch (Throwable throwable) {
-                    if (attempt == 0 && isRetryableFailure(throwable)) {
-                        sleepQuietly(350L);
-                        continue;
+                    logConnectionResult(actual, uri, result);
+                    return result;
+                }
+                if (body.isBlank()) {
+                    TestResult result = new TestResult(true,
+                            "请求完成，但接口返回了空内容。", status, attempt);
+                    logConnectionResult(actual, uri, result);
+                    return result;
+                }
+                if (looksLikeHtml(body)) {
+                    TestResult result = new TestResult(true,
+                            "API 地址返回了网页内容，请填写 OpenAI 兼容 API 根地址，通常以 /v1 结尾。",
+                            status,
+                            attempt
+                    );
+                    logConnectionResult(actual, uri, result);
+                    return result;
+                }
+                TestResult result = new TestResult(false,
+                        "连接成功（HTTP " + status + "）。", status, attempt);
+                logConnectionResult(actual, uri, result);
+                return result;
+            } catch (Throwable throwable) {
+                if (attempt == 1 && isRetryableFailure(throwable)) {
+                    sleepQuietly(350L);
+                    continue;
+                }
+                TestResult result = new TestResult(
+                        true,
+                        friendlyError(throwable, actual.effectiveApiKey()),
+                        0,
+                        attempt
+                );
+                logConnectionResult(actual, uri, result);
+                return result;
+            }
+        }
+        TestResult result = new TestResult(true, "连接测试失败，请稍后重试。", 0, 2);
+        logConnectionResult(actual, uri, result);
+        return result;
+    }
+
+    private static String friendlyHttpFailure(int statusCode, String body, String apiKey) {
+        return friendlyHttpFailure(statusCode, body, apiKey, "");
+    }
+
+    private static String friendlyHttpFailure(
+            int statusCode,
+            String body,
+            String apiKey,
+            String retryAfter
+    ) {
+        String lower = body == null ? "" : body.toLowerCase(Locale.ROOT);
+        if (statusCode == 401 || statusCode == 403 || lower.contains("invalid_api_key")) {
+            return "API Key 无效或未被当前接口接受（HTTP " + statusCode + "）。";
+        }
+        if (statusCode == 404) {
+            return "未找到 Chat Completions 接口（HTTP 404），请确认 API 地址通常包含 /v1。";
+        }
+        if (statusCode == 400) {
+            String detail = responseErrorMessage(body, apiKey);
+            return detail.isBlank()
+                    ? "请求参数被接口拒绝（HTTP 400），请确认模型名称和 API 格式。"
+                    : "请求参数被接口拒绝（HTTP 400）：“" + detail + "”。";
+        }
+        if (retryableStatus(statusCode)) {
+            String detail = responseErrorMessage(body, apiKey);
+            String retryHint = retryAfter == null || retryAfter.isBlank()
+                    ? "请稍后重试。"
+                    : "上游要求等待约 " + retryAfter + " 秒后再试。";
+            return "AI 上游暂时不可用（HTTP " + statusCode + "）"
+                    + (detail.isBlank() ? "" : "：" + detail)
+                    + "，" + retryHint;
+        }
+        return "连接测试失败（HTTP " + statusCode + "）。";
+    }
+
+    /**
+     * 读取网关返回的 Retry-After 秒数。连接测试不能在服务端明确要求等待 30 秒时
+     * 只休眠 350 ms 再重复发送一次，否则用户会看到两次相同的 503，诊断信息也会
+     * 变得不准确。无该头时继续保留一次短重试，兼容本地夹具和未提供退避信息的网关。
+     */
+    private static String retryAfter(HttpHeaders headers) {
+        if (headers == null) {
+            return "";
+        }
+        return headers.firstValue("Retry-After")
+                .map(String::strip)
+                .filter(value -> value.matches("\\d+"))
+                .orElse("");
+    }
+
+    private static String responseErrorMessage(String body, String apiKey) {
+        try {
+            JsonElement parsed = JsonParser.parseString(body == null ? "" : body);
+            if (parsed.isJsonObject()) {
+                JsonElement error = parsed.getAsJsonObject().get("error");
+                if (error != null && error.isJsonObject()) {
+                    JsonElement message = error.getAsJsonObject().get("message");
+                    if (message != null && message.isJsonPrimitive()) {
+                        return redact(message.getAsString().strip(), apiKey);
                     }
-                    resultConsumer.accept(new TestResult(true,
-                            friendlyError(throwable, actual.effectiveApiKey())));
-                    return;
                 }
             }
-        });
+        } catch (RuntimeException ignored) {
+            // 非 JSON 错误体不影响状态码诊断。
+        }
+        return "";
+    }
+
+    private static void logConnectionResult(AiSettings settings, URI uri, TestResult result) {
+        String endpoint = safeEndpointForLog(uri);
+        String model = effectiveModelName(settings.model());
+        LOG.info(() -> "AI_CONNECTION_TEST endpoint=" + endpoint
+                + " model=" + model
+                + " status=" + result.statusCode()
+                + " attempts=" + result.attempts()
+                + " failed=" + result.failed());
+    }
+
+    static String safeEndpointForLog(URI uri) {
+        if (uri == null) {
+            return "";
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme() + "://";
+        String host = uri.getHost() == null ? "" : uri.getHost();
+        String port = uri.getPort() > 0 ? ":" + uri.getPort() : "";
+        String path = uri.getPath() == null ? "" : uri.getPath();
+        return scheme + host + port + path;
     }
 
     /**
@@ -242,32 +418,7 @@ public final class AiClient {
      * 同时保留已经填写的自定义路径和版本路径。
      */
     public static String normalizedEndpoint(String endpoint) {
-        String value = stripTrailingSlash(endpoint == null ? "" : endpoint.strip());
-        if (value.isBlank()) {
-            return "";
-        }
-        value = stripKnownEndpointSuffix(value);
-        try {
-            URI uri = URI.create(value);
-            String path = uri.getPath();
-            if (uri.isAbsolute() && (path == null || path.isBlank() || "/".equals(path))) {
-                return value + "/v1";
-            }
-        } catch (IllegalArgumentException ignored) {
-            // LangChain4j 会在真正构造模型时给出地址格式错误；这里不吞掉用户的原始输入。
-        }
-        return value;
-    }
-
-    private static String stripKnownEndpointSuffix(String value) {
-        String result = value;
-        for (String suffix : List.of("/chat/completions", "/models")) {
-            if (result.toLowerCase(Locale.ROOT).endsWith(suffix)) {
-                result = stripTrailingSlash(result.substring(0, result.length() - suffix.length()));
-                break;
-            }
-        }
-        return result;
+        return AiSettings.normalizeEndpoint(endpoint);
     }
 
     /**
@@ -305,7 +456,7 @@ public final class AiClient {
      * 未完成工具调用允许重试一次。这样用户不需要手动连续点击“重试”，同时不会把
      * 明确的模型不支持错误变成无意义的重复请求。</p>
      */
-    static boolean isRetryableFailure(Throwable throwable) {
+    public static boolean isRetryableFailure(Throwable throwable) {
         Throwable current = throwable;
         while (current != null) {
             if (current instanceof HttpTimeoutException || current instanceof ConnectException
@@ -331,6 +482,82 @@ public final class AiClient {
             current = current.getCause();
         }
         return false;
+    }
+
+    /**
+     * 判断是否可以在没有等待头信息的情况下立即进行一次短退避重试。
+     *
+     * <p>503/429 通常表示上游路由或限流状态，而不是本地请求瞬态错误。LangChain4j
+     * 的模型客户端不会把所有网关响应头暴露给业务层，因此对这两类 HTTP 错误采取保守
+     * 策略：不在几百毫秒后重复打上游，让用户按错误提示稍后重试。</p>
+     */
+    public static boolean shouldRetryImmediately(Throwable throwable) {
+        int status = httpStatusCode(throwable);
+        if (status == 429 || status == 503 || retryAfterSeconds(throwable) > 0) {
+            return false;
+        }
+        if (status != 0) {
+            return status == 408 || status == 425 || status == 500
+                    || status == 502 || status == 504;
+        }
+        return isRetryableFailure(throwable);
+    }
+
+    /** 返回一次短退避重试使用的毫秒数，不包含服务端要求的长等待。 */
+    public static long retryDelayMillis(Throwable throwable) {
+        if (!shouldRetryImmediately(throwable)) {
+            return 0L;
+        }
+        int status = httpStatusCode(throwable);
+        return status == 0 ? 350L : 750L;
+    }
+
+    /** 从 LangChain4j 的 HTTP 异常或异常文本中提取状态码。 */
+    public static int httpStatusCode(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof HttpException httpException) {
+                return httpException.statusCode();
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                java.util.regex.Matcher matcher = java.util.regex.Pattern
+                        .compile("\\b(?:HTTP|status|code)[ =:]*(\\d{3})\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(message);
+                if (matcher.find()) {
+                    try {
+                        return Integer.parseInt(matcher.group(1));
+                    } catch (NumberFormatException ignored) {
+                        // 继续检查下一个 cause。
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return 0;
+    }
+
+    /** 从异常文本中读取网关可能附带的 Retry-After 秒数。 */
+    public static int retryAfterSeconds(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                java.util.regex.Matcher matcher = java.util.regex.Pattern
+                        .compile("(?i)retry[-_ ]after\\s*[:=]\\s*(\\d+)|\\\"retry_after\\\"\\s*:\\s*(\\d+)")
+                        .matcher(message);
+                if (matcher.find()) {
+                    String value = matcher.group(1) == null ? matcher.group(2) : matcher.group(1);
+                    try {
+                        return Integer.parseInt(value);
+                    } catch (NumberFormatException ignored) {
+                        return 0;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return 0;
     }
 
     static ModelListResult parseModelListResponse(int statusCode, String body) {
@@ -403,31 +630,35 @@ public final class AiClient {
                 || lower.contains("<head");
     }
 
-    static String friendlyError(Throwable throwable) {
+    public static String friendlyError(Throwable throwable) {
         return friendlyError(throwable, "");
     }
 
-    static String friendlyError(Throwable throwable, String apiKey) {
-        Throwable cause = throwable;
-        while (cause.getCause() != null && cause != cause.getCause()) {
-            cause = cause.getCause();
-        }
-        String message = cause.getMessage() == null ? "" : redact(cause.getMessage().strip(), apiKey);
+    public static String friendlyError(Throwable throwable, String apiKey) {
+        Throwable cause = deepestCause(throwable);
+        String message = allMessages(throwable, apiKey);
+        String detail = responseErrorMessageFromThrowable(throwable, apiKey);
         String lower = message.toLowerCase(Locale.ROOT);
+        int status = httpStatusCode(throwable);
+        int retryAfter = retryAfterSeconds(throwable);
         if (lower.contains("no healthy grok oauth account")) {
             return "当前模型的 Grok 上游没有可用账户；请在设置中选择 grok-4.5-latest，或等待上游恢复。";
         }
         if (lower.contains("httpclientbuilderfactory") && lower.contains("not a subtype")) {
             return "AI HTTP 客户端依赖加载失败，请重启游戏；如果仍然失败，请更新 ModPedia。";
         }
-        if (lower.matches(".*\\b503\\b.*") || lower.contains("service unavailable")) {
-            return "AI 上游暂时不可用（HTTP 503），通常是模型路由或工具调用通道暂时没有可用服务；已支持自动重试，请稍后再试。";
+        if (status == 503 || lower.matches(".*\\b503\\b.*") || lower.contains("service unavailable")) {
+            return temporaryUpstreamError(503, detail, retryAfter);
         }
-        if (lower.matches(".*\\b429\\b.*") || lower.contains("too many requests")) {
-            return "AI 请求过于频繁（HTTP 429），请稍后再试或降低请求频率。";
+        if (status == 429 || lower.matches(".*\\b429\\b.*") || lower.contains("too many requests")) {
+            return temporaryUpstreamError(429, detail, retryAfter);
         }
-        if (lower.matches(".*\\b(408|425|500|502|504)\\b.*")) {
-            return "AI 网关暂时失败（" + firstHttpStatus(lower) + "），请稍后重试。";
+        if (status == 408 || status == 425 || status == 500 || status == 502 || status == 504
+                || lower.matches(".*\\b(408|425|500|502|504)\\b.*")) {
+            String reportedStatus = status == 0 ? firstHttpStatus(lower) : "HTTP " + status;
+            return "AI 网关暂时失败（" + reportedStatus + "）"
+                    + (detail.isBlank() ? "" : "：" + detail)
+                    + "，请稍后重试。";
         }
         if (lower.contains("tool_calls") || lower.contains("tool call")
                 || lower.contains("function call") || lower.contains("tool_choice")) {
@@ -441,13 +672,77 @@ public final class AiClient {
                 || lower.contains("invalid api key")) {
             return "API Key 无效或未被当前接口接受。";
         }
+        if (!detail.isBlank()) {
+            return "AI 请求失败：" + detail + "。";
+        }
         if (message.isBlank()) {
             return cause.getClass().getSimpleName();
         }
-        return redact(
-                message.replaceAll("(?i)bearer\\s+[a-z0-9._~+/=-]+", "Bearer [已隐藏]"),
-                apiKey
-        );
+        // 不把上游完整 JSON、请求头或异常链直接交给界面；只保留一行脱敏文本。
+        String compact = message.replaceAll("[\\r\\n]+", " ")
+                .replaceAll("\\s{2,}", " ")
+                .replaceAll("(?i)bearer\\s+[a-z0-9._~+/=-]+", "Bearer [已隐藏]");
+        if (compact.length() > 240) {
+            compact = compact.substring(0, 240) + "…";
+        }
+        return redact(compact, apiKey);
+    }
+
+    private static String temporaryUpstreamError(int status, String detail, int retryAfter) {
+        String wait = retryAfter > 0
+                ? "上游要求等待约 " + retryAfter + " 秒后再试。"
+                : "请等待上游恢复后再试。";
+        return "AI 上游暂时不可用（HTTP " + status + "）"
+                + (detail == null || detail.isBlank() ? "" : "：" + detail)
+                + "。" + wait;
+    }
+
+    private static Throwable deepestCause(Throwable throwable) {
+        Throwable current = throwable;
+        if (current == null) {
+            return new IllegalStateException("未知错误");
+        }
+        while (current.getCause() != null && current != current.getCause()) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private static String allMessages(Throwable throwable, String apiKey) {
+        StringBuilder result = new StringBuilder();
+        Throwable current = throwable;
+        while (current != null) {
+            if (current.getMessage() != null && !current.getMessage().isBlank()) {
+                if (!result.isEmpty()) {
+                    result.append('\n');
+                }
+                result.append(redact(current.getMessage(), apiKey));
+            }
+            current = current.getCause();
+        }
+        return result.toString();
+    }
+
+    private static String responseErrorMessageFromThrowable(Throwable throwable, String apiKey) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String candidate = message.strip();
+                int start = candidate.indexOf('{');
+                int end = candidate.lastIndexOf('}');
+                if (start >= 0 && end > start) {
+                    String detail = responseErrorMessage(
+                            candidate.substring(start, end + 1), apiKey
+                    );
+                    if (!detail.isBlank()) {
+                        return detail;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return "";
     }
 
     private static String firstHttpStatus(String message) {
@@ -502,9 +797,15 @@ public final class AiClient {
         return actual;
     }
 
-    public record TestResult(boolean failed, String message) {
+    public record TestResult(boolean failed, String message, int statusCode, int attempts) {
+        public TestResult(boolean failed, String message) {
+            this(failed, message, 0, 0);
+        }
+
         public TestResult {
             message = message == null ? "" : message;
+            statusCode = Math.max(0, statusCode);
+            attempts = Math.max(0, attempts);
         }
     }
 

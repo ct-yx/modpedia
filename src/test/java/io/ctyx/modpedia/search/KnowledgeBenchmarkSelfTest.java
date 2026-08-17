@@ -6,7 +6,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
-import io.ctyx.modpedia.knowledge.LocalGuideScanner;
+import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.ScannedResource;
 
 import java.io.IOException;
@@ -315,11 +315,11 @@ public final class KnowledgeBenchmarkSelfTest {
         }
     }
 
-    private static LocalGuideScanner.ScanResult scanResult(
+    private static KnowledgeScanResult scanResult(
             List<ScannedResource> resources,
             JarCorpusLoader.CorpusStats stats
     ) {
-        return new LocalGuideScanner.ScanResult(resources, stats.warnings());
+        return new KnowledgeScanResult(resources, stats.warnings());
     }
 
     private static JarCorpusLoader.LoadedCorpus scaleCorpus(

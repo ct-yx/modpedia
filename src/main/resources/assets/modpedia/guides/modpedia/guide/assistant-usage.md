@@ -5,7 +5,7 @@ source_type: builtin_markdown
 title: ModPedia 助手使用说明
 category: bootstrap
 keywords: ['ModPedia', '助手', '模组百科', '使用说明', 'AI', '仅搜索', '来源跳转', '历史会话', '知识库重建']
-source_version: '0.2.0'
+source_version: '0.3.0'
 ---
 
 # ModPedia 助手使用说明

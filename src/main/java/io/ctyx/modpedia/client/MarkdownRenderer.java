@@ -54,12 +54,20 @@ public final class MarkdownRenderer {
         List<RenderedLine> result = new ArrayList<>();
         int lineWidth = Math.max(1, width);
         List<SourceReference> normalizedSources = uniqueSources(availableSources);
+        ItemNameMatcher displayNameMatcher = showIds
+                ? ItemNameResolver.displayNameMatcher()
+                : ItemNameMatcher.empty();
         boolean hasInlineAnnotations = false;
         for (MarkdownLine line : MarkdownParser.parse(markdown)) {
             List<SourceReference> annotations = sourceAnnotations(line, normalizedSources);
             ItemTokenParser.Parsed itemText = line.kind() == MarkdownLine.Kind.CODE
                     ? new ItemTokenParser.Parsed(line.text(), List.of())
-                    : ItemTokenParser.parse(line.text(), showIds);
+                    : ItemTokenParser.parse(
+                            line.text(),
+                            showIds,
+                            ItemNameResolver::registeredName,
+                            displayNameMatcher
+                    );
             String displayText = line.kind() == MarkdownLine.Kind.CODE
                     ? line.text()
                     : SourceCitationParser.removeCitationMarkup(itemText.text());
@@ -222,6 +230,7 @@ public final class MarkdownRenderer {
     private static Style baseStyle(MarkdownLine.Kind kind) {
         return switch (kind) {
             case HEADING -> Style.EMPTY.withBold(true).withColor(HEADING_COLOR);
+            case TABLE_HEADER -> Style.EMPTY.withBold(true).withColor(HEADING_COLOR);
             case BLOCK_QUOTE -> Style.EMPTY.withColor(QUOTE_COLOR).withItalic(true);
             default -> Style.EMPTY;
         };

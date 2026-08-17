@@ -96,6 +96,31 @@ public final class AiClientSelfTest {
                 "Grok OAuth 上游错误应提示兼容模型");
         check(AiClient.isRetryableFailure(new IllegalStateException("HTTP 503 upstream unavailable")),
                 "503 应允许自动重试");
+        check(!AiClient.shouldRetryImmediately(new IllegalStateException(
+                        "HTTP 503: {\"error\":{\"message\":\"Service temporarily unavailable\"}}")),
+                "503 不应在几百毫秒后立即重复请求");
+        check(AiClient.shouldRetryImmediately(new IllegalStateException("HTTP 502 upstream unavailable")),
+                "没有 Retry-After 的 502 可以短退避重试");
+        check(AiClient.httpStatusCode(new dev.langchain4j.exception.HttpException(
+                        503, "{\"error\":{\"message\":\"Service temporarily unavailable\"}}")) == 503,
+                "LangChain HTTP 异常应保留状态码");
+        String friendly503 = AiClient.friendlyError(
+                new dev.langchain4j.exception.HttpException(
+                        503,
+                        "{\"error\":{\"message\":\"Service temporarily unavailable\"}}"),
+                "secret-value"
+        );
+        check(friendly503.contains("HTTP 503") && friendly503.contains("Service temporarily unavailable"),
+                "聊天 503 应显示友好状态和上游消息");
+        check(!friendly503.contains("{\"error\""),
+                "聊天错误不应把上游原始 JSON 直接显示给玩家");
+        check(!friendly503.contains("secret-value"), "聊天错误不得泄露 API Key");
+        String friendlyRetryAfter = AiClient.friendlyError(
+                new IllegalStateException(
+                        "HTTP 503: {\"error\":{\"message\":\"Service temporarily unavailable\"}}, Retry-After: 30"),
+                "secret-value"
+        );
+        check(friendlyRetryAfter.contains("30 秒"), "聊天错误应传达上游要求的等待时间");
         check(AiClient.isRetryableFailure(new IllegalStateException("temporary unavailable")),
                 "网关返回 temporary unavailable 应允许自动重试");
         check(AiClient.isRetryableFailure(new IllegalStateException("No tool output found for function call fc-1")),
@@ -128,6 +153,8 @@ public final class AiClientSelfTest {
         testFetchModelsRetriesTemporaryFailure();
         testConnectionReportsSuccessfulResponseAsSuccess();
         testConnectionReportsNonRetryableFailure();
+        testConnectionRespectsRetryAfter();
+        testConnectionUsesMinimalRequestAndReportsStatus();
         System.out.println("ModPedia AI client self-test passed");
     }
 
@@ -224,6 +251,99 @@ public final class AiClientSelfTest {
             check(completed.await(5, TimeUnit.SECONDS), "非重试错误的连接测试应完成");
             check(result.get() != null && result.get().failed(),
                     "400 等配置错误必须报告 failed=true，不能显示为连接成功");
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    private static void testConnectionUsesMinimalRequestAndReportsStatus() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "modpedia-ai-client-minimal-fixture");
+            thread.setDaemon(true);
+            return thread;
+        });
+        AtomicReference<String> requestBody = new AtomicReference<>("");
+        server.setExecutor(executor);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = "{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try {
+            AiSettings settings = new AiSettings(
+                    AssistantMode.AI,
+                    "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "test-model",
+                    "secret-value",
+                    false,
+                    SearchIntensity.FAST,
+                    1,
+                    4,
+                    8_000,
+                    10
+            );
+            AiClient.TestResult result = AiClient.testConnectionBlocking(settings);
+            check(!result.failed(), "最小 Chat Completions 请求应成功");
+            check(result.statusCode() == 200, "连接测试应返回 HTTP 状态码");
+            check(result.attempts() == 1, "成功请求不应重复发送");
+            check(requestBody.get().contains("\"model\":\"test-model\""),
+                    "连接测试应发送所选模型");
+            check(!requestBody.get().contains("tools"),
+                    "连接测试不应强制使用工具调用");
+        } finally {
+            server.stop(0);
+            executor.shutdownNow();
+        }
+    }
+
+    private static void testConnectionRespectsRetryAfter() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger attempts = new AtomicInteger();
+        ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "modpedia-ai-client-retry-after-fixture");
+            thread.setDaemon(true);
+            return thread;
+        });
+        server.setExecutor(executor);
+        server.createContext("/v1/chat/completions", exchange -> {
+            attempts.incrementAndGet();
+            byte[] body = "{\"error\":{\"message\":\"Service temporarily unavailable\"}}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Retry-After", "30");
+            exchange.sendResponseHeaders(503, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try {
+            AiSettings settings = new AiSettings(
+                    AssistantMode.AI,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                    "test-model",
+                    "secret-value",
+                    false,
+                    SearchIntensity.FAST,
+                    1,
+                    4,
+                    8_000,
+                    10
+            );
+            AiClient.TestResult result = AiClient.testConnectionBlocking(settings);
+            check(result.failed(), "上游明确要求退避时仍应报告连接失败");
+            check(result.statusCode() == 503, "Retry-After 测试应保留 HTTP 状态码");
+            check(result.attempts() == 1 && attempts.get() == 1,
+                    "上游要求等待时不应在 350 ms 后立即重复请求");
+            check(result.message().contains("30 秒"),
+                    "Retry-After 应显示给用户，避免把上游退避误判为 API Key 错误");
         } finally {
             server.stop(0);
             executor.shutdownNow();

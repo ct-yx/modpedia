@@ -37,6 +37,24 @@ public final class MarkdownRendererSelfTest {
         check(lines.stream().noneMatch(line -> line.text().contains(fence)),
                 "代码围栏不应作为正文显示");
 
+        String tableMarkdown = "| 任务 | 所需物品 |\n"
+                + "|---|:---:|\n"
+                + "| 将 Craft 放入 Minecraft | 1 个 `minecraft:redstone` |\n";
+        List<MarkdownLine> tableLines = MarkdownParser.parse(tableMarkdown).stream()
+                .filter(line -> line.kind() != MarkdownLine.Kind.BLANK)
+                .toList();
+        check(tableLines.size() == 2, "Markdown 表格的分隔行不应作为正文显示");
+        check(tableLines.get(0).kind() == MarkdownLine.Kind.TABLE_HEADER,
+                "Markdown 表格首行应识别为表头");
+        check(tableLines.get(1).kind() == MarkdownLine.Kind.TABLE_ROW,
+                "Markdown 表格数据行应识别为表格行");
+        check(tableLines.get(0).text().equals("任务  │  所需物品"),
+                "表头应移除 Markdown 外框并保留列内容");
+        check(tableLines.get(1).text().equals("将 Craft 放入 Minecraft  │  1 个 `minecraft:redstone`"),
+                "表格行应移除 Markdown 外框并保留行内格式");
+        check(tableLines.stream().noneMatch(line -> line.text().contains("---")),
+                "表格对齐分隔线不应泄漏到渲染文本");
+
         List<MarkdownInlineSpan> inline = MarkdownInlineSpan.parse(
                 "这是 **重要**、*强调*、" + inlineCode + "id" + inlineCode
                         + " 和 [手册](https://example.invalid/manual)。");
@@ -107,6 +125,44 @@ public final class MarkdownRendererSelfTest {
         );
         check(visibleIds.text().equals("需要 ae2:controller 和 minecraft:iron_ingot。"),
                 "Ctrl 模式应显示原始物品 ID");
+        ItemTokenParser.Parsed translationKey = ItemTokenParser.parse(
+                "模型错误输出 item.minecraft.iron_ingot、block.minecraft.stone 和 铁锭。",
+                true,
+                id -> Optional.ofNullable(Map.of(
+                        "minecraft:iron_ingot", "铁锭",
+                        "minecraft:stone", "石头"
+                ).get(id)),
+                Map.of("铁锭", "minecraft:iron_ingot", "石头", "minecraft:stone")
+        );
+        check(translationKey.text().equals(
+                        "模型错误输出 minecraft:iron_ingot、minecraft:stone 和 minecraft:iron_ingot。"),
+                "Cmd 模式应把物品翻译键转换为完整物品 ID");
+        check(translationKey.references().stream().anyMatch(reference ->
+                        reference.id().equals("minecraft:iron_ingot")),
+                "翻译键和本地化名称转换后仍应保留物品引用");
+        ItemTokenParser.Parsed trieMatched = ItemTokenParser.parse(
+                "请检查 ME 控制器 和 铁锭。",
+                true,
+                id -> Optional.ofNullable(Map.of(
+                        "ae2:controller", "ME 控制器",
+                        "minecraft:iron_ingot", "铁锭"
+                ).get(id)),
+                ItemNameMatcher.from(Map.of(
+                        "ME 控制器", "ae2:controller",
+                        "铁锭", "minecraft:iron_ingot",
+                        "弓", "minecraft:bow"
+                ))
+        );
+        check(trieMatched.text().equals("请检查 ae2:controller 和 minecraft:iron_ingot。"),
+                "Cmd 模式应使用一次构建的 Trie 匹配本地化名称");
+        ItemTokenParser.Parsed singleCharacter = ItemTokenParser.parse(
+                "弓可以远程攻击。",
+                true,
+                id -> Optional.of("minecraft:bow".equals(id) ? "弓" : ""),
+                ItemNameMatcher.from(Map.of("弓", "minecraft:bow"))
+        );
+        check(singleCharacter.text().equals("minecraft:bow可以远程攻击。"),
+                "单字中文物品名也应支持 Ctrl 模式 ID 显示");
         ItemTokenParser.Parsed unknown = ItemTokenParser.parse(
                 "普通路径 example:unknown/path 不应被改写。",
                 false,

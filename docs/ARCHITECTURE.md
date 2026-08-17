@@ -3,30 +3,18 @@
 ## 1. 总体流程
 
 ```text
-本地模组资源
-    │
+游戏 JVM
+    │  UI、注册表/Tooltip、可选运行时 API
     ▼
-KnowledgeSourceScanner
-    │
+ModPediaBridge
+    │  localhost JSONL 控制消息 + 随机令牌
     ▼
-KnowledgeCompiler
-    │
-    ├── Markdown 文档
-    ├── manifest.json
-    ├── keyword-index.json
-    └── knowledge.db（SQLite 派生搜索库）
-    │
-    ▼
-KnowledgeRepository
-    │
-    ▼
-RetrievalService
-    │
-    ▼
-ContextAssembler
-    │
-    ▼
-AiClient
+ModPedia Worker JVM
+    ├── WorkerGuideScanner / KnowledgeCompiler
+    ├── RetrievalService / SQLite / FTS5
+    ├── AiClient / LangChain4j Tool Loop
+    ├── ConversationStore / ChatMemory
+    └── Markdown、Wiki 和任务静态导入
     │
     ▼
 AssistantScreen（非暂停客户端 Screen）
@@ -45,7 +33,9 @@ AssistantScreen（非暂停客户端 Screen）
 
 ### `search`
 
-`KnowledgeDatabase` 将自动手册、Wiki 和 `custom/` 文档写入同一个 SQLite：文档表保存元数据、指纹和完整 Markdown，段落表保存完整段落与标题路径，FTS5 表保存检索字段。任务运行数据也在同一个文件中，但只使用 `task_*` 表。`RetrievalService` 优先使用 SQLite，并保留旧版 `manifest.json`/`keyword-index.json`/Markdown 回退路径。查询先由 FTS 和元数据筛选候选，再按完整段落计算规则分数并返回每篇文档的最高分段落。
+`KnowledgeDatabase` 将自动手册、Wiki、`custom/` 文档和物品目录写入同一个 SQLite：文档表保存元数据、指纹和完整 Markdown，段落表保存完整段落与标题路径，FTS5 表保存检索字段，`item_catalog` 保存当前语言的注册物品 Tooltip。FTBQ 静态任务定义也在同一个文件中，但只使用 `task_*` 表；玩家实时进度不落库。`RetrievalService` 优先使用 SQLite，并保留旧版 `manifest.json`/`keyword-index.json`/Markdown 回退路径。查询先由 FTS 和元数据筛选候选，再按完整段落计算规则分数并返回每篇文档的最高分段落；确认物品时先读取 `item_catalog`，再继续手册搜索。
+
+物品目录是启动阶段的高频批量路径：游戏 JVM 只负责读取注册表和 Tooltip，数万条记录先在独立 I/O 线程写成同机原子 JSONL 载荷，IPC 只传载荷路径，不在游戏线程构造超大的 JSON 数组；Worker 读取完整载荷后使用单条预编译 UPSERT 和单事务写入 `knowledge.db`。因此数据库写入、JSON 解析和提交都不占用游戏 Tick，也不会因为每条物品单独提交而产生卡顿。载荷处理完成后自动删除，异常时旧目录由 SQLite 回滚保留。
 
 公开接口保持纯 Java：
 
@@ -95,6 +85,8 @@ ConversationStore → conversations/conversation-*.json
 
 `AiClient` 负责构造 OpenAI Chat Completions 兼容模型、设置页的异步连通性测试、`/models` 模型列表请求和全部模型批量兼容性测试。域名根地址在请求层自动补全 `/v1`，已经填写的自定义路径保持不变；HTML 响应和 401 响应转换为不含密钥的用户提示。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，避免上游返回 `No tool output found for function call`。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
 
+NeoForge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识构建、网络和 AI 工作由独立 Worker JVM 执行，双方通过带随机令牌的 localhost JSONL IPC 通信。Minecraft 的 UI、注册表/Tooltip 和可选运行时 API仍由客户端线程负责。任务问题的查询顺序固定为：`search_tasks` → 取得当前玩家运行时上下文 → Worker 得到临时快照 → Worker 查询 `knowledge.db` 中的静态任务定义 → 在内存中覆盖当前状态。单机优先只发送当前存档路径描述，由 Worker 直接读取很小的 `ftbquests/<team-uuid>.snbt`；多人服务器或本地文件不可用时，游戏 JVM 才读取已同步的 TeamData 并通过 IPC 返回。无论哪条路径，实时进度只在当前请求内存中存在，不写入数据库。
+
 持久化读写实际由 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore` 完成，ModPedia 只装配已有 SQLite 驱动、文件路径和四条 SQLite 方言 SQL。这样工具调用消息仍使用 LangChain4j 官方 JSON 序列化，原始 `tool_call_id` 不经过自研格式转换。旧版本会话中的 `memoryMessagesJson` 在首次读取时迁移到 `config/modpedia/conversations/memory.sqlite`，成功后清空旧字段；迁移失败则继续使用旧 JSON。
 
 `AiModelCompatibilityTester` 不参与正常回答链路，使用当前 API Key 读取 `/models` 后对每个模型验证四个能力：普通非流式、非流式工具结果续接、普通 SSE、流式工具结果续接。报告同时标记普通+工具可用和流式+工具可用，写入 `config/modpedia/diagnostics/ai-model-compatibility.{json,md}`；报告只保留接口主机、模型 ID、状态、耗时和脱敏错误，不保存 API Key。设置页批量按钮和 Gradle `aiModelCompatibility` 任务共用这套探测器。
@@ -109,21 +101,21 @@ ConversationStore → conversations/conversation-*.json
 
 只在物理客户端加载，负责助手窗口、输入框、消息列表、加载状态、错误提示、来源预览和可选手册跳转。
 
-阶段四的 `MockAssistantSession` 在后台调用 `RetrievalService`，把规则搜索结果转换成带来源的助手消息；`ManualSourceNavigator` 通过反射调用三个可选手册框架的公开客户端入口，因此框架模组缺少正文或未安装时仍可加载 ModPedia。FTB Quests、JEI 和 Jade 也只通过客户端适配器和反射/运行时检查联动，不是 ModPedia 的硬依赖。
+生产入口使用 `WorkerAssistantSession`，只接收 Worker 事件并更新 UI 快照；`MockAssistantSession` 仅用于开发自测。`ManualSourceNavigator` 通过反射调用三个可选手册框架的公开客户端入口，因此框架模组缺少正文或未安装时仍可加载 ModPedia。FTB Quests、JEI 和 Jade 也只通过客户端适配器和反射/运行时检查联动，不是 ModPedia 的硬依赖。
 
 阶段四的职责边界如下：
 
 ```text
 ModPediaClient
   ├── K        → Minecraft.setScreen(AssistantScreen)
-  ├── F9       → KnowledgeUpdateService.rebuildAsync()
+  ├── F9       → ModPediaBridge.rebuildKnowledgeAsync()
   └── ClientTickEvent.Post
 
 AssistantScreen
   ├── WindowBounds          → 尺寸、视口比例、边距和拖拽缩放
   ├── AssistantWindowConfig → 客户端 JSON 持久化
   ├── AssistantSession      → 线程安全的会话状态接口
-  ├── KnowledgeUpdateService.status() → 顶部只读状态快照
+  ├── ModPediaBridge.knowledgeStatus() → 顶部只读状态快照
   └── AssistantGlassConfig  → 可调色半透明玻璃与高对比度回退
 ```
 
@@ -136,9 +128,26 @@ AssistantScreen
 
 ### 任务、Wiki 与可选联动
 
-`TaskKnowledgeStore` 负责将 FTB Quests 的静态任务定义和当前玩家进度写入
-`task_snapshots`、`task_quests`、`task_dependencies`、`task_tasks`、`task_rewards` 和
-`task_progress`。它不把任务运行数据伪装成手册段落；AI 通过 `search_tasks` 区分任务定义、实时进度和未同步状态。
+`TaskKnowledgeStore` 只将 FTB Quests 的静态任务定义写入
+`task_snapshots`、`task_quests`、`task_dependencies`、`task_tasks` 和
+`task_rewards`。它不把任务运行数据伪装成手册段落；AI 通过 `search_tasks` 区分任务定义、实时进度和未同步状态。
+
+任务运行时读取是按需链路，而不是客户端轮询：`search_tasks` 先取得当前玩家运行时
+上下文。单机由 `FtbQuestsClientAdapter` 在客户端线程只解析当前存档根目录、玩家 UUID
+和作用域元数据，Worker 的 `WorkerTaskRuntimeFileReader` 随后直接读取
+`ftbquests/<team-uuid>.snbt` 中有界的开始/完成 ID 和 `task_progress`。考虑到 FTBQ
+进度文件写入很快，读取器不加文件锁、不等待刷新、不写回任何数据；它在读取前后比较
+文件大小、修改时间和文件标识，撞上快速重写时立即重试，确保得到完整的旧快照或新快照。
+多人服务器或
+本地文件不可用时，适配器才在客户端线程读取 TeamData。Worker 收到运行时快照后，
+`TaskKnowledgeStore` 才从 SQLite 取得静态任务定义、依赖、要求和奖励，并用
+`TaskRuntimeSnapshot` 在内存中覆盖当前状态。`SearchKnowledgeTool` 以一次 AI 请求的
+`requestKey` 做读取门控，因此模型在补搜轮次中重复调用任务工具不会再次读取 FTBQ。
+快照同时携带 `timeline`：started/completed 使用 FTBQ 存档中的 epoch millis，
+TeamData 没有历史的进度变化使用 ModPedia 检测时间；工具会按任务 ID 补充静态标题，
+让模型能够列出具体新增条目而不是只比较状态总数。
+实时快照不会写入或从 `knowledge.db` 读取，查询结束后随请求对象释放；FTBQ 全量静态
+定义仍在主界面前统一预填充。
 
 `TaskWikiSyncService` 先使用内置 Wiki Markdown，再在后台尝试更新配置的远程来源，写入
 `sources/ftbquests-wiki/` 的 `wiki_markdown` 文档。网络失败时沿用本地副本，不阻塞客户端。
@@ -182,7 +191,7 @@ safeArea = viewport - 12px;
 
 ### 玻璃表面与透明度回退
 
-助手当前不再调用背景模糊入口，也不在 Screen 底层复制或重绘主帧缓冲；游戏画面直接作为窗口后的背景。`FloatingAssistantWindow` 只绘制一层可调色的蓝光半透明表面，再绘制标题、消息、输入框和边框，避免文字被底层效果污染。ModernUI 仍作为客户端侧 UI 兼容依赖保留，但不参与助手的背景模糊；高对比度或减少透明度模式使用不透明调色板。客户端源码不把第三方类加载到公共或 Dedicated Server 路径。
+助手不在 Screen 底层复制或重绘主帧缓冲；游戏画面直接作为窗口后的背景。`AssistantScreen` 和 `FloatingAssistantWindow` 基于 NeoForge 原生 `GuiGraphics`、`Screen` 和控件 API 自绘一层可调色的蓝光半透明表面，再绘制标题、消息、输入框和边框，避免文字被底层效果污染。高对比度或减少透明度模式使用不透明调色板。客户端 UI 不依赖外部 UI 模组，客户端类也不会进入公共或 Dedicated Server 路径。
 
 玻璃配置文件示例：
 
@@ -196,7 +205,7 @@ safeArea = viewport - 12px;
 
 ## 3. 首次启动策略
 
-首次启动读取当前实例中已安装模组的本地资源，扫描 `custom/` 和 `sources/` 导入 SQLite，保证手册正文与玩家实际使用的模组版本一致。只有任务 Wiki 的可选同步任务会在后台尝试访问配置的远程地址；网络失败继续使用内置或上次缓存，不阻塞基础知识库。
+首次启动在客户端加载屏幕期间读取当前实例中已安装模组的本地资源，扫描 `custom/` 和 `sources/` 导入 SQLite，保证手册正文与玩家实际使用的模组版本一致。随后在同一加载阶段，`ItemCatalogSyncService` 读取当前语言的全部物品 Tooltip 并写入 `item_catalog`；这一步不再等到进入世界后通过 Tick 继续扫描。只有任务 Wiki 的远程更新会在进入主菜单后后台尝试，网络失败继续使用内置或上次缓存，不阻塞基础知识库。
 
 ## 4. 更新策略
 
@@ -213,9 +222,9 @@ safeArea = viewport - 12px;
 - 当前扫描中不存在的旧来源：删除对应生成文件。
 - `manifest.json`、`keyword-index.json` 和扫描报告每次都会重新生成。
 - `knowledge.db` 作为派生搜索库旁路构建：先写临时数据库，事务成功后原子替换；同步失败时继续使用上一份数据库。
-- 数据库损坏或 Schema 不匹配时不复用旧数据库，删除 `knowledge.db`、WAL 和 SHM 后从当前模组手册、`custom/`、本地 Wiki 和内置任务 Wiki 全量重建；原始 JAR、Markdown 和 Wiki 源文件不删除。
+- 数据库损坏或 Schema 不匹配时不复用旧数据库；从当前模组手册、`custom/`、本地 Wiki 和内置任务 Wiki 写入旁路数据库，成功校验后再原子替换正式库。替换失败时恢复上一份数据库，WAL/SHM 与临时文件一并清理；原始 JAR、Markdown 和 Wiki 源文件不删除。
 
-按键 `F9` 触发强制完整转换和索引重建；后台任务正在运行时，重复请求会被忽略。
+按键 `F9` 触发强制完整转换和索引重建；后台任务正在运行时，重复请求合并为一次 pending 构建，不丢失 Wiki 更新，也不并发改写 SQLite。
 
 ## 5. 数据流约束
 
@@ -235,8 +244,7 @@ io.ctyx.modpedia.knowledge/
 ├── JsonGuideDocumentConverter
 ├── AppGuideDocumentConverter
 ├── KeywordExtractor
-├── KnowledgeCompiler
-└── KnowledgeUpdateService
+└── KnowledgeCompiler
 ```
 
 ```text
@@ -271,9 +279,10 @@ io.ctyx.modpedia.ai/
 └── PersistentChatMemoryStore
 ```
 
-`KnowledgeUpdateService` 只在客户端初始化后启动后台任务；公共 Mod 入口不直接引用客户端类。
-
-`KnowledgeUpdateService.status()` 以原子引用发布 `KnowledgeStatus`，浮窗顶部读取来源数、文档数、更新时间及更新/错误状态，不等待后台构建线程。
+`WorkerKnowledgeService` 只在 Worker JVM 中调用扫描器和编译器；客户端通过
+`ModPediaBridge.rebuildKnowledge*()` 提交构建请求，并通过 `knowledgeStatus()` 读取
+Worker 发布的来源数、文档数、更新时间及更新/错误状态。游戏 JVM 不直接创建编译器、
+SQLite 或 FTS 连接。
 
 ### 搜索结果结构
 
@@ -307,10 +316,29 @@ documents(document_id, language, source_key, fingerprint, priority, metadata, ma
 segments(document_id, language, segment_index, heading_path, title, keywords, markdown, normalized_text)
 segments_fts(FTS5 external-content -> segments: title, keywords, heading_path, normalized_text)
 knowledge_sources(source_id, collection_id, content_kind, source_type, origin_type, version, fingerprint)
-task_snapshots / task_quests / task_dependencies / task_tasks / task_rewards / task_progress
+item_catalog(item_id, language, display_name, display_name_normalized, description_markdown, source_mod, fingerprint)
+task_snapshots / task_quests / task_dependencies / task_tasks / task_rewards
 metadata(schema_version, updated_at, document_count)
 ```
 
-当前派生库为 Schema v5，不迁移旧派生结构；检测到版本或 FTS 形态不匹配时直接从事实源重建。`documents.markdown` 和 `segments.markdown` 仍然保存完整 Markdown，FTS5 使用 `content='segments'` 的 external-content 形态，不再创建 `segments_fts_content` 正文副本；`segments.normalized_text` 同时供 Java 二次评分和 FTS 中文双字词召回使用。`knowledge.db` 不替代 `custom/*.md` 或 JAR 资源；它可以随时从事实源重建。`Reader` 复用只读连接，FTS 候选先批量加载文档元数据，避免大规模语料下的连接初始化和 N+1 查询。
+当前派生库为 Schema v7，早期测试阶段不做旧库迁移；检测到版本、FTS 形态或 `item_catalog` 缺失时，把新结构写入 staged 数据库，校验成功后再替换正式库，失败时恢复旧库。`documents.markdown` 和 `segments.markdown` 仍然保存完整 Markdown，FTS5 使用 `content='segments'` 的 external-content 形态，不再创建 `segments_fts_content` 正文副本；`segments.normalized_text` 同时供 Java 二次评分和 FTS 中文双字词召回使用。`item_catalog` 保存完整 Tooltip Markdown，但不参与手册 FTS。物品目录同步不复制整个 `knowledge.db`，而是在 Worker 内使用单事务、预编译 UPSERT 和批量绑定，SQLite 回滚保证失败时保留旧目录。`task_*` 只保存静态任务定义，实时玩家进度只存在于 `TaskRuntimeSnapshot` 内存对象。`knowledge.db` 不替代 `custom/*.md` 或 JAR 资源；它可以随时从事实源重建。`Reader` 复用只读连接，FTS 候选先批量加载文档元数据，避免大规模语料下的连接初始化和 N+1 查询。
 
 写入完成后执行 `PRAGMA optimize`；全量构建或达到自适应大批量阈值时额外执行 FTS5 `optimize`/merge，小规模增量更新不重复合并整个 FTS B-tree。查询按 FTS5 隐藏 `rank` 列排序，避免 `bm25(...)` 触发额外的排序临时表。性能基准由 `knowledgeBenchmark` 记录冷/热查询 p50/p95/p99、`dbstat` 对象大小和 `EXPLAIN QUERY PLAN`，不把操作系统页缓存清空称为冷查询。
+
+### Worker 请求与线程契约
+
+```text
+IPC reader
+  ├─ raw listener：只处理明确声明 reader 线程的协议/诊断逻辑
+  ├─ client listener：Bridge 统一切回 Minecraft 主线程
+  └─ submit runtime context：不在 reader 上等待
+
+Worker
+  ├─ bounded AI executor：默认 2 并发 + 4 排队，按 conversation_id 串行
+  ├─ single knowledge executor：扫描、Wiki、物品目录和 SQLite 写入隔离
+  └─ read-only retrieval connections
+```
+
+运行时 FTBQ 进度只在需要回答任务问题时读取。客户端侧读取协调器限制为一个活动
+上下文读取，相同聊天请求合并，短时快照复用；超时、取消、世界切换和退出都会清理
+等待者。任务静态定义继续进入 `knowledge.db`，玩家实时进度不写入数据库。

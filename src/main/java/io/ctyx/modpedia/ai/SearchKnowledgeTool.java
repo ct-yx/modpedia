@@ -10,6 +10,8 @@ import io.ctyx.modpedia.client.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
 import io.ctyx.modpedia.search.KnowledgeScope;
+import io.ctyx.modpedia.search.ItemCatalogEntry;
+import io.ctyx.modpedia.search.ItemQueryParser;
 import io.ctyx.modpedia.search.SearchQuery;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
@@ -20,7 +22,13 @@ import io.ctyx.modpedia.task.TaskQuery;
 import io.ctyx.modpedia.task.TaskQueryMode;
 import io.ctyx.modpedia.task.TaskResponse;
 import io.ctyx.modpedia.task.TaskResult;
+import io.ctyx.modpedia.task.TaskRuntimeReadResult;
+import io.ctyx.modpedia.task.TaskRuntimeReader;
+import io.ctyx.modpedia.task.TaskRuntimeSnapshot;
+import io.ctyx.modpedia.task.TaskSearchSummary;
 import io.ctyx.modpedia.task.TaskStatus;
+import io.ctyx.modpedia.task.TaskTimelineEntry;
+import io.ctyx.modpedia.task.TaskTimelineEventType;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -81,8 +89,17 @@ public final class SearchKnowledgeTool {
     private final int maxContextChars;
     private final int maxRounds;
     private final TaskKnowledgeStore taskStore;
+    private final TaskRuntimeReader taskRuntimeReader;
+    private final String runtimeRequestKey;
     private final AtomicInteger roundCounter;
     private final Consumer<SearchTrace> traceSink;
+    private boolean taskRuntimeRead;
+    private TaskRuntimeSnapshot runtimeSnapshot;
+    private int runtimeStateCount;
+    private int progressItemCount;
+    private int timelineEntryCount;
+    private boolean runtimeProgressAvailable;
+    private volatile TaskSearchSummary taskSummary = TaskSearchSummary.empty();
     private final Set<String> seenQueries = new HashSet<>();
     // 同一文档在不同补搜轮次可能返回不同的最佳段落；只按段落身份去重，
     // 否则第一轮命中概览页后，后续步骤/配方查询永远拿不到同一手册的细节页。
@@ -97,7 +114,8 @@ public final class SearchKnowledgeTool {
             Consumer<SearchTrace> traceSink
     ) {
         this(retrievalService, defaultLanguage, maxResults, maxContextChars, round,
-                Integer.MAX_VALUE, new TaskKnowledgeStore(retrievalService.knowledgeRoot()), traceSink);
+                Integer.MAX_VALUE, new TaskKnowledgeStore(retrievalService.knowledgeRoot()),
+                null, "", traceSink);
     }
 
     /** 创建带硬搜索轮数上限的工具；旧构造器保留给纯搜索测试和兼容调用方。 */
@@ -111,7 +129,7 @@ public final class SearchKnowledgeTool {
             Consumer<SearchTrace> traceSink
     ) {
         this(retrievalService, defaultLanguage, maxResults, maxContextChars, round, maxRounds,
-                new TaskKnowledgeStore(retrievalService.knowledgeRoot()), traceSink);
+                new TaskKnowledgeStore(retrievalService.knowledgeRoot()), null, "", traceSink);
     }
 
     /** 允许测试或客户端注入任务存储；文本手册和任务运行表仍指向同一个 knowledge.db。 */
@@ -125,6 +143,23 @@ public final class SearchKnowledgeTool {
             TaskKnowledgeStore taskStore,
             Consumer<SearchTrace> traceSink
     ) {
+        this(retrievalService, defaultLanguage, maxResults, maxContextChars, round, maxRounds,
+                taskStore, null, "", traceSink);
+    }
+
+    /** 客户端真实 AI 会话使用的构造器；任务运行时读取按 requestKey 只执行一次。 */
+    public SearchKnowledgeTool(
+            RetrievalService retrievalService,
+            SearchLanguage defaultLanguage,
+            int maxResults,
+            int maxContextChars,
+            int round,
+            int maxRounds,
+            TaskKnowledgeStore taskStore,
+            TaskRuntimeReader taskRuntimeReader,
+            String runtimeRequestKey,
+            Consumer<SearchTrace> traceSink
+    ) {
         this.retrievalService = retrievalService;
         this.defaultLanguage = defaultLanguage == null || defaultLanguage == SearchLanguage.AUTO
                 ? SearchLanguage.ZH_CN
@@ -136,7 +171,16 @@ public final class SearchKnowledgeTool {
         this.taskStore = taskStore == null
                 ? new TaskKnowledgeStore(retrievalService.knowledgeRoot())
                 : taskStore;
+        this.taskRuntimeReader = taskRuntimeReader;
+        this.runtimeRequestKey = runtimeRequestKey == null || runtimeRequestKey.isBlank()
+                ? "tool-" + System.identityHashCode(this)
+                : runtimeRequestKey.strip();
         this.traceSink = traceSink == null ? ignored -> { } : traceSink;
+    }
+
+    /** 返回本次 AI 请求最近一次任务查询的结构化摘要，供 Worker/UI 展示。 */
+    public TaskSearchSummary taskSummary() {
+        return taskSummary;
     }
 
     @Tool(
@@ -189,14 +233,27 @@ public final class SearchKnowledgeTool {
             return finish(output, currentRound, SearchStatus.EMPTY_QUERY, List.of(), false, "查询为空", normalizedQuery, normalizedLanguage, normalizedFocus);
         }
 
+        ItemQueryParser.Parsed itemQuery = ItemQueryParser.parse(normalizedQuery);
+        List<ItemCatalogEntry> itemContext = retrievalService.lookupItemContext(
+                normalizedQuery,
+                requestedLanguage
+        );
+        String knowledgeQuery = itemQuery.searchableText();
+        if (!itemContext.isEmpty()) {
+            knowledgeQuery = knowledgeQuery + " " + itemContext.stream()
+                    .map(entry -> entry.itemId() + " " + entry.displayName())
+                    .collect(java.util.stream.Collectors.joining(" "));
+        }
+
         String queryKey = normalizedLanguage + "|" + normalizedFocus + "|" + queryKey(normalizedQuery);
         if (!seenQueries.add(queryKey)) {
             return finish(output, currentRound, SearchStatus.NO_MATCH, List.of(), false,
-                    "重复查询，请改写关键词或针对缺失的资料类型继续搜索", normalizedQuery, normalizedLanguage, normalizedFocus);
+                    "重复查询，请改写关键词或针对缺失的资料类型继续搜索", normalizedQuery, normalizedLanguage,
+                    normalizedFocus, itemContext);
         }
 
         List<SearchResponse> responses = searchLanguages(
-                normalizedQuery,
+                knowledgeQuery,
                 requestedLanguage,
                 Math.max(32, Math.min(256, maxResults * 8 + excluded.size() * 4)),
                 KnowledgeScope.MOD_MANUAL
@@ -236,7 +293,7 @@ public final class SearchKnowledgeTool {
         boolean hasMore = fresh.size() > selected.size();
         return finish(output, currentRound, selected.isEmpty() ? combinedStatus(responses) : SearchStatus.READY, selected, hasMore,
                 fresh.isEmpty() ? "当前查询没有新增来源，请改写查询或缩小到具体名称、机器或步骤" : "",
-                normalizedQuery, normalizedLanguage, normalizedFocus);
+                normalizedQuery, normalizedLanguage, normalizedFocus, itemContext);
     }
 
     @Tool(
@@ -354,13 +411,40 @@ public final class SearchKnowledgeTool {
                     "已达到搜索预算，请根据已返回任务资料整理回答，并列出仍缺失的任务进度资料。");
         }
 
-        TaskResponse response = taskStore.query(new TaskQuery(
+        TaskQuery taskQuery = new TaskQuery(
                 requestedMode,
                 normalizedQuery,
                 normalizedQuestId,
                 requestedLimit,
                 collectionIds
-        ));
+        );
+        TaskRuntimeReadResult runtimeRead = null;
+        if (!taskRuntimeRead && requestedMode != TaskQueryMode.WIKI) {
+            // 一个 AI 请求可能有多轮工具调用；只要模型已经选择了
+            // search_tasks，就先读取一次当前玩家进度，再允许任何静态任务查询。
+            // 即使 query/quest_id 为空，也保持 runtime → database 的顺序，避免
+            // 某个任务模式分支以后绕过运行时状态直接读库。WIKI 是静态说明，
+            // 不属于玩家进度查询，因此交给 search_wiki，不读取 TeamData。
+            taskRuntimeRead = true;
+            runtimeRead = taskRuntimeReader == null
+                    ? TaskRuntimeReadResult.unavailable("当前没有可用的任务运行时读取器")
+                    : taskRuntimeReader.readForQuery(taskQuery, runtimeRequestKey);
+            runtimeSnapshot = runtimeRead.runtimeSnapshot();
+            runtimeStateCount = runtimeRead.questCount();
+            progressItemCount = runtimeSnapshot == null ? 0 : runtimeSnapshot.progressItemCount();
+            timelineEntryCount = runtimeSnapshot == null ? 0 : runtimeSnapshot.timelineEntryCount();
+            runtimeProgressAvailable = runtimeRead.available();
+            output.addProperty("runtime_progress_read", runtimeRead.read());
+            output.addProperty("runtime_progress_available", runtimeRead.available());
+            output.addProperty("runtime_progress_quest_count", runtimeRead.questCount());
+        }
+        TaskResponse response = taskStore.query(taskQuery, runtimeSnapshot);
+        String taskHint = response.error();
+        if (runtimeRead != null && !runtimeRead.message().isBlank()) {
+            taskHint = taskHint.isBlank()
+                    ? runtimeRead.message()
+                    : taskHint + "；" + runtimeRead.message();
+        }
         return finishTask(
                 output,
                 currentRound,
@@ -369,7 +453,7 @@ public final class SearchKnowledgeTool {
                 normalizedQuestId,
                 response,
                 requestedLimit,
-                response.error()
+                taskHint
         );
     }
 
@@ -385,6 +469,53 @@ public final class SearchKnowledgeTool {
     ) {
         JsonArray quests = new JsonArray();
         Map<String, SourceReference> sources = new LinkedHashMap<>();
+        TaskQuery actualQuery = response.query();
+        List<TaskTimelineEntry> timelineEntries = runtimeSnapshot == null
+                ? List.of()
+                : runtimeSnapshot.timelineFor(actualQuery).stream()
+                .sorted(Comparator
+                        .comparingLong(TaskTimelineEntry::timestampEpochMillis)
+                        .reversed()
+                        .thenComparing(entry -> entry.eventType().name())
+                        .thenComparing(TaskTimelineEntry::questId))
+                .limit(64)
+                .toList();
+        Map<String, List<String>> timelineTitles = taskStore.questTitleCandidates(
+                timelineEntries.stream().map(TaskTimelineEntry::questId).toList(),
+                actualQuery.collectionIds()
+        );
+        JsonArray timeline = new JsonArray();
+        for (TaskTimelineEntry entry : timelineEntries) {
+            JsonObject item = new JsonObject();
+            item.addProperty("entry_id", entry.questId());
+            if (entry.eventType() == TaskTimelineEventType.PROGRESS_CHANGED) {
+                item.addProperty("task_id", entry.questId());
+            } else {
+                item.addProperty("quest_id", entry.questId());
+            }
+            item.addProperty("event_type", entry.eventType().name());
+            item.addProperty("timestamp_epoch_ms", entry.timestampEpochMillis());
+            item.addProperty("timestamp_known", entry.hasKnownTimestamp());
+            if (entry.hasKnownTimestamp()) {
+                item.addProperty("timestamp_iso", java.time.Instant.ofEpochMilli(
+                        entry.timestampEpochMillis()).toString());
+            }
+            List<String> titles = timelineTitles.getOrDefault(entry.questId(), List.of());
+            if (titles.size() == 1) {
+                item.addProperty("title", titles.getFirst());
+            } else if (!titles.isEmpty()) {
+                item.add("title_candidates", JSON.toJsonTree(titles));
+            }
+            if (entry.previousProgress() != null) {
+                item.addProperty("previous_progress", entry.previousProgress());
+            }
+            if (entry.currentProgress() != null) {
+                item.addProperty("current_progress", entry.currentProgress());
+            }
+            timeline.add(item);
+        }
+        output.addProperty("timeline_entry_count", timeline.size());
+        output.add("timeline", timeline);
         for (TaskResult result : response.results()) {
             JsonObject quest = new JsonObject();
             quest.addProperty("quest_id", result.questId());
@@ -439,10 +570,25 @@ public final class SearchKnowledgeTool {
         }
         output.addProperty("status", response.status().name());
         output.addProperty("returned_count", quests.size());
-        output.addProperty("has_more", quests.size() >= limit && response.status() == TaskStatus.READY);
+        output.addProperty("has_more", response.hasMore());
         output.addProperty("new_source_count", sources.size());
         output.addProperty("data_definition", "task_static_definition");
-        output.addProperty("data_progress", quests.isEmpty() ? "unavailable" : "task_runtime_progress");
+        boolean hasRuntimeProgress = response.results().stream().anyMatch(TaskResult::progressAvailable);
+        output.addProperty("data_progress", hasRuntimeProgress ? "task_runtime_progress" : "unavailable");
+        TaskSearchSummary summary = TaskSearchSummary.from(
+                response.taskDefinitionCount(),
+                runtimeStateCount,
+                progressItemCount,
+                runtimeProgressAvailable,
+                timeline.size()
+        );
+        taskSummary = summary;
+        output.addProperty("task_definition_count", summary.taskDefinitionCount());
+        output.addProperty("runtime_state_count", summary.runtimeStateCount());
+        output.addProperty("progress_item_count", summary.progressItemCount());
+        output.addProperty("timeline_entry_count", summary.timelineEntryCount());
+        output.addProperty("runtime_progress_available", summary.runtimeProgressAvailable());
+        output.add("task_summary", taskSummaryJson(summary));
         output.add("results", quests);
         if (!hint.isBlank()) {
             output.addProperty("hint", hint);
@@ -453,11 +599,22 @@ public final class SearchKnowledgeTool {
                 mode.name().toLowerCase(Locale.ROOT),
                 round,
                 response.status().name(),
-                quests.size() >= limit && response.status() == TaskStatus.READY,
+                response.hasMore(),
                 List.copyOf(sources.values()),
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                "search_tasks"
         ));
         return JSON.toJson(output);
+    }
+
+    private static JsonObject taskSummaryJson(TaskSearchSummary summary) {
+        JsonObject value = new JsonObject();
+        value.addProperty("task_definition_count", summary.taskDefinitionCount());
+        value.addProperty("runtime_state_count", summary.runtimeStateCount());
+        value.addProperty("progress_item_count", summary.progressItemCount());
+        value.addProperty("timeline_entry_count", summary.timelineEntryCount());
+        value.addProperty("runtime_progress_available", summary.runtimeProgressAvailable());
+        return value;
     }
 
     private static boolean isRandomReward(TaskResult.TaskRewardResult reward) {
@@ -754,9 +911,55 @@ public final class SearchKnowledgeTool {
             String language,
             String focus
     ) {
+        return finish(
+                output,
+                round,
+                status,
+                results,
+                hasMore,
+                hint,
+                query,
+                language,
+                focus,
+                List.of()
+        );
+    }
+
+    private String finish(
+            JsonObject output,
+            int round,
+            SearchStatus status,
+            List<SearchResult> results,
+            boolean hasMore,
+            String hint,
+            String query,
+            String language,
+            String focus,
+            List<ItemCatalogEntry> itemContext
+    ) {
         JsonArray documents = new JsonArray();
         Map<String, SourceReference> sourcesByDocument = new LinkedHashMap<>();
+        List<ItemCatalogEntry> actualItemContext = itemContext == null ? List.of() : itemContext;
+        JsonArray itemContexts = new JsonArray();
         int usedChars = 0;
+        Map<String, Integer> itemNameCounts = new LinkedHashMap<>();
+        for (ItemCatalogEntry entry : actualItemContext) {
+            String name = normalize(entry.displayName());
+            if (!name.isBlank()) {
+                itemNameCounts.merge(name, 1, Integer::sum);
+            }
+        }
+        for (ItemCatalogEntry entry : actualItemContext) {
+            JsonObject item = new JsonObject();
+            item.addProperty("item_id", entry.itemId());
+            item.addProperty("language", entry.language());
+            item.addProperty("display_name", entry.displayName());
+            item.addProperty("description_markdown", entry.descriptionMarkdown());
+            item.addProperty("source_mod", entry.sourceMod());
+            item.addProperty("ambiguous", itemNameCounts.getOrDefault(normalize(entry.displayName()), 0) > 1);
+            itemContexts.add(item);
+            usedChars += entry.displayName().length() + entry.descriptionMarkdown().length();
+        }
         for (SearchResult result : results) {
             int nextChars = result.segmentMarkdown().length();
             if (usedChars > 0 && usedChars + nextChars > maxContextChars) {
@@ -794,10 +997,15 @@ public final class SearchKnowledgeTool {
         output.addProperty("new_source_count", sourcesByDocument.size());
         output.addProperty("has_more", hasMore);
         output.addProperty("context_chars", usedChars);
+        output.addProperty("item_context_count", itemContexts.size());
+        output.add("item_context", itemContexts);
         output.add("results", documents);
         if (!hint.isBlank()) {
             output.addProperty("hint", hint);
         }
+        String traceTool = "wiki".equals(output.has("scope") ? output.get("scope").getAsString() : "")
+                ? "search_wiki"
+                : "search_knowledge";
         traceSink.accept(new SearchTrace(
                 query,
                 language,
@@ -806,7 +1014,8 @@ public final class SearchKnowledgeTool {
                 status.name(),
                 hasMore,
                 List.copyOf(sourcesByDocument.values()),
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                traceTool
         ));
         return JSON.toJson(output);
     }

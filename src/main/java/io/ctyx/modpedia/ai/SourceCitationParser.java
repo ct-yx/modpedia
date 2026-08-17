@@ -115,7 +115,7 @@ public final class SourceCitationParser {
         return result.replaceAll("\\n{3,}", "\\n\\n").strip();
     }
 
-    static List<SourceReference> selectSources(
+    public static List<SourceReference> selectSources(
             List<SearchTrace> traces,
             String answer,
             int limit

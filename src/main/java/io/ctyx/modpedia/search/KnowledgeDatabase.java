@@ -40,9 +40,9 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class KnowledgeDatabase {
     /**
      * 当前派生库版本。FTS5 改为 external-content 后不做旧库迁移，旧派生文件由
-     * resetIfIncompatible() 删除并从事实源重建。
+     * staged 重建成功后替换旧派生库；不做旧结构迁移。
      */
-    public static final int SCHEMA_VERSION = 5;
+    public static final int SCHEMA_VERSION = 7;
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final int CUSTOM_PRIORITY = 100;
     private static final int FTS_FULL_OPTIMIZE_MIN_CHANGED_ROWS = 64;
@@ -50,6 +50,8 @@ public final class KnowledgeDatabase {
     private static final String FTS_STORAGE_PROPERTY = "modpedia.benchmark.fts.storage";
     private static final String FTS_OPTIMIZE_PROPERTY = "modpedia.benchmark.fts.optimize";
     private static final ReentrantLock WRITE_LOCK = new ReentrantLock();
+    /** SQLite 在 DELETE journal、WAL 和内存映射模式下都可能留下的旁路文件。 */
+    private static final List<String> SQLITE_SIDECARS = List.of("-wal", "-shm", "-journal");
 
     private KnowledgeDatabase() {
     }
@@ -91,6 +93,16 @@ public final class KnowledgeDatabase {
             int reusedCount,
             int removedCount,
             int documentCount
+    ) {
+    }
+
+    /** 一次当前语言物品目录同步的结果。 */
+    public record ItemCatalogSyncResult(
+            int updatedCount,
+            int reusedCount,
+            int removedCount,
+            int itemCount,
+            String language
     ) {
     }
 
@@ -193,24 +205,28 @@ public final class KnowledgeDatabase {
         try {
             Files.createDirectories(knowledgeRoot);
             Path database = path(knowledgeRoot);
-            resetIfIncompatible(database);
+            recoverPreviousDatabase(database);
             Path staged = Files.createTempFile(knowledgeRoot, "knowledge-", ".db.tmp");
-            Files.deleteIfExists(staged);
-
-            if (isUsable(database)) {
-                Files.copy(database, staged, StandardCopyOption.REPLACE_EXISTING);
-            }
-
-            SyncResult result;
             try {
-                result = syncStaged(staged, inputs, forceRebuild);
-                replaceDatabase(staged, database);
-                return result;
-            } catch (SQLException | RuntimeException exception) {
                 Files.deleteIfExists(staged);
-                throw new IOException("SQLite 知识库同步失败", exception);
+                if (isUsable(database)) {
+                    // 复制完整 SQLite bundle，而不是只复制主文件。即使将来切换到
+                    // WAL，未 checkpoint 的内容也必须随 staged 一起进入下一次构建。
+                    copyDatabaseBundle(database, staged);
+                }
+
+                try {
+                    SyncResult result = syncStaged(staged, inputs, forceRebuild);
+                    replaceDatabase(staged, database);
+                    return result;
+                } catch (SQLException | RuntimeException exception) {
+                    throw new IOException("SQLite 知识库同步失败", exception);
+                }
             } finally {
-                Files.deleteIfExists(staged);
+                // staged 主库在 replaceDatabase() 成功后已经移动到正式路径；
+                // 这里的清理只是善后，不能因为文件系统拒绝删除孤儿临时文件
+                // 而把已经安装成功的数据库报告为同步失败。
+                cleanupStagedBundleQuietly(staged);
             }
         } finally {
             WRITE_LOCK.unlock();
@@ -234,7 +250,7 @@ public final class KnowledgeDatabase {
                     && hasTable(connection, "task_dependencies")
                     && hasTable(connection, "task_tasks")
                     && hasTable(connection, "task_rewards")
-                    && hasTable(connection, "task_progress")
+                    && hasTable(connection, "item_catalog")
                     && hasTable(connection, "segments_fts")
                     && hasColumn(connection, "documents", "content_kind")
                     && hasColumn(connection, "segments", "title")
@@ -263,7 +279,7 @@ public final class KnowledgeDatabase {
         try {
             Files.createDirectories(knowledgeRoot);
             Path database = path(knowledgeRoot);
-            resetIfIncompatible(database);
+            recoverPreviousDatabase(database);
             if (isUsable(database)) {
                 return;
             }
@@ -277,7 +293,7 @@ public final class KnowledgeDatabase {
             } catch (SQLException | RuntimeException exception) {
                 throw new IOException("初始化 SQLite 知识库失败", exception);
             } finally {
-                Files.deleteIfExists(staged);
+                cleanupStagedBundleQuietly(staged);
             }
         } finally {
             WRITE_LOCK.unlock();
@@ -307,6 +323,50 @@ public final class KnowledgeDatabase {
             }
         } catch (SQLException exception) {
             throw new IOException("打开 SQLite 写连接失败", exception);
+        } finally {
+            WRITE_LOCK.unlock();
+        }
+    }
+
+    /**
+     * 事务同步当前语言的物品目录。
+     *
+     * <p>物品 Tooltip 由客户端扫描器生成，SQLite 只保存扫描结果。物品目录更新
+     * 直接在正式库内执行一个短事务，不复制或替换整个 {@code knowledge.db}；
+     * SQLite 的回滚日志保证失败时继续使用上一份完整目录。手册重建、任务同步
+     * 和物品目录更新共用同一把写锁，不会看到半成品。</p>
+     */
+    public static ItemCatalogSyncResult syncItemCatalog(
+            Path knowledgeRoot,
+            String language,
+            Collection<ItemCatalogEntry> entries
+    ) throws IOException {
+        String selectedLanguage = normalizeLanguage(language);
+        List<ItemCatalogEntry> normalizedEntries = normalizeItemEntries(selectedLanguage, entries);
+        WRITE_LOCK.lock();
+        try {
+            ensureDatabase(knowledgeRoot);
+            Path database = path(knowledgeRoot);
+            // 重复启动是大型整合包的常见路径：先只读比较当前语言的指纹和
+            // 语言集合。完全一致时直接返回，避免打开写连接和产生 SQLite 日志。
+            if (itemCatalogMatches(database, selectedLanguage, normalizedEntries)) {
+                return new ItemCatalogSyncResult(
+                        0,
+                        normalizedEntries.size(),
+                        0,
+                        normalizedEntries.size(),
+                        selectedLanguage
+                );
+            }
+            try (Connection connection = open(database, false)) {
+                return syncItemCatalogTransaction(
+                        connection,
+                        selectedLanguage,
+                        normalizedEntries
+                );
+            } catch (SQLException | RuntimeException exception) {
+                throw new IOException("SQLite 物品目录同步失败", exception);
+            }
         } finally {
             WRITE_LOCK.unlock();
         }
@@ -377,6 +437,32 @@ public final class KnowledgeDatabase {
             }
         }
 
+        /** 按物品 ID 读取当前语言目录；语言缺失时回退 neutral 或现有语言。 */
+        public synchronized List<ItemCatalogEntry> lookupItems(
+                Collection<String> itemIds,
+                SearchLanguage language
+        ) {
+            ensureOpen();
+            try {
+                return KnowledgeDatabase.lookupItems(connection, itemIds, language);
+            } catch (SQLException | RuntimeException exception) {
+                return List.of();
+            }
+        }
+
+        /** 按当前语言精确查找显示名称；同名物品全部返回，交由上层提示用户确认。 */
+        public synchronized List<ItemCatalogEntry> lookupItemsByDisplayName(
+                Collection<String> displayNames,
+                SearchLanguage language
+        ) {
+            ensureOpen();
+            try {
+                return KnowledgeDatabase.lookupItemsByDisplayName(connection, displayNames, language);
+            } catch (SQLException | RuntimeException exception) {
+                return List.of();
+            }
+        }
+
         @Override
         public synchronized void close() {
             if (closed) {
@@ -411,6 +497,150 @@ public final class KnowledgeDatabase {
         } catch (SQLException | RuntimeException exception) {
             return Optional.empty();
         }
+    }
+
+    private static List<ItemCatalogEntry> lookupItems(
+            Connection connection,
+            Collection<String> itemIds,
+            SearchLanguage language
+    ) throws SQLException {
+        if (itemIds == null || itemIds.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> requested = new LinkedHashSet<>();
+        for (String itemId : itemIds) {
+            if (itemId != null && !itemId.isBlank()) {
+                requested.add(itemId.strip().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        if (requested.isEmpty()) {
+            return List.of();
+        }
+
+        String selectedLanguage = language == null || language == SearchLanguage.AUTO
+                ? "zh_cn"
+                : normalizeLanguage(language.code());
+        String placeholders = String.join(", ", java.util.Collections.nCopies(requested.size(), "?"));
+        String sql = "SELECT item_id, language, display_name, description_markdown, source_mod, fingerprint "
+                + "FROM item_catalog WHERE item_id IN (" + placeholders + ")";
+        Map<String, ItemCatalogEntry> best = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int parameter = 1;
+            for (String itemId : requested) {
+                statement.setString(parameter++, itemId);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    ItemCatalogEntry candidate = new ItemCatalogEntry(
+                            rows.getString("item_id"),
+                            rows.getString("language"),
+                            rows.getString("display_name"),
+                            rows.getString("description_markdown"),
+                            rows.getString("source_mod"),
+                            rows.getString("fingerprint")
+                    );
+                    if (!candidate.language().equals(selectedLanguage)
+                            && !candidate.language().equals("neutral")) {
+                        continue;
+                    }
+                    ItemCatalogEntry previous = best.get(candidate.itemId());
+                    if (previous == null || itemLanguageRank(candidate.language(), selectedLanguage)
+                            < itemLanguageRank(previous.language(), selectedLanguage)) {
+                        best.put(candidate.itemId(), candidate);
+                    }
+                }
+            }
+        }
+
+        List<ItemCatalogEntry> result = new ArrayList<>();
+        for (String itemId : requested) {
+            ItemCatalogEntry entry = best.get(itemId);
+            if (entry != null) {
+                result.add(entry);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<ItemCatalogEntry> lookupItemsByDisplayName(
+            Connection connection,
+            Collection<String> displayNames,
+            SearchLanguage language
+    ) throws SQLException {
+        if (displayNames == null || displayNames.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> requested = new LinkedHashSet<>();
+        for (String displayName : displayNames) {
+            String normalized = SearchTextNormalizer.normalizeField(displayName);
+            if (!normalized.isBlank()) {
+                requested.add(normalized);
+            }
+        }
+        if (requested.isEmpty()) {
+            return List.of();
+        }
+
+        String selectedLanguage = language == null || language == SearchLanguage.AUTO
+                ? "zh_cn"
+                : normalizeLanguage(language.code());
+        String placeholders = String.join(", ", java.util.Collections.nCopies(requested.size(), "?"));
+        String sql = "SELECT item_id, language, display_name, description_markdown, source_mod, fingerprint "
+                + "FROM item_catalog WHERE display_name_normalized IN (" + placeholders + ")"
+                + " AND language IN (?, 'neutral')";
+        Map<String, Map<String, ItemCatalogEntry>> byName = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int parameter = 1;
+            for (String name : requested) {
+                statement.setString(parameter++, name);
+            }
+            statement.setString(parameter, selectedLanguage);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    ItemCatalogEntry candidate = new ItemCatalogEntry(
+                            rows.getString("item_id"),
+                            rows.getString("language"),
+                            rows.getString("display_name"),
+                            rows.getString("description_markdown"),
+                            rows.getString("source_mod"),
+                            rows.getString("fingerprint")
+                    );
+                    String normalizedName = SearchTextNormalizer.normalizeField(candidate.displayName());
+                    Map<String, ItemCatalogEntry> sameName = byName.computeIfAbsent(
+                            normalizedName,
+                            ignored -> new LinkedHashMap<>()
+                    );
+                    ItemCatalogEntry previous = sameName.get(candidate.itemId());
+                    if (previous == null || itemLanguageRank(candidate.language(), selectedLanguage)
+                            < itemLanguageRank(previous.language(), selectedLanguage)) {
+                        sameName.put(candidate.itemId(), candidate);
+                    }
+                }
+            }
+        }
+
+        List<ItemCatalogEntry> result = new ArrayList<>();
+        for (String name : requested) {
+            Map<String, ItemCatalogEntry> matches = byName.get(name);
+            if (matches == null) {
+                continue;
+            }
+            matches.values().stream()
+                    .sorted(java.util.Comparator.comparing(ItemCatalogEntry::itemId))
+                    .forEach(result::add);
+        }
+        return List.copyOf(result);
+    }
+
+    private static int itemLanguageRank(String language, String selectedLanguage) {
+        String actual = normalizeLanguage(language);
+        if (actual.equals(selectedLanguage)) {
+            return 0;
+        }
+        if (actual.equals("neutral")) {
+            return 1;
+        }
+        return 2;
     }
 
     /** 使用 SQLite FTS5 执行规则搜索，不在查询过程中读取或拆分 Markdown 文件。 */
@@ -1422,12 +1652,170 @@ public final class KnowledgeDatabase {
         }
     }
 
+    private static List<ItemCatalogEntry> normalizeItemEntries(
+            String language,
+            Collection<ItemCatalogEntry> rawEntries
+    ) {
+        Map<String, ItemCatalogEntry> unique = new LinkedHashMap<>();
+        if (rawEntries == null) {
+            return List.of();
+        }
+        for (ItemCatalogEntry raw : rawEntries) {
+            if (raw == null || raw.itemId().isBlank()) {
+                continue;
+            }
+            ItemCatalogEntry normalized = new ItemCatalogEntry(
+                    raw.itemId(),
+                    language,
+                    raw.displayName(),
+                    raw.descriptionMarkdown(),
+                    raw.sourceMod(),
+                    raw.fingerprint()
+            );
+            unique.put(normalized.itemId(), normalized);
+        }
+        return List.copyOf(unique.values());
+    }
+
+    private static ItemCatalogSyncResult syncItemCatalogTransaction(
+            Connection connection,
+            String language,
+            Collection<ItemCatalogEntry> entries
+    ) throws SQLException {
+        connection.setAutoCommit(false);
+        try {
+            Map<String, String> existing = new LinkedHashMap<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT item_id, fingerprint FROM item_catalog WHERE language = ?")) {
+                statement.setString(1, language);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        existing.put(rows.getString("item_id"), rows.getString("fingerprint"));
+                    }
+                }
+            }
+
+            List<ItemCatalogEntry> changedEntries = new ArrayList<>();
+            int reused = 0;
+            for (ItemCatalogEntry entry : entries) {
+                String previousFingerprint = existing.remove(entry.itemId());
+                if (previousFingerprint != null && previousFingerprint.equals(entry.fingerprint())) {
+                    reused++;
+                    continue;
+                }
+                changedEntries.add(entry);
+            }
+
+            // 一次同步只准备一条 UPSERT，并在同一个事务中批量提交。大型
+            // 整合包的物品目录通常有数千到数万条，逐条创建 PreparedStatement
+            // 会把写入时间浪费在 JDBC/SQLite 编译开销上。
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO item_catalog(
+                        item_id, language, display_name, display_name_normalized,
+                        description_markdown, source_mod, fingerprint, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(item_id, language) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        display_name_normalized = excluded.display_name_normalized,
+                        description_markdown = excluded.description_markdown,
+                        source_mod = excluded.source_mod,
+                        fingerprint = excluded.fingerprint,
+                        updated_at = excluded.updated_at
+                    """)) {
+                long updatedAt = System.currentTimeMillis();
+                for (ItemCatalogEntry entry : changedEntries) {
+                    statement.setString(1, entry.itemId());
+                    statement.setString(2, language);
+                    statement.setString(3, entry.displayName());
+                    statement.setString(4, SearchTextNormalizer.normalizeField(entry.displayName()));
+                    statement.setString(5, entry.descriptionMarkdown());
+                    statement.setString(6, entry.sourceMod());
+                    statement.setString(7, entry.fingerprint());
+                    statement.setLong(8, updatedAt);
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
+            int updated = changedEntries.size();
+
+            int removed = 0;
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "DELETE FROM item_catalog WHERE language = ? AND item_id = ?")) {
+                for (String itemId : existing.keySet()) {
+                    statement.setString(1, language);
+                    statement.setString(2, itemId);
+                    statement.addBatch();
+                }
+                for (int count : statement.executeBatch()) {
+                    removed += Math.max(0, count);
+                }
+            }
+
+            // 当前产品策略只保留当前游戏语言；语言切换成功后，下一次同步会替换
+            // 上一语言的目录，避免大型整合包长期积累重复 Tooltip。
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "DELETE FROM item_catalog WHERE language <> ?")) {
+                statement.setString(1, language);
+                statement.executeUpdate();
+            }
+            connection.commit();
+            return new ItemCatalogSyncResult(updated, reused, removed, entries.size(), language);
+        } catch (SQLException | RuntimeException exception) {
+            try {
+                connection.rollback();
+            } catch (SQLException rollbackFailure) {
+                exception.addSuppressed(rollbackFailure);
+            }
+            throw exception;
+        } finally {
+            connection.setAutoCommit(true);
+        }
+    }
+
+    private static boolean itemCatalogMatches(
+            Path database,
+            String language,
+            Collection<ItemCatalogEntry> entries
+    ) {
+        if (!Files.isRegularFile(database)) {
+            return false;
+        }
+        Map<String, String> expected = new LinkedHashMap<>();
+        for (ItemCatalogEntry entry : entries) {
+            expected.put(entry.itemId(), entry.fingerprint());
+        }
+        try (Connection connection = open(database, true);
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT item_id, fingerprint FROM item_catalog WHERE language = ?")) {
+            statement.setString(1, language);
+            Map<String, String> actual = new LinkedHashMap<>();
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    actual.put(rows.getString("item_id"), rows.getString("fingerprint"));
+                }
+            }
+            if (!actual.equals(expected)) {
+                return false;
+            }
+            try (PreparedStatement otherLanguage = connection.prepareStatement(
+                    "SELECT 1 FROM item_catalog WHERE language <> ? LIMIT 1")) {
+                otherLanguage.setString(1, language);
+                try (ResultSet rows = otherLanguage.executeQuery()) {
+                    return !rows.next();
+                }
+            }
+        } catch (SQLException | RuntimeException exception) {
+            return false;
+        }
+    }
+
     private static SyncResult syncStaged(
             Path staged,
             Collection<DocumentInput> rawInputs,
             boolean forceRebuild
     ) throws SQLException {
         Map<DocumentKey, DocumentInput> inputs = effectiveInputs(rawInputs);
+        validateSourceKeys(inputs.values());
         try (Connection connection = open(staged, false)) {
             createSchema(connection);
             connection.setAutoCommit(false);
@@ -1445,6 +1833,12 @@ public final class KnowledgeDatabase {
                         reused++;
                         continue;
                     }
+                    // 语言选择从 neutral 切换到 zh_cn/en_us 时，文档 ID 和
+                    // source_key 仍然相同，但旧行的语言不同，因此不能只按
+                    // (document_id, language) 删除；先清理同 source_key 的旧行。
+                    existing.entrySet().removeIf(value ->
+                            value.getValue().sourceKey().equals(input.sourceKey()));
+                    deleteDocumentsBySourceKey(connection, input.sourceKey());
                     deleteDocument(connection, entry.getKey());
                     insertDocument(connection, input);
                     updated++;
@@ -1473,6 +1867,15 @@ public final class KnowledgeDatabase {
                 throw exception;
             } finally {
                 connection.setAutoCommit(true);
+            }
+        }
+    }
+
+    private static void validateSourceKeys(Collection<DocumentInput> inputs) throws SQLException {
+        Set<String> sourceKeys = new LinkedHashSet<>();
+        for (DocumentInput input : inputs) {
+            if (!sourceKeys.add(input.sourceKey())) {
+                throw new SQLException("重复 source_key：" + input.sourceKey());
             }
         }
     }
@@ -1667,6 +2070,21 @@ public final class KnowledgeDatabase {
             statement.execute("CREATE INDEX IF NOT EXISTS idx_documents_source_id ON documents(source_id)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_segments_document ON segments(document_id, language)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_documents_language_kind_id ON documents(language, content_kind, document_id)");
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS item_catalog (
+                        item_id TEXT NOT NULL,
+                        language TEXT NOT NULL,
+                        display_name TEXT NOT NULL,
+                        display_name_normalized TEXT NOT NULL,
+                        description_markdown TEXT NOT NULL,
+                        source_mod TEXT NOT NULL,
+                        fingerprint TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY (item_id, language)
+                    )
+                    """);
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_item_catalog_language_name "
+                    + "ON item_catalog(language, display_name_normalized)");
 
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS task_snapshots (
@@ -1740,22 +2158,8 @@ public final class KnowledgeDatabase {
                             REFERENCES task_quests(snapshot_id, quest_id) ON DELETE CASCADE
                     )
                     """);
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS task_progress (
-                        scope_key TEXT NOT NULL,
-                        snapshot_id TEXT NOT NULL,
-                        quest_id TEXT NOT NULL,
-                        task_id TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        current_value REAL NOT NULL,
-                        required_value REAL NOT NULL,
-                        updated_at INTEGER NOT NULL,
-                        PRIMARY KEY (scope_key, snapshot_id, quest_id, task_id)
-                    )
-                    """);
             statement.execute("CREATE INDEX IF NOT EXISTS idx_task_quests_snapshot ON task_quests(snapshot_id)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_task_tasks_quest ON task_tasks(snapshot_id, quest_id)");
-            statement.execute("CREATE INDEX IF NOT EXISTS idx_task_progress_quest ON task_progress(scope_key, snapshot_id, quest_id)");
         }
         setMetadata(connection, "schema_version", Integer.toString(SCHEMA_VERSION));
         setMetadata(connection, "fts_storage_mode", ftsStorage().id());
@@ -1899,6 +2303,22 @@ public final class KnowledgeDatabase {
         }
     }
 
+    private static void deleteDocumentsBySourceKey(Connection connection, String sourceKey) throws SQLException {
+        List<DocumentKey> conflicts = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT document_id, language FROM documents WHERE source_key = ?")) {
+            statement.setString(1, sourceKey);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    conflicts.add(new DocumentKey(rows.getString("document_id"), rows.getString("language")));
+                }
+            }
+        }
+        for (DocumentKey conflict : conflicts) {
+            deleteDocument(connection, conflict);
+        }
+    }
+
     private enum FtsStorage {
         EXTERNAL_CONTENT("external-content"),
         CONTENTFUL("contentful");
@@ -1970,16 +2390,6 @@ public final class KnowledgeDatabase {
         }
     }
 
-    /** 早期测试版不迁移旧结构，发现不匹配时删除派生库并从事实源重建。 */
-    private static void resetIfIncompatible(Path database) throws IOException {
-        if (!Files.exists(database) || isUsable(database)) {
-            return;
-        }
-        Files.deleteIfExists(database);
-        Files.deleteIfExists(Path.of(database + "-wal"));
-        Files.deleteIfExists(Path.of(database + "-shm"));
-    }
-
     private static boolean hasColumn(Connection connection, String table, String column) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("PRAGMA table_info(" + table + ")");
              ResultSet rows = statement.executeQuery()) {
@@ -2049,21 +2459,432 @@ public final class KnowledgeDatabase {
             statement.execute("PRAGMA foreign_keys = ON");
             if (readOnly) {
                 statement.execute("PRAGMA query_only = ON");
+            } else {
+                // 物品目录和任务静态数据都在 Worker 的短事务中写入；沿用建库时
+                // 的 NORMAL 策略，避免每个批量事务都为每一行等待完整 fsync。
+                statement.execute("PRAGMA synchronous = NORMAL");
             }
         }
         return connection;
     }
 
     private static void replaceDatabase(Path staged, Path database) throws IOException {
+        Path backup = database.resolveSibling(database.getFileName() + ".previous");
+        Path marker = database.resolveSibling(database.getFileName() + ".replace-state");
+        String stagedName = staged.getFileName().toString();
+        boolean backupReady = false;
+        boolean installed = false;
+        if (!isUsable(staged)) {
+            throw new IOException("staged SQLite 数据库校验失败，拒绝安装");
+        }
+        try {
+            writeReplacementMarker(marker, "preparing", stagedName);
+            // 先复制旧库，而不是先把正式库移走。这样即使进程在安装前退出，正式
+            // 路径仍然指向旧库；非原子文件系统回退时也有可验证的恢复副本。
+            if (isUsable(database)) {
+                cleanupPreviousBundle(backup);
+                copyDatabaseBundle(database, backup);
+                backupReady = true;
+            } else {
+                // 损坏/旧 Schema 的正式库不是可恢复备份；事实源会在 staged 库
+                // 中重建它。只有可用正式库才复制到 .previous，避免把 corrupt
+                // 文件当作恢复依据而阻塞升级。
+                cleanupPreviousBundle(backup);
+                deleteDatabaseSidecars(database);
+            }
+            writeReplacementMarker(marker, "backup-ready", stagedName);
+            // staged 与正式库位于同一目录时，优先使用原子替换。旧库不会经历
+            // “先移走、再安装”的空窗；不支持 ATOMIC_MOVE 的文件系统才回退到
+            // 普通替换，此时 backup + marker 负责启动恢复。
+            deleteDatabaseSidecars(database);
+            writeReplacementMarker(marker, "sidecars-cleared", stagedName);
+            moveAtomicallyReplacing(staged, database);
+            // staged 可能带有 WAL/SHM。只移动主文件会把仍在 sidecar 中的
+            // 已提交内容丢掉，因此主文件安装后立即转移同一 bundle 的 sidecar。
+            writeReplacementMarker(marker, "main-installed", stagedName);
+            moveDatabaseSidecars(staged, database);
+            // 文件移动成功不等于 SQLite 已经可读；在把替换标记推进到
+            // validated 前再次校验正式路径。validated 是一个重要的恢复边界：
+            // 它表示新库已经通过校验，即使进程随后在写 installed marker 或清理
+            // .previous 时退出，下一次启动也必须保留新库，不能误回滚到旧库。
+            if (!isUsable(database)) {
+                throw new IOException("SQLite 正式库安装后校验失败");
+            }
+            try {
+                writeReplacementMarker(marker, "validated", stagedName);
+            } catch (IOException markerFailure) {
+                // 正式库已经通过校验，marker 只负责给下一次启动提供恢复提示。
+                // 不能因为 marker 所在目录暂时不可写，把已安装的新库回滚成旧库。
+                installed = true;
+            }
+            installed = true;
+            try {
+                writeReplacementMarker(marker, "installed", stagedName);
+            } catch (IOException ignored) {
+                // validated marker 已经写入；状态文件只是恢复提示，不能把成功
+                // 安装报告为 SQLite 同步失败。下一次启动会保留已验证的新库。
+            }
+        } catch (IOException failure) {
+            if (!installed && backupReady && isUsable(backup)) {
+                try {
+                    restoreDatabaseBundle(database, backup);
+                } catch (IOException restoreFailure) {
+                    failure.addSuppressed(restoreFailure);
+                }
+            }
+            throw failure;
+        }
+
+        // 正式库已经安装成功。旧备份和临时文件的清理属于善后工作，失败时不得
+        // 把一次已经成功的构建报告为失败；下一次启动会再次尝试清理。
+        cleanupStagedBundleQuietly(staged);
+        cleanupPreviousBundleQuietly(backup);
+        // 正式库已经安装并通过 staged 校验。清理失败只作为下一次启动的善后项，
+        // 不改变本次同步的成功语义，也不应被上层记录为“保留旧库”。
+        deleteMarkerQuietly(marker);
+    }
+
+    /**
+     * 处理上一次替换在“旧库已移走、新库尚未安装”之间中断留下的 .previous。
+     * 正式库可用时只尝试清理备份；正式库缺失或损坏且备份可用时恢复备份。
+     */
+    private static void recoverPreviousDatabase(Path database) throws IOException {
+        Path backup = database.resolveSibling(database.getFileName() + ".previous");
+        Path marker = database.resolveSibling(database.getFileName() + ".replace-state");
+        ReplacementState replacement = readReplacementMarker(marker);
+        Path referencedStaged = replacement.stagedPath(database);
+        cleanupOrphanStagedBundles(database, referencedStaged);
+        // marker 自身采用旁路临时文件替换。进程在写 marker 的最后一步中断时，
+        // .tmp 不具备提交语义，下次启动可以直接清理。
+        try {
+            Files.deleteIfExists(marker.resolveSibling(marker.getFileName() + ".tmp"));
+        } catch (IOException ignored) {
+            // 不影响正式库恢复；下次启动继续清理。
+        }
+        if (!hasDatabaseBundle(backup)) {
+            Path staged = referencedStaged;
+            if (staged != null) {
+                cleanupStagedBundleQuietly(staged);
+            }
+            deleteMarkerQuietly(marker);
+            return;
+        }
+        String state = replacement.phase();
+        boolean databaseUsable = isUsable(database);
+        Path staged = replacement.stagedPath(database);
+        // 主文件移动后，staged 主文件会消失，但尚未移动的 WAL/SHM 仍然是
+        // staged bundle 的一部分。不能只检查主文件，否则会在 sidecar 移动窗口
+        // 把一个不完整的新库误当成可恢复的新库。
+        boolean stagedExists = staged != null && hasDatabaseBundle(staged);
+        boolean pendingInstall = !state.isBlank()
+                && !"validated".equals(state)
+                && !"installed".equals(state);
+        // 只有 backup-ready 之后的 marker 才证明 .previous 已经完成复制。
+        // preparing 阶段可能还残留上一次成功安装的旧 .previous，不能拿它回滚
+        // 当前仍然完整的正式库。
+        boolean backupRequired = "backup-ready".equals(state)
+                || "sidecars-cleared".equals(state)
+                || "main-installed".equals(state);
+        if (pendingInstall && stagedExists) {
+            // staged 仍存在，说明进程在正式库替换前退出。backup-ready 之后，
+            // 正式库的 WAL/SHM 可能已经被清理，即使主文件仍能打开也不能把它
+            // 当作完整旧库；必须优先恢复已校验的 bundle。
+            if (backupRequired && isUsable(backup)) {
+                deleteDatabaseSidecars(database);
+                restoreDatabaseBundle(database, backup);
+            }
+            cleanupStagedBundleQuietly(staged);
+            cleanupPreviousBundleQuietly(backup);
+            deleteMarkerQuietly(marker);
+            return;
+        }
+        if (pendingInstall && !stagedExists) {
+            // 主文件已经移动但 marker 尚未进入 installed，可能正处在主文件与
+            // WAL/SHM 转移之间。即使当前主文件恰好“可用”，也不能把缺失的
+            // sidecar 当作完整新库；优先恢复经过校验的旧 bundle。这样进程在
+            // 任意文件移动点退出都不会静默丢失上一版本的数据。
+            if ("main-installed".equals(state) && databaseUsable) {
+                // main-installed marker 写在主文件移动之后。此时 staged 已经没有
+                // 剩余 sidecar，且正式库通过完整 Schema/FTS 校验，说明新库已经
+                // 完整安装；优先保留新库，避免 marker 写入失败导致错误回滚。
+                cleanupPreviousBundleQuietly(backup);
+                deleteMarkerQuietly(marker);
+                return;
+            }
+            if (backupRequired && isUsable(backup)) {
+                deleteDatabaseSidecars(database);
+                restoreDatabaseBundle(database, backup);
+                cleanupPreviousBundleQuietly(backup);
+                deleteMarkerQuietly(marker);
+                return;
+            }
+            if (databaseUsable) {
+                // 这里无法证明正式库是新库还是旧库；备份优先级已经在上方
+                // 覆盖了可恢复路径。没有可用备份时保留当前可用文件，避免启动
+                // 因孤立 marker 反复失败。
+                deleteMarkerQuietly(marker);
+                return;
+            }
+        }
+        if (("validated".equals(state) || "installed".equals(state)) && databaseUsable) {
+            // 新库已经在正式路径校验通过。无论 installed marker 或善后清理
+            // 是否完成，都不能因为 .previous 仍存在而回滚已验证的新库。
+            if (staged != null) {
+                cleanupStagedBundleQuietly(staged);
+            }
+            cleanupPreviousBundleQuietly(backup);
+            deleteMarkerQuietly(marker);
+            return;
+        }
+        if (databaseUsable && (!pendingInstall || !stagedExists)) {
+            // 没有未完成替换 marker 时，.previous 可能只是上一次成功安装后
+            // 清理失败的旧备份；正式库优先，绝不能回滚到旧版本。
+            // 不要在这里删除正式库的 WAL/SHM。它们可能包含正式库尚未
+            // checkpoint 的有效提交；当前路径已经通过 isUsable() 校验，
+            // 这些 sidecar 属于正式库而不是替换残留。只有真正开始安装
+            // staged 库时（replaceDatabase）才可以清理正式库 sidecar。
+            try {
+                cleanupPreviousBundle(backup);
+            } catch (IOException ignored) {
+                // 新库已经可用，清理失败留给下一次启动重试。
+            }
+            if (staged != null) {
+                cleanupStagedBundleQuietly(staged);
+            }
+            deleteMarkerQuietly(marker);
+            return;
+        }
+        if (!isUsable(backup)) {
+            // 备份可能只复制了一半；不要让一个无效备份阻止从事实源重新建库。
+            cleanupPreviousBundleQuietly(backup);
+            deleteMarkerQuietly(marker);
+            return;
+        }
+
+        // marker 表明进程可能在 sidecar 清理或正式库安装之间退出，或者正式库
+        // 当前不可用。此时旧备份是唯一可验证的完整数据库，优先恢复它。
+        restoreDatabaseBundle(database, backup);
+        if (!isUsable(database)) {
+            throw new IOException("无法从 knowledge.db.previous 恢复可用数据库");
+        }
+        try {
+            cleanupPreviousBundle(backup);
+        } catch (IOException ignored) {
+            // 恢复后的正式库可用；残留备份不应阻塞启动。
+        }
+        deleteMarkerQuietly(marker);
+    }
+
+    private static boolean hasDatabaseBundle(Path database) {
+        if (Files.exists(database)) {
+            return true;
+        }
+        return SQLITE_SIDECARS.stream()
+                .map(suffix -> Path.of(database + suffix))
+                .anyMatch(Files::exists);
+    }
+
+    private static void restoreDatabaseBundle(Path database, Path backup) throws IOException {
+        if (!isUsable(backup)) {
+            throw new IOException("SQLite 备份不可用，无法恢复正式库");
+        }
+        Path restored = Files.createTempFile(
+                database.getParent(),
+                "knowledge-restore-",
+                ".db.tmp"
+        );
+        Files.deleteIfExists(restored);
+        try {
+            // 先在旁路 bundle 中完成复制和校验，再替换正式库。backup 在整个
+            // 过程中保留，进程若在复制或移动中断，下一次启动仍可重试恢复。
+            Files.copy(backup, restored, StandardCopyOption.REPLACE_EXISTING);
+            copyDatabaseSidecars(backup, restored);
+            if (!isUsable(restored)) {
+                throw new IOException("SQLite 恢复副本校验失败");
+            }
+            deleteDatabaseSidecars(database);
+            moveAtomicallyReplacing(restored, database);
+            moveDatabaseSidecars(restored, database);
+            if (!isUsable(database)) {
+                throw new IOException("SQLite 正式库恢复后校验失败");
+            }
+        } finally {
+            cleanupStagedBundleQuietly(restored);
+        }
+    }
+
+    private static void cleanupPreviousBundle(Path backup) throws IOException {
+        Files.deleteIfExists(backup);
+        deleteDatabaseSidecars(backup);
+    }
+
+    private static void cleanupPreviousBundleQuietly(Path backup) {
+        try {
+            cleanupPreviousBundle(backup);
+        } catch (IOException ignored) {
+            // 正式库/恢复库已经校验可用；备份清理失败由下一次启动重试。
+        }
+    }
+
+    private static void deleteMarkerQuietly(Path marker) {
+        try {
+            Files.deleteIfExists(marker);
+        } catch (IOException ignored) {
+            // marker 只用于恢复提示，清理失败不能阻塞当前可用数据库启动。
+        }
+    }
+
+    private static void cleanupStagedBundleQuietly(Path staged) {
+        try {
+            Files.deleteIfExists(staged);
+        } catch (IOException ignored) {
+            // 临时文件清理失败不改变正式库的提交结果；下一次启动仍会
+            // 通过 replace-state/目录扫描处理残留文件。
+        }
+        try {
+            deleteDatabaseSidecars(staged);
+        } catch (IOException ignored) {
+            // 同上，sidecar 只是 staged 的派生文件，不是当前数据库。
+        }
+    }
+
+    /** 清理没有 replace-state 提交标记的崩溃残留，避免每次启动累积临时数据库。 */
+    private static void cleanupOrphanStagedBundles(Path database, Path referenced) {
+        Path parent = database.getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return;
+        }
+        try (var paths = Files.list(parent)) {
+            List<Path> orphaned = paths.filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return name.startsWith("knowledge-") && name.endsWith(".db.tmp");
+                    })
+                    .filter(path -> referenced == null || !path.equals(referenced))
+                    .toList();
+            orphaned.forEach(KnowledgeDatabase::cleanupStagedBundleQuietly);
+        } catch (IOException ignored) {
+            // 临时文件清理是善后操作，不影响正式库读取和下一次构建。
+        }
+    }
+
+    private static void copyDatabaseBundle(Path database, Path backup) throws IOException {
+        if (Files.exists(database)) {
+            Files.copy(database, backup, StandardCopyOption.REPLACE_EXISTING);
+        }
+        copyDatabaseSidecars(database, backup);
+        if (!isUsable(backup)) {
+            throw new IOException("旧 SQLite 备份不可用");
+        }
+    }
+
+    private static void copyDatabaseSidecars(Path sourceDatabase, Path targetDatabase)
+            throws IOException {
+        for (String suffix : SQLITE_SIDECARS) {
+            copySidecar(sourceDatabase, targetDatabase, suffix);
+        }
+    }
+
+    private static void copySidecar(Path sourceDatabase, Path targetDatabase, String suffix)
+            throws IOException {
+        Path source = Path.of(sourceDatabase + suffix);
+        Path target = Path.of(targetDatabase + suffix);
+        if (Files.exists(source)) {
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        } else {
+            Files.deleteIfExists(target);
+        }
+    }
+
+    private static void moveAtomicallyReplacing(Path source, Path target) throws IOException {
         try {
             Files.move(
-                    staged,
-                    database,
+                    source,
+                    target,
                     StandardCopyOption.ATOMIC_MOVE,
                     StandardCopyOption.REPLACE_EXISTING
             );
         } catch (java.nio.file.AtomicMoveNotSupportedException exception) {
-            Files.move(staged, database, StandardCopyOption.REPLACE_EXISTING);
+            // 仍有 backup + replace-state 保护；只在文件系统不支持原子替换时回退。
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void writeReplacementMarker(Path marker, String phase, String stagedName)
+            throws IOException {
+        Path temporary = marker.resolveSibling(marker.getFileName() + ".tmp");
+        Files.writeString(
+                temporary,
+                phase + "\n" + (stagedName == null ? "" : stagedName) + "\n",
+                StandardCharsets.UTF_8
+        );
+        try {
+            moveReplacing(temporary, marker);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static ReplacementState readReplacementMarker(Path marker) {
+        if (!Files.isRegularFile(marker)) {
+            return new ReplacementState("", "");
+        }
+        try {
+            List<String> lines = Files.readAllLines(marker, StandardCharsets.UTF_8);
+            return new ReplacementState(
+                    lines.isEmpty() ? "" : lines.get(0).strip(),
+                    lines.size() < 2 ? "" : lines.get(1).strip()
+            );
+        } catch (IOException exception) {
+            return new ReplacementState("", "");
+        }
+    }
+
+    private record ReplacementState(String phase, String stagedName) {
+        private Path stagedPath(Path database) {
+            if (stagedName == null || stagedName.isBlank()
+                    || !stagedName.startsWith("knowledge-")
+                    || !stagedName.endsWith(".db.tmp")) {
+                return null;
+            }
+            return database.resolveSibling(stagedName);
+        }
+    }
+
+    private static void moveSidecar(Path sourceDatabase, Path targetDatabase, String suffix)
+            throws IOException {
+        Path source = Path.of(sourceDatabase + suffix);
+        Path target = Path.of(targetDatabase + suffix);
+        if (Files.exists(source)) {
+            moveReplacing(source, target);
+        } else {
+            Files.deleteIfExists(target);
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(
+                    source,
+                    target,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+        } catch (java.nio.file.AtomicMoveNotSupportedException exception) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void moveDatabaseSidecars(Path sourceDatabase, Path targetDatabase)
+            throws IOException {
+        for (String suffix : SQLITE_SIDECARS) {
+            moveSidecar(sourceDatabase, targetDatabase, suffix);
+        }
+    }
+
+    private static void deleteDatabaseSidecars(Path database) throws IOException {
+        for (String suffix : SQLITE_SIDECARS) {
+            Files.deleteIfExists(Path.of(database + suffix));
         }
     }
 

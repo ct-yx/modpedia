@@ -1,6 +1,7 @@
 package io.ctyx.modpedia.ai;
 
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ToolChoice;
 
@@ -41,6 +42,13 @@ public final class AiRequestLifecycleSelfTest {
         check(!lifecycle.beginFallback(), "进入完成态后不能再次启动回退");
         check(!lifecycle.complete(), "进入终态后不能重复完成");
         testFirstRequestToolChoice();
+        testTaskQuestionRouting();
+        check(TaskQuestionClassifier.isTaskQuestion("当前主线下一步任务是什么？"),
+                "中文任务问题应路由到 search_tasks");
+        check(TaskQuestionClassifier.isTaskQuestion("What is my next quest progress?"),
+                "英文任务问题应路由到 search_tasks");
+        check(!TaskQuestionClassifier.isTaskQuestion("压力容器如何启动？"),
+                "普通模组问题不应误路由到 search_tasks");
         System.out.println("ModPedia AI request lifecycle self-test passed");
     }
 
@@ -55,6 +63,27 @@ public final class AiRequestLifecycleSelfTest {
         ChatRequest followUp = AiAssistantSession.requireSearchOnFirstRequest(original, first);
         check(followUp == original,
                 "工具结果后的模型请求应恢复自动选择，允许结束或继续补搜");
+    }
+
+    private static void testTaskQuestionRouting() {
+        ChatRequest original = ChatRequest.builder()
+                .messages(UserMessage.from("任务进度"))
+                .toolSpecifications(
+                        ToolSpecification.builder().name("search_knowledge").build(),
+                        ToolSpecification.builder().name("search_tasks").build(),
+                        ToolSpecification.builder().name("search_wiki").build()
+                )
+                .build();
+        AtomicBoolean first = new AtomicBoolean(true);
+        ChatRequest forced = AiAssistantSession.requireSearchOnFirstRequest(original, first, true);
+        check(forced.toolChoice() == ToolChoice.REQUIRED,
+                "任务问题首轮必须要求工具调用");
+        check(forced.toolSpecifications().size() == 1
+                        && "search_tasks".equals(forced.toolSpecifications().getFirst().name()),
+                "任务问题首轮只能暴露 search_tasks 工具");
+        ChatRequest followUp = AiAssistantSession.requireSearchOnFirstRequest(original, first, true);
+        check(followUp == original,
+                "任务工具结果后的请求应恢复全部工具并允许模型继续补搜");
     }
 
     private static void await(CountDownLatch latch) {

@@ -3,11 +3,13 @@
 > 这份文档同时是 ModPedia 的 Mod 开发清单。每完成一项就勾选对应复选框；
 > `[~]` 表示代码已具备但仍需要真实游戏或整合包人工回归，`[ ]` 表示后续工作。
 
+本次合并前的具体变更、命令输出和测试 JAR 记录见[开发日志](DEVELOPMENT_LOG.md)。
+
 ## 0. 当前版本快照
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v0.2.0` |
+| 发布版本 | `v0.3.0` |
 | GitHub 发布状态 | 正式发布，M0 自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
@@ -15,23 +17,27 @@
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
 | 作者 | `ctyx` |
-| 客户端 UI 依赖 | ModernUI `3.12.0.2`（客户端必需） |
+| 客户端 UI 依赖 | 无外部 UI 依赖；基于 NeoForge 原生 GUI API 自绘 |
 | 默认快捷键 | `K` 助手、`F9` 重建；`F8` 保留原版电影视角 |
+| 当前合并候选分支 | `agent/full-maintenance-checkpoint`，准备合并到 `main` |
 
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v0.2.0
+https://github.com/ct-yx/modpedia/releases/tag/v0.3.0
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
+
+运行目录、SQLite 数据库、测试日志和测试 JAR 均属于本地验证产物，不进入提交；交付记录统一写入
+`docs/DEVELOPMENT_LOG.md`。
 
 ## 1. Mod 工程基础清单
 
 - [x] `mod_id=modpedia`、显示名 `ModPedia · 模组百科`、作者 `ctyx` 全部一致。
 - [x] 基础包名固定为 `io.ctyx.modpedia`，技术标识不随显示名调整。
-- [x] Minecraft、NeoForge、Java 和 ModernUI 版本写入 `gradle.properties` 并锁定。
-- [x] `neoforge.mods.toml` 声明 Minecraft、NeoForge 和客户端 ModernUI 依赖。
+- [x] Minecraft、NeoForge 和 Java 版本写入 `gradle.properties` 并锁定。
+- [x] `neoforge.mods.toml` 只声明 Minecraft、NeoForge 等实际必需依赖；客户端 UI 使用原生 GUI API。
 - [x] 客户端入口与服务端入口隔离；Dedicated Server 不解析 `client/` UI 类。
 - [x] `./gradlew build` 能生成独立的 Mod JAR。
 - [ ] 每次升级 Minecraft/NeoForge 后重新核对对应版本官方 API 和映射。
@@ -51,7 +57,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v0.2.0
 ## 3. 知识库与检索清单
 
 - [x] 自动手册转换为完整 Markdown，并保留标题、列表、代码块和未知节点。
-- [x] SQLite Schema v5 保存完整 Markdown、段落索引、标题路径和 FTS 数据；旧派生结构直接删除重建。
+- [x] SQLite Schema v7 保存完整 Markdown、段落索引、标题路径、FTS 数据、静态 FTBQ 任务定义和独立 `item_catalog`；旧派生结构通过 staged 数据库成功校验后替换，失败恢复旧库。
 - [x] `custom/*.md` 按稳定 ID、语言和 SHA-256 指纹启动增量导入。
 - [x] 新增、修改、删除自定义文档均在事务内同步 SQLite、段落和 FTS。
 - [x] 自定义文档优先级高于自动手册，原始 Markdown 保持为事实源。
@@ -66,14 +72,16 @@ https://github.com/ct-yx/modpedia/releases/tag/v0.2.0
 
 ### 3.1 统一知识库与任务联动
 
-- [x] 统一使用 `config/modpedia/knowledge/knowledge.db`，Schema v5 同时包含文本知识和 `task_*` 运行表。
+- [x] 统一使用 `config/modpedia/knowledge/knowledge.db`，Schema v7 同时包含文本知识、静态 `task_*` 任务定义和物品目录；玩家实时进度只在查询内存中覆盖。
 - [x] 用 `content_kind` 区分 `mod_manual`、`wiki` 和 `task_runtime`，用 `source_type` 区分 JAR、Markdown、Wiki 和任务快照格式。
 - [x] 增加 `knowledge_sources` 来源注册表和 `sources/<source-id>/source.json` 扩展目录。
 - [x] APP/Modonomicon 书籍支持 `knowledge.content_kind`、`source-overrides.json` 和 `source.json` 分类覆盖；整合包作者指南可以归入 Wiki。
-- [x] 旧数据库结构不迁移：发现旧 Schema 或缺少任务表时删除派生数据库并从原始来源重建。
+- [x] 旧数据库结构不迁移：发现旧 Schema 或缺少任务表时从原始来源写入旁路库，成功后原子替换，失败恢复旧库。
 - [x] 文本重建和任务同步使用不同表及事务；手册重建不会删除任务快照，任务同步不会修改 FTS。
 - [x] 内置 FTB Quests Wiki 作为 `wiki_markdown` 来源，后台更新失败时保留内置或本地缓存。
-- [x] FTB Quests、JEI、Jade 仅作为可选联动；ModernUI 是当前客户端唯一必需的外部 Mod。
+- [x] FTB Quests、JEI、Jade 仅作为可选联动；客户端 UI 不依赖外部 UI Mod。FTBQ 任务问题先取得运行时进度：单机由 Worker 直接读取小型存档 SNBT，多人或文件不可用时回退 TeamData，再查询静态任务定义，实时状态不落 SQLite。
+- [x] 移除 FTB Quests 客户端 Tick 全量轮询；`search_tasks` 才按问题触发运行时读取，TeamData 读取有界，同一 AI 请求只读取一次，结果只在 `TaskRuntimeSnapshot` 内存中复用。
+- [x] 任务运行时快照增加时间线：读取 FTBQ started/completed 的原始时间戳，记录 TeamData 进度变化检测时间，并通过 `search_tasks.timeline` 返回具体条目和静态标题；时间线不写入数据库。
 - [x] 不导入 JEI 配方；仅解析物品 ID、渲染本地化名称并尝试 Shift+左键配方跳转。
 - [~] 用真实 FTB Quests、JEI、Jade 客户端版本回归任务快照、配方界面和视线目标识别。
 
@@ -81,6 +89,10 @@ https://github.com/ct-yx/modpedia/releases/tag/v0.2.0
 
 - [x] 支持 `[[item:namespace:path|显示名称]]` 和 `[[tag:namespace:path|显示名称]]`。
 - [x] 普通显示区域渲染名称，支持协议令牌和模型直接输出的已注册 `namespace:path`；按住 Ctrl 显示稳定 ID，未知 ID 保留原文。
+- [x] 客户端注册表完成后按当前语言导入全部物品 ID、显示名称和完整 Tooltip Markdown；物品目录与手册 FTS 分表保存。
+- [x] 物品目录写入使用 Worker 单事务批量 UPSERT；大批量记录通过独立 I/O 线程的原子 JSONL 载荷传递，IPC 不发送超大 JSON 数组；首次、语言切换和增量更新都不复制或替换整个数据库，相同指纹启动只做指纹比较。
+- [x] Jade 确认物品后，AI 与仅搜索模式先读取 `item_catalog`，再继续手册搜索，并把物品简介作为独立事实上下文。
+- [~] 在大型整合包中确认物品目录批量导入耗时、语言切换和 Tooltip 内容质量。
 - [x] 来源标注只来自本轮真实搜索轨迹，并嵌入正文对应位置；点击优先跳转原手册，失败时回退来源预览，不自动堆叠所有候选来源。
 - [~] 在真实整合包中确认模组语言表、JEI 运行时和物品点击命中区域的一致性。
 
@@ -238,7 +250,7 @@ docs: update mod development checklist
 - [ ] AI 模式测试首次搜索不足时的补搜、跨语言查询、`has_more` 和重复查询抑制。
 - [ ] 测试流式输出、取消、超时、错误重试和历史会话恢复。
 - [ ] 检查日志和会话文件中没有 API Key。
-- [x] 启动 Dedicated Server，确认 ModPedia 不解析 `AssistantScreen` 和第三方客户端反射类；ModernUI 作为客户端可选依赖在服务端不加载其客户端入口。
+- [x] 启动 Dedicated Server，确认 ModPedia 不解析 `AssistantScreen` 和第三方客户端反射类。
 
 ## 12. 发布流程
 

@@ -37,7 +37,32 @@ config/modpedia/knowledge/
 
 ### `knowledge.db`
 
-SQLite 派生搜索库，不是事实源。保存文档元数据、SHA-256 指纹、完整 Markdown、完整段落、标题路径和 FTS5 索引；原始 `custom/*.md` 始终保留。
+SQLite 派生搜索库，不是事实源。保存文档元数据、SHA-256 指纹、完整 Markdown、完整段落、标题路径和 FTS5 索引；原始 `custom/*.md` 始终保留。Schema v7 另外保存独立的 `item_catalog` 物品目录；FTBQ 任务表只保存静态任务定义。
+
+`item_catalog` 与手册正文分表保存：
+
+```sql
+item_catalog(
+  item_id,
+  language,
+  display_name,
+  display_name_normalized,
+  description_markdown,
+  source_mod,
+  fingerprint,
+  updated_at
+)
+```
+
+客户端注册表完成后，当前语言的 Tooltip 第一行作为名称，后续行转换为完整 Markdown 无序列表。
+物品目录按 `(item_id, language)` 增量同步，当前策略只保留当前游戏语言；它供 AI 和仅搜索模式
+直接读取，内容不进入 `documents`、`segments` 或 `segments_fts`。游戏 JVM 不把数万条记录直接
+拼成一条 IPC JSON 消息，而是在独立 I/O 线程写入 `config/modpedia/worker/payloads/` 下的原子
+JSONL 载荷，IPC 只传递载荷路径；Worker 读取完成载荷后使用一条预编译 UPSERT、一个事务和批量
+绑定完成写入。这样 Tooltip JSON 序列化、文件读取、SQLite 写入都不占用游戏 Tick，也不会因为
+逐条提交产生卡顿。相同指纹的再次启动只做顺序指纹比较，不复制或替换整个 `knowledge.db`；
+20,000 条夹具的 Worker 文件载荷同步、首次写入和相同指纹复用均保持在毫秒级，实际整合包仍以
+客户端加载日志和 `worker.log` 中的 `payload_read_ms` / `database_write_ms` 为准。
 
 ### `cache/`
 
@@ -51,7 +76,7 @@ SQLite 派生搜索库，不是事实源。保存文档元数据、SHA-256 指�
 | --- | --- | --- |
 | `content_kind` | `mod_manual` | 模组提供的手册正文 |
 | `content_kind` | `wiki` | 整合包作者、社区或任务 Wiki |
-| `content_kind` | `task_runtime` | 当前世界和玩家的任务运行数据 |
+| `content_kind` | `task_runtime` | FTBQ 静态任务定义集合；玩家实时进度只在查询内存中存在 |
 | `source_type` | `patchouli_json`、`guideme_markdown`、`app_json` | JAR 手册输入格式 |
 | `source_type` | `custom_markdown`、`wiki_markdown` | 人工或远程 Markdown |
 | `source_type` | `task_snapshot` | 任务运行快照 |
@@ -129,9 +154,15 @@ source_version: 1.0.0
 生成 manifest、keyword-index 和 state
   ↓
 RetrievalService.reload()
+  ↓
+客户端注册表物品 Tooltip 导入 item_catalog
+  ↓
+预填充完成，进入主菜单
 ```
 
-扫描过程必须在后台执行，并向界面报告进度。
+首次预填充在加载屏幕阶段同步完成，避免进入世界后继续占用客户端帧时间；其中游戏线程只做
+Minecraft 注册表允许的 Tooltip 捕获，批量载荷序列化和数据库写入分别由 I/O 线程与 Worker
+完成。F9 重建和语言切换刷新仍可使用后台任务，并向界面报告进度。
 
 ## 6. 更新方式
 
@@ -156,9 +187,9 @@ RetrievalService.reload()
 
 - 自定义优先级为 `100`，自动手册为 `0`；同一 `(id, language)` 只保留最高优先级记录。
 - 缺少 `id`、Front Matter 不完整或解析异常时记录警告并保留上一份有效记录。
-- SQLite 同步写入临时库并在事务提交后原子替换；失败时继续使用旧库。
+- 手册/Wiki 全量重建仍写入临时库并在事务提交后原子替换；物品目录不复制整库，直接在正式库内用一个短事务批量 UPSERT，失败时由 SQLite 回滚并继续使用旧目录。
 - 数据库不存在、损坏或版本不匹配时，从当前模组手册和 `custom/` 全量重建。
-- 当前早期测试版目标 Schema 为 v5。检测到旧 Schema、旧 FTS 形态或缺少 `knowledge_sources`、`task_*` 表时，删除 `knowledge.db`、WAL 和 SHM 后全量重建；不删除 JAR、`custom/` 或 `sources/` 原始文件。
+- 当前早期测试版目标 Schema 为 v7，不做旧库迁移。检测到旧 Schema、旧 FTS 形态或缺少 `knowledge_sources`、`task_*`、`item_catalog` 表时，在旁路数据库中从事实源全量重建，校验成功后原子替换 `knowledge.db`；替换或导入失败时恢复上一份有效库，并清理 WAL、SHM 和临时文件。JAR、`custom/` 或 `sources/` 原始文件继续保留。
 - 搜索选择当前语言，并在没有对应本地化文档时回退 `neutral`；中英文文档可使用同一稳定 ID。
 
 每次构建都会更新 `manifest.json`、`keyword-index.json`、`state.json` 和 `cache/build-report.json`。报告包含 `updatedCount`、`reusedCount`、`removedCount` 和警告列表。
@@ -171,7 +202,16 @@ Schema/索引创建后和同步提交前执行 `PRAGMA optimize`；全量或大�
 中文、英文、ID、多词、无结果查询的冷/热 p50/p95/p99、SQLite/FTS/dbstat 大小和
 `EXPLAIN QUERY PLAN`，报告写入 `build/reports/modpedia/`。
 
-助手浮窗顶部通过 `KnowledgeUpdateService.status()` 读取线程安全的 `KnowledgeStatus` 快照，显示来源数量、文档数量、最近更新时间以及更新/错误状态。界面不会阻塞等待扫描线程。
+### 物品目录搜索上下文
+
+玩家通过 Jade 插入的 `[[item:namespace:path|显示名称]]`、模型传入的物品 ID或正文中的裸资源 ID
+先经过 `ItemQueryParser` 提取，再由 `RetrievalService.lookupItems` 查询 `item_catalog`。工具返回
+`item_context` 后继续使用物品 ID和显示名称搜索模组手册；Tooltip 简介作为物品事实使用，来源卡片
+仍只来自实际手册文档。
+
+助手浮窗顶部通过 `ModPediaBridge.knowledgeStatus()` 读取 Worker 发布的线程安全
+`KnowledgeStatus` 快照，显示来源数量、文档数量、最近更新时间以及更新/错误状态。
+扫描、SQLite 和 FTS 连接都留在 Worker JVM。
 
 ## 7. 检索规则
 
@@ -234,6 +274,21 @@ search_knowledge  → content_kind=mod_manual
 search_wiki       → content_kind=wiki
 search_tasks      → task_* 表，并区分静态定义与实时进度
 ```
+
+`search_tasks` 不由客户端 Tick 触发。一次玩家问题开始时，先取得当前玩家运行时上下文。
+单机由游戏 JVM 只发送当前存档根目录、玩家 UUID 和作用域元数据，Worker 直接读取
+`saves/<世界>/ftbquests/<team-uuid>.snbt` 中有界的 `started`、`completed` 和
+`task_progress`；这个文件很小，读取和 SNBT 解析不经过游戏 Tick。由于进度文件可能在
+查询瞬间快速重写，Worker 读取前后会比较文件指纹，撞上重写就立即重试，不加锁、不轮询、
+不写回存档或 `knowledge.db`。多人服务器或本地存档
+不可用时，才由可选 FTB Quests 适配器在客户端线程读取 TeamData，再通过 IPC 返回
+`TaskRuntimeSnapshot`。Worker 收到快照后才用运行时 ID 从 `knowledge.db` 抽取静态任务定义、
+依赖、要求和奖励。启动阶段导入的只是静态任务定义，不能替代当前玩家进度读取。
+`TaskRuntimeSnapshot` 只在当前 AI 请求内存中覆盖状态，不写入或读取实时进度表。同一 AI
+请求后续的工具轮次复用这次读取结果，避免为一个问题遍历并序列化整套任务树。
+快照的 `timeline` 记录任务开始、完成和检测到的进度变化；前两者沿用 FTBQ 存档中的
+时间戳，进度变化使用检测时间。它只通过 Worker IPC 传给 `search_tasks`，不写入
+`knowledge.db`，工具会按任务 ID 查询静态标题后返回给模型。
 
 任务奖励中的随机箱或候选奖励在响应中保留 `is_random=true`、`guaranteed=false` 和
 `candidates`，模型不得把候选列表写成确定获得的物品。
@@ -357,6 +412,8 @@ cache/build-report.json
 
 覆盖新增、修改、未变化复用、删除、双语/`neutral` 选择、自定义覆盖、损坏重建、非法 Front Matter 回退和事务失败回滚。规模基准默认把搜索 p95 预算设为 `50 ms`，以便给后续大语言模型回答保留预算。
 
-任务运行表与文本表共用物理数据库但互不污染：文本手册重建只替换
+任务定义表与文本表共用物理数据库但互不污染：文本手册重建只替换
 `knowledge_sources` 中的 `mod_manual`/`wiki` 和对应 `documents`；任务同步只替换对应
-`task_snapshots` 及其子表。`knowledge.db` 同时保存事实正文、搜索段落和任务快照，AI 上下文仍单独保存到 `conversations/memory.sqlite`。
+`task_snapshots` 及其静态子表。`knowledge.db` 保存事实正文、搜索段落和静态任务定义，
+玩家实时进度只存在于当前 `TaskRuntimeSnapshot`；AI 上下文仍单独保存到
+`conversations/memory.sqlite`。

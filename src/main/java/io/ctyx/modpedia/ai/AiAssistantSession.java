@@ -18,6 +18,7 @@ import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.tool.ToolErrorHandlerResult;
 import io.ctyx.modpedia.ModPedia;
+import io.ctyx.modpedia.ModPediaClient;
 import io.ctyx.modpedia.client.AssistantSession;
 import io.ctyx.modpedia.client.AssistantUiState;
 import io.ctyx.modpedia.client.BuiltInGuide;
@@ -30,6 +31,9 @@ import io.ctyx.modpedia.search.SearchQuery;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
+import io.ctyx.modpedia.search.ItemCatalogEntry;
+import io.ctyx.modpedia.search.ItemQueryParser;
+import io.ctyx.modpedia.task.TaskSearchSummary;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -180,6 +184,7 @@ public final class AiAssistantSession implements AssistantSession {
         int rounds = settings.effectiveMaxRounds();
         int results = settings.effectiveMaxResults();
         int contextChars = settings.effectiveMaxContextChars();
+        boolean taskQuestion = TaskQuestionClassifier.isTaskQuestion(normalized);
         SearchKnowledgeTool searchTool = createSearchTool(
                 request,
                 conversationId,
@@ -190,9 +195,9 @@ public final class AiAssistantSession implements AssistantSession {
         );
 
         if (settings.streaming()) {
-            startStreaming(request, conversationId, normalized, settings, language, rounds, searchTool);
+            startStreaming(request, conversationId, normalized, settings, language, rounds, searchTool, taskQuestion);
         } else {
-            startBlocking(request, conversationId, normalized, settings, language, rounds, searchTool);
+            startBlocking(request, conversationId, normalized, settings, language, rounds, searchTool, taskQuestion);
         }
     }
 
@@ -249,13 +254,23 @@ public final class AiAssistantSession implements AssistantSession {
     ) {
         EXECUTOR.execute(() -> {
             SearchResponse response;
+            List<ItemCatalogEntry> capturedItemContext;
             try {
+                ItemQueryParser.Parsed parsed = ItemQueryParser.parse(prompt);
+                capturedItemContext = retrievalService.lookupItemContext(prompt, language);
+                String searchPrompt = parsed.searchableText();
+                if (!capturedItemContext.isEmpty()) {
+                    searchPrompt = searchPrompt + " " + capturedItemContext.stream()
+                            .map(entry -> entry.itemId() + " " + entry.displayName())
+                            .collect(java.util.stream.Collectors.joining(" "));
+                }
                 response = retrievalService.search(new SearchQuery(
-                        prompt,
+                        searchPrompt,
                         settings.effectiveMaxResults(),
                         language
                 ));
             } catch (Throwable throwable) {
+                capturedItemContext = List.of();
                 response = new SearchResponse(
                         SearchStatus.INDEX_ERROR,
                         prompt,
@@ -266,12 +281,13 @@ public final class AiAssistantSession implements AssistantSession {
                 );
             }
             SearchResponse result = response;
+            List<ItemCatalogEntry> itemContext = List.copyOf(capturedItemContext);
             try {
                 Minecraft.getInstance().execute(() -> finishLocalSearch(
-                        request, conversationId, prompt, language, result
+                        request, conversationId, prompt, language, result, itemContext
                 ));
             } catch (Throwable ignored) {
-                finishLocalSearch(request, conversationId, prompt, language, result);
+                finishLocalSearch(request, conversationId, prompt, language, result, itemContext);
             }
         });
     }
@@ -281,7 +297,8 @@ public final class AiAssistantSession implements AssistantSession {
             String conversationId,
             String prompt,
             SearchLanguage language,
-            SearchResponse response
+            SearchResponse response,
+            List<ItemCatalogEntry> itemContext
     ) {
         if (request != requestSequence.get()) {
             return;
@@ -297,7 +314,8 @@ public final class AiAssistantSession implements AssistantSession {
                 response.status().name(),
                 false,
                 sources,
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                "search_knowledge"
         ));
 
         if (response.status() == SearchStatus.INDEX_NOT_READY
@@ -317,7 +335,7 @@ public final class AiAssistantSession implements AssistantSession {
         if (response.status() == SearchStatus.READY) {
             conversationStore.appendMessage(
                     conversationId,
-                    LocalSearchMessageFormatter.format(prompt, response)
+                    LocalSearchMessageFormatter.format(prompt, response, itemContext)
             );
         }
         if (conversationId.equals(conversationStore.activeId())) {
@@ -444,6 +462,9 @@ public final class AiAssistantSession implements AssistantSession {
                 contextChars,
                 1,
                 maxRounds,
+                new io.ctyx.modpedia.task.TaskKnowledgeStore(retrievalService.knowledgeRoot()),
+                ModPediaClient.taskAdapter(),
+                Long.toString(request),
                 trace -> onSearchTrace(request, conversationId, trace)
         );
     }
@@ -455,14 +476,15 @@ public final class AiAssistantSession implements AssistantSession {
             AiSettings settings,
             SearchLanguage language,
             int rounds,
-            SearchKnowledgeTool searchTool
+            SearchKnowledgeTool searchTool,
+            boolean taskQuestion
     ) {
         EXECUTOR.execute(() -> {
             AiRequestLifecycle lifecycle = new AiRequestLifecycle();
             try {
                 var model = AiClient.streamingModel(settings);
                 StreamingAssistantService service = buildStreamingService(
-                        model, settings, language, rounds, searchTool
+                        model, settings, language, rounds, searchTool, taskQuestion
                 );
                 StringBuilder draft = new StringBuilder();
                 AtomicBoolean firstTextLogged = new AtomicBoolean();
@@ -504,10 +526,11 @@ public final class AiAssistantSession implements AssistantSession {
                                         rounds,
                                         searchTool,
                                         new IllegalStateException("流式响应完成但没有文本内容"),
-                                        lifecycle
+                                        lifecycle,
+                                        taskQuestion
                                 );
                             } else if (lifecycle.complete()) {
-                                finish(request, conversationId, answer);
+                                finish(request, conversationId, answer, searchTool.taskSummary());
                             }
                         })
                         .onError(error -> {
@@ -520,7 +543,8 @@ public final class AiAssistantSession implements AssistantSession {
                                     rounds,
                                     searchTool,
                                     error,
-                                    lifecycle
+                                    lifecycle,
+                                    taskQuestion
                             );
                         });
                 // start() 之后由 partial-response 回调填充 StreamingHandle；不要在这里
@@ -536,7 +560,8 @@ public final class AiAssistantSession implements AssistantSession {
                         rounds,
                         searchTool,
                         throwable,
-                        lifecycle
+                        lifecycle,
+                        taskQuestion
                 );
             }
         });
@@ -551,7 +576,8 @@ public final class AiAssistantSession implements AssistantSession {
             int rounds,
             SearchKnowledgeTool searchTool,
             Throwable streamingError,
-            AiRequestLifecycle lifecycle
+            AiRequestLifecycle lifecycle,
+            boolean taskQuestion
     ) {
         if (request != requestSequence.get() || !lifecycle.beginFallback()) {
             return;
@@ -579,11 +605,12 @@ public final class AiAssistantSession implements AssistantSession {
                     effectiveSettings,
                     language,
                     rounds,
-                    freshSearchTool
+                    freshSearchTool,
+                    taskQuestion
             );
             String answer = service.chat(conversationId, prompt);
             if (lifecycle.completeFallback()) {
-                finish(request, conversationId, answer);
+                finish(request, conversationId, answer, freshSearchTool.taskSummary());
             }
         } catch (Throwable fallbackError) {
             if (!retryBlockingOnce(
@@ -594,7 +621,8 @@ public final class AiAssistantSession implements AssistantSession {
                     language,
                     rounds,
                     new AtomicBoolean(),
-                    fallbackError == null ? streamingError : fallbackError
+                    fallbackError == null ? streamingError : fallbackError,
+                    taskQuestion
             )) {
                 fail(request, conversationId, fallbackError == null ? streamingError : fallbackError);
             }
@@ -608,18 +636,19 @@ public final class AiAssistantSession implements AssistantSession {
             AiSettings settings,
             SearchLanguage language,
             int rounds,
-            SearchKnowledgeTool searchTool
+            SearchKnowledgeTool searchTool,
+            boolean taskQuestion
     ) {
         EXECUTOR.execute(() -> {
             AtomicBoolean retryStarted = new AtomicBoolean();
             try {
                 var model = AiClient.blockingModel(settings);
                 BlockingAssistantService service = buildBlockingService(
-                        model, settings, language, rounds, searchTool
+                        model, settings, language, rounds, searchTool, taskQuestion
                 );
                 publishLoading(conversationId, PHASE_ORGANIZING, "");
                 String answer = service.chat(conversationId, prompt);
-                finish(request, conversationId, answer);
+                finish(request, conversationId, answer, searchTool.taskSummary());
             } catch (Throwable throwable) {
                 if (retryBlockingOnce(
                         request,
@@ -629,7 +658,8 @@ public final class AiAssistantSession implements AssistantSession {
                         language,
                         rounds,
                         retryStarted,
-                        throwable
+                        throwable,
+                        taskQuestion
                 )) {
                     return;
                 }
@@ -641,7 +671,8 @@ public final class AiAssistantSession implements AssistantSession {
                         language,
                         rounds,
                         searchTool,
-                        throwable
+                        throwable,
+                        taskQuestion
                 )) {
                     fail(request, conversationId, throwable);
                 }
@@ -658,7 +689,8 @@ public final class AiAssistantSession implements AssistantSession {
             SearchLanguage language,
             int rounds,
             AtomicBoolean retryStarted,
-            Throwable firstFailure
+            Throwable firstFailure,
+            boolean taskQuestion
     ) {
         if (!AiClient.isRetryableFailure(firstFailure)
                 || !retryStarted.compareAndSet(false, true)
@@ -689,9 +721,10 @@ public final class AiAssistantSession implements AssistantSession {
                     settings,
                     language,
                     rounds,
-                    freshSearchTool
+                    freshSearchTool,
+                    taskQuestion
             );
-            finish(request, conversationId, service.chat(conversationId, prompt));
+            finish(request, conversationId, service.chat(conversationId, prompt), freshSearchTool.taskSummary());
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             fail(request, conversationId, interrupted);
@@ -709,7 +742,8 @@ public final class AiAssistantSession implements AssistantSession {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
-            Throwable failure
+            Throwable failure,
+            boolean taskQuestion
     ) {
         String fallbackModel = AiClient.fallbackModelName(settings.model());
         if (!AiClient.isGrokOAuthUnavailable(failure) || fallbackModel.isBlank()) {
@@ -743,9 +777,10 @@ public final class AiAssistantSession implements AssistantSession {
                     effectiveSettings,
                     language,
                     rounds,
-                    freshSearchTool
+                    freshSearchTool,
+                    taskQuestion
             );
-            finish(request, conversationId, service.chat(conversationId, prompt));
+            finish(request, conversationId, service.chat(conversationId, prompt), freshSearchTool.taskSummary());
         } catch (Throwable fallbackError) {
             fail(request, conversationId, fallbackError);
         }
@@ -770,7 +805,8 @@ public final class AiAssistantSession implements AssistantSession {
             AiSettings settings,
             SearchLanguage language,
             int rounds,
-            SearchKnowledgeTool searchTool
+            SearchKnowledgeTool searchTool,
+            boolean taskQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
         return AiServices.builder(StreamingAssistantService.class)
@@ -787,7 +823,9 @@ public final class AiAssistantSession implements AssistantSession {
                 // 提示词只能“建议”工具调用；首次请求强制 REQUIRED，避免模型直接
                 // 编造答案或把“如何使用”误答成整合包内另一个模组。工具结果回传后的
                 // 请求恢复 AUTO，模型才能根据证据完整度决定是否继续补搜或直接回答。
-                .chatRequestTransformer(request -> requireSearchOnFirstRequest(request, firstRequest))
+                .chatRequestTransformer(request -> requireSearchOnFirstRequest(
+                        request, firstRequest, taskQuestion
+                ))
                 .maxToolCallingRoundTrips(toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
                         "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
@@ -803,7 +841,8 @@ public final class AiAssistantSession implements AssistantSession {
             AiSettings settings,
             SearchLanguage language,
             int rounds,
-            SearchKnowledgeTool searchTool
+            SearchKnowledgeTool searchTool,
+            boolean taskQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
         return AiServices.builder(BlockingAssistantService.class)
@@ -817,7 +856,9 @@ public final class AiAssistantSession implements AssistantSession {
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
                 .tools(searchTool)
-                .chatRequestTransformer(request -> requireSearchOnFirstRequest(request, firstRequest))
+                .chatRequestTransformer(request -> requireSearchOnFirstRequest(
+                        request, firstRequest, taskQuestion
+                ))
                 .maxToolCallingRoundTrips(toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
                         "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
@@ -894,15 +935,20 @@ public final class AiAssistantSession implements AssistantSession {
         publish(new AssistantUiState.Loading(
                 conversationStore.active().messages(),
                 phase,
-                draft
+                AiResponseSanitizer.sanitize(draft)
         ));
     }
 
-    private void finish(long request, String conversationId, String answer) {
+    private void finish(
+            long request,
+            String conversationId,
+            String answer,
+            TaskSearchSummary taskSummary
+    ) {
         if (request != requestSequence.get()) {
             return;
         }
-        String normalized = answer == null ? "" : answer.strip();
+        String normalized = AiResponseSanitizer.sanitize(answer).strip();
         FollowUpQuestionParser.Parsed parsed = FollowUpQuestionParser.parse(normalized);
         if (parsed.markdown().isBlank() && parsed.questions().isEmpty()) {
             fail(request, conversationId, new IllegalStateException("AI 返回了空回答"));
@@ -939,7 +985,8 @@ public final class AiAssistantSession implements AssistantSession {
                 MessageRole.ASSISTANT,
                 displayMarkdown,
                 sources,
-                parsed.questions()
+                parsed.questions(),
+                taskSummary
         ));
         streamingHandle = null;
         if (conversationId.equals(conversationStore.activeId())) {
@@ -990,10 +1037,15 @@ public final class AiAssistantSession implements AssistantSession {
     }
 
     static ChatRequest requireSearchOnFirstRequest(ChatRequest request, AtomicBoolean firstRequest) {
-        if (request == null || firstRequest == null || !firstRequest.compareAndSet(true, false)) {
-            return request;
-        }
-        return request.toBuilder().toolChoice(ToolChoice.REQUIRED).build();
+        return AiToolRouter.requireSearchOnFirstRequest(request, firstRequest, false);
+    }
+
+    static ChatRequest requireSearchOnFirstRequest(
+            ChatRequest request,
+            AtomicBoolean firstRequest,
+            boolean taskQuestion
+    ) {
+        return AiToolRouter.requireSearchOnFirstRequest(request, firstRequest, taskQuestion);
     }
 
     private String sanitize(String message) {

@@ -1,7 +1,6 @@
 package io.ctyx.modpedia.client;
 
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
-import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -55,6 +54,19 @@ public final class AssistantScreen extends Screen {
     private List<SourceCard> sourceCards = List.of();
     private List<ItemHit> itemHits = List.of();
     private List<SuggestionHit> suggestionHits = List.of();
+    /**
+     * 消息布局不随鼠标移动变化。之前每一帧都会重新拆 Markdown、构建物品名称
+     * 候选并计算换行；大型整合包按 Cmd/Ctrl 时会因此把数万物品名称重复扫描。
+     * 这里按状态、宽度、字体和名称索引代数缓存普通/ID 两套布局。
+     */
+    private AssistantUiState cachedLayoutState;
+    private Font cachedLayoutFont;
+    private int cachedLayoutWidth = -1;
+    private long cachedLayoutGeneration = Long.MIN_VALUE;
+    private boolean normalLayoutReady;
+    private boolean idLayoutReady;
+    private List<MessageBubble> cachedNormalLayouts = List.of();
+    private List<MessageBubble> cachedIdLayouts = List.of();
     private SourceReference previewSource;
     private String previewStatus = "";
     private Bounds retryBounds;
@@ -150,6 +162,7 @@ public final class AssistantScreen extends Screen {
         if (bounds != null) {
             bounds = bounds.clampTo(width, height);
         }
+        invalidateMessageLayouts();
         super.resize(minecraft, width, height);
     }
 
@@ -607,9 +620,8 @@ public final class AssistantScreen extends Screen {
     private void drawMessages(GuiGraphics graphics, int mouseX, int mouseY) {
         Bounds area = messageBounds();
         List<ChatMessage> visibleMessages = visibleMessages();
-        List<MessageBubble> layouts = MessageList.layout(
+        List<MessageBubble> layouts = messageLayouts(
                 visibleMessages,
-                font,
                 area.width() - CONTENT_PADDING * 2,
                 hasControlDown()
         );
@@ -805,6 +817,20 @@ public final class AssistantScreen extends Screen {
                 }
                 textY += SourceCard.inlineHeight(line.annotations(), font, annotationWidth);
             }
+        }
+
+        List<FormattedCharSequence> taskSummaryLines = MessageBubble.taskSummaryLines(
+                message,
+                font,
+                layout.width()
+        );
+        if (!taskSummaryLines.isEmpty()) {
+            textY += MessageBubble.taskSummaryTopGap();
+            for (FormattedCharSequence line : taskSummaryLines) {
+                graphics.drawString(font, line, bubbleX + 12, textY, SUBTLE_TEXT_COLOR, false);
+                textY += font.lineHeight;
+            }
+            textY += 3;
         }
 
         if (layout.showFollowUps()) {
@@ -1106,7 +1132,7 @@ public final class AssistantScreen extends Screen {
     }
 
     private String statusText() {
-        KnowledgeStatus status = KnowledgeUpdateService.status();
+        KnowledgeStatus status = ModPediaBridge.get().knowledgeStatus();
         String text;
         if (status.updating()) {
             text = "知识库更新中 · " + status.sourceCount() + " 来源 · " + status.documentCount() + " 文档";
@@ -1137,7 +1163,52 @@ public final class AssistantScreen extends Screen {
 
     private void onStateChanged(AssistantUiState state) {
         currentState = state;
+        invalidateMessageLayouts();
         scrollToEnd = true;
+    }
+
+    private List<MessageBubble> messageLayouts(
+            List<ChatMessage> visibleMessages,
+            int contentWidth,
+            boolean showIds
+    ) {
+        long generation = ItemNameResolver.indexGeneration();
+        if (cachedLayoutState != currentState
+                || cachedLayoutFont != font
+                || cachedLayoutWidth != contentWidth
+                || cachedLayoutGeneration != generation) {
+            cachedLayoutState = currentState;
+            cachedLayoutFont = font;
+            cachedLayoutWidth = contentWidth;
+            cachedLayoutGeneration = generation;
+            normalLayoutReady = false;
+            idLayoutReady = false;
+            cachedNormalLayouts = List.of();
+            cachedIdLayouts = List.of();
+        }
+        if (showIds) {
+            if (!idLayoutReady) {
+                cachedIdLayouts = MessageList.layout(visibleMessages, font, contentWidth, true);
+                idLayoutReady = true;
+            }
+            return cachedIdLayouts;
+        }
+        if (!normalLayoutReady) {
+            cachedNormalLayouts = MessageList.layout(visibleMessages, font, contentWidth, false);
+            normalLayoutReady = true;
+        }
+        return cachedNormalLayouts;
+    }
+
+    private void invalidateMessageLayouts() {
+        cachedLayoutState = null;
+        cachedLayoutFont = null;
+        cachedLayoutWidth = -1;
+        cachedLayoutGeneration = Long.MIN_VALUE;
+        normalLayoutReady = false;
+        idLayoutReady = false;
+        cachedNormalLayouts = List.of();
+        cachedIdLayouts = List.of();
     }
 
     void addSettingsContentWidget(AbstractWidget widget) {
@@ -1472,7 +1543,7 @@ public final class AssistantScreen extends Screen {
         if (line.items().isEmpty() || line.source().kind() == MarkdownLine.Kind.CODE) {
             return;
         }
-        String text = line.source().text();
+        String text = formattedText(line.sequence());
         int searchFrom = 0;
         for (ItemReference reference : line.items()) {
             String display = reference.displayText();
@@ -1523,6 +1594,18 @@ public final class AssistantScreen extends Screen {
         List<T> copy = new ArrayList<>(original);
         copy.add(value);
         return copy;
+    }
+
+    private static String formattedText(FormattedCharSequence sequence) {
+        if (sequence == null) {
+            return "";
+        }
+        StringBuilder result = new StringBuilder();
+        sequence.accept((codePointIndex, style, codePoint) -> {
+            result.appendCodePoint(codePoint);
+            return true;
+        });
+        return result.toString();
     }
 
     private record Bounds(int left, int top, int width, int height) {

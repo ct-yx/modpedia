@@ -1,7 +1,7 @@
 package io.ctyx.modpedia.search;
 
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
-import io.ctyx.modpedia.knowledge.LocalGuideScanner;
+import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.ScannedResource;
 import io.ctyx.modpedia.client.BuiltInGuide;
 
@@ -51,7 +51,7 @@ public final class AssistantUsageSelfTest {
             );
             KnowledgeCompiler.CompileResult result = new KnowledgeCompiler().compile(
                     root,
-                    new LocalGuideScanner.ScanResult(List.of(builtin), List.of()),
+                    new KnowledgeScanResult(List.of(builtin), List.of()),
                     true
             );
 

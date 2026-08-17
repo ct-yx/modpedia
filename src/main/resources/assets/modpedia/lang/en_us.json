@@ -19,6 +19,8 @@
   "screen.modpedia.phase.analyzing": "Analyzing the question…",
   "screen.modpedia.phase.searching": "Searching the local knowledge base…",
   "screen.modpedia.phase.more_search": "Evidence is incomplete; searching again…",
+  "screen.modpedia.task_summary": "Task definitions %s · Runtime states %s · Live progress items %s · Timeline %s",
+  "screen.modpedia.task_summary_unavailable": "Task definitions %s · Runtime states %s · Live progress not synced · Timeline %s",
   "screen.modpedia.phase.results": "Reviewing search results…",
   "screen.modpedia.phase.organizing": "Preparing the answer…",
   "screen.modpedia.phase.stream_fallback": "Streaming failed; requesting a complete answer…",

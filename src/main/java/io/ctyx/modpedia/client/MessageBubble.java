@@ -1,5 +1,8 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.task.TaskSearchSummary;
+import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.client.gui.Font;
 
 import java.util.ArrayList;
@@ -18,6 +21,8 @@ public record MessageBubble(
     private static final int FOLLOW_UP_ROW_GAP = 3;
     private static final int SECTION_LABEL_GAP = 3;
     private static final int SECTION_BOTTOM_GAP = 4;
+    private static final int TASK_SUMMARY_TOP_GAP = 3;
+    private static final int TASK_SUMMARY_BOTTOM_GAP = 3;
 
     public MessageBubble {
         lines = List.copyOf(lines);
@@ -59,6 +64,7 @@ public record MessageBubble(
             int width = Math.min(maxWidth, Math.max(150, widest + 24));
             boolean showFollowUps = index == lastAssistantIndex && !message.followUpQuestions().isEmpty();
             int height = 14 + bodyHeight(lines, font, width)
+                    + taskSummaryHeight(message, font, width)
                     + (showFollowUps ? followUpSectionHeight(font, message.followUpQuestions().size()) : 0);
             result.add(new MessageBubble(message, top, width, height, lines, showFollowUps));
             top += height + 6;
@@ -74,6 +80,56 @@ public record MessageBubble(
             height += SourceCard.inlineHeight(line.annotations(), font, annotationWidth);
         }
         return height;
+    }
+
+    static List<FormattedCharSequence> taskSummaryLines(
+            ChatMessage message,
+            Font font,
+            int bubbleWidth
+    ) {
+        if (message == null || message.taskSummary() == null || !message.taskSummary().visible()) {
+            return List.of();
+        }
+        return font.split(
+                taskSummaryComponent(message.taskSummary()),
+                Math.max(80, bubbleWidth - 24)
+        );
+    }
+
+    static int taskSummaryHeight(ChatMessage message, Font font, int bubbleWidth) {
+        List<FormattedCharSequence> lines = taskSummaryLines(message, font, bubbleWidth);
+        return lines.isEmpty()
+                ? 0
+                : TASK_SUMMARY_TOP_GAP
+                + lines.size() * font.lineHeight
+                + TASK_SUMMARY_BOTTOM_GAP;
+    }
+
+    static int taskSummaryTopGap() {
+        return TASK_SUMMARY_TOP_GAP;
+    }
+
+    static Component taskSummaryComponent(TaskSearchSummary summary) {
+        if (summary == null) {
+            return Component.empty();
+        }
+        String key = summary.runtimeProgressAvailable()
+                ? "screen.modpedia.task_summary"
+                : "screen.modpedia.task_summary_unavailable";
+        return summary.runtimeProgressAvailable()
+                ? Component.translatable(
+                        key,
+                        summary.taskDefinitionCount(),
+                        summary.runtimeStateCount(),
+                        summary.progressItemCount(),
+                        summary.timelineEntryCount()
+                )
+                : Component.translatable(
+                        key,
+                        summary.taskDefinitionCount(),
+                        summary.runtimeStateCount(),
+                        summary.timelineEntryCount()
+                );
     }
 
     static int followUpSectionHeight(Font font, int questionCount) {

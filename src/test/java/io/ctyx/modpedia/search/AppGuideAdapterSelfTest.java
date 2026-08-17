@@ -2,8 +2,8 @@ package io.ctyx.modpedia.search;
 
 import io.ctyx.modpedia.knowledge.AppGuideDocumentConverter;
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
+import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
-import io.ctyx.modpedia.knowledge.LocalGuideScanner;
 import io.ctyx.modpedia.knowledge.ScannedResource;
 
 import java.io.IOException;
@@ -190,7 +190,7 @@ public final class AppGuideAdapterSelfTest {
         KnowledgeCompiler compiler = new KnowledgeCompiler();
         KnowledgeCompiler.CompileResult first = compiler.compile(
                 config,
-                new LocalGuideScanner.ScanResult(List.of(source), List.of())
+                new KnowledgeScanResult(List.of(source), List.of())
         );
         check(first.report().documentCount() == 2, "编译结果应包含两个 APP 文档");
         RetrievalService retrieval = new RetrievalService(first.knowledgeRoot());
@@ -200,7 +200,7 @@ public final class AppGuideAdapterSelfTest {
 
         KnowledgeCompiler.CompileResult reused = compiler.compile(
                 config,
-                new LocalGuideScanner.ScanResult(List.of(source), List.of())
+                new KnowledgeScanResult(List.of(source), List.of())
         );
         check(reused.report().reusedCount() == 2, "内容和指纹未变化时应复用两个 APP 文档");
 
@@ -215,7 +215,7 @@ public final class AppGuideAdapterSelfTest {
         );
         KnowledgeCompiler.CompileResult updated = compiler.compile(
                 config,
-                new LocalGuideScanner.ScanResult(List.of(changed), List.of())
+                new KnowledgeScanResult(List.of(changed), List.of())
         );
         check(updated.report().updatedCount() == 2, "APP 内容变化后应重新生成逻辑文档");
         SearchResponse changedSearch = new RetrievalService(updated.knowledgeRoot()).search("新的压力");

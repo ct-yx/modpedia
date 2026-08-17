@@ -26,7 +26,8 @@ public final class MarkdownParser {
         List<MarkdownLine> result = new ArrayList<>();
         boolean inFence = false;
 
-        for (String sourceLine : sourceLines) {
+        for (int index = 0; index < sourceLines.length; index++) {
+            String sourceLine = sourceLines[index];
             String trimmed = sourceLine.trim();
             if (isFence(trimmed)) {
                 inFence = !inFence;
@@ -38,6 +39,27 @@ public final class MarkdownParser {
             }
             if (sourceLine.isBlank()) {
                 result.add(new MarkdownLine(" ", MarkdownLine.Kind.BLANK, 0));
+                continue;
+            }
+
+            // GFM 表格必须由“表头 + 对齐分隔线”共同确认。这样普通正文中的 | 不会被
+            // 误判为表格，同时也不会把分隔线和列边界原样泄漏到游戏界面。
+            List<String> headerCells = splitTableCells(sourceLine);
+            if (headerCells.size() >= 2
+                    && index + 1 < sourceLines.length
+                    && isTableSeparator(sourceLines[index + 1], headerCells.size())) {
+                result.add(tableLine(headerCells, MarkdownLine.Kind.TABLE_HEADER));
+                index += 2;
+                while (index < sourceLines.length) {
+                    List<String> rowCells = splitTableCells(sourceLines[index]);
+                    if (rowCells.size() < 2 || rowCells.size() > headerCells.size()) {
+                        break;
+                    }
+                    result.add(tableLine(rowCells, MarkdownLine.Kind.TABLE_ROW));
+                    index++;
+                }
+                // 让 for 循环继续处理表格后的空行、标题或普通段落。
+                index--;
                 continue;
             }
 
@@ -93,6 +115,62 @@ public final class MarkdownParser {
 
     private static boolean isFence(String trimmed) {
         return trimmed.startsWith("```") || trimmed.startsWith("~~~");
+    }
+
+    private static boolean isTableSeparator(String sourceLine, int columnCount) {
+        List<String> cells = splitTableCells(sourceLine);
+        if (cells.size() != columnCount) {
+            return false;
+        }
+        for (String cell : cells) {
+            if (!cell.strip().matches(":?-{3,}:?")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<String> splitTableCells(String sourceLine) {
+        if (sourceLine == null) {
+            return List.of();
+        }
+        String value = sourceLine.strip();
+        if (value.indexOf('|') < 0) {
+            return List.of();
+        }
+        if (value.startsWith("|")) {
+            value = value.substring(1);
+        }
+        if (value.endsWith("|") && !value.endsWith("\\|")) {
+            value = value.substring(0, value.length() - 1);
+        }
+
+        List<String> cells = new ArrayList<>();
+        StringBuilder cell = new StringBuilder();
+        boolean inInlineCode = false;
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character == '\\' && index + 1 < value.length() && value.charAt(index + 1) == '|') {
+                cell.append('|');
+                index++;
+                continue;
+            }
+            if (character == '`') {
+                inInlineCode = !inInlineCode;
+            }
+            if (character == '|' && !inInlineCode) {
+                cells.add(cell.toString().strip());
+                cell.setLength(0);
+            } else {
+                cell.append(character);
+            }
+        }
+        cells.add(cell.toString().strip());
+        return List.copyOf(cells);
+    }
+
+    private static MarkdownLine tableLine(List<String> cells, MarkdownLine.Kind kind) {
+        return new MarkdownLine(String.join("  │  ", cells), kind, 0);
     }
 
     private static int indentationLevel(String indentation) {

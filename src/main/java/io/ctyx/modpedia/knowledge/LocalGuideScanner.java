@@ -9,6 +9,8 @@ import net.neoforged.neoforgespi.language.IModInfo;
 import net.neoforged.neoforgespi.locating.IModFile;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -94,6 +96,7 @@ public final class LocalGuideScanner {
                         .sorted()
                         .toList();
                 Map<String, String> preferredPatchouliLocales = selectPatchouliLocales(relativePaths);
+                Set<String> selectedGuidePaths = GuideLocaleSelector.select(relativePaths);
                 Map<String, SourceClassification> classifications = sourceClassifications(
                         root,
                         relativePaths,
@@ -102,7 +105,7 @@ public final class LocalGuideScanner {
                         warnings
                 );
                 relativePaths.stream()
-                        .filter(path -> isCandidate(path, preferredPatchouliLocales))
+                        .filter(path -> isCandidate(path, preferredPatchouliLocales, selectedGuidePaths))
                         .forEach(relativePath -> readResource(
                                 root,
                                 relativePath,
@@ -155,9 +158,16 @@ public final class LocalGuideScanner {
                 && (lowerPath.endsWith(".json") || lowerPath.endsWith(".md"));
     }
 
-    private boolean isCandidate(String path, Map<String, String> preferredPatchouliLocales) {
+    private boolean isCandidate(
+            String path,
+            Map<String, String> preferredPatchouliLocales,
+            Set<String> selectedGuidePaths
+    ) {
         if (LANGUAGE_PATH.matcher(path).matches()) {
             return true;
+        }
+        if (!GuideLocaleSelector.shouldInclude(path, selectedGuidePaths)) {
+            return false;
         }
 
         Matcher patchouliLocale = PATCHOULI_LOCALE_PATH.matcher(path);
@@ -216,7 +226,11 @@ public final class LocalGuideScanner {
                 warnings.add("跳过过大的知识文件：" + relativePath);
                 return;
             }
-            byte[] bytes = Files.readAllBytes(absolutePath);
+            byte[] bytes = readLimited(absolutePath, MAX_TEXT_FILE_SIZE);
+            if (bytes == null) {
+                warnings.add("跳过读取过程中超过上限的知识文件：" + relativePath);
+                return;
+            }
             String content = new String(bytes, StandardCharsets.UTF_8);
             String sourceType = sourceTypeOf(relativePath, content);
             if (sourceType == null && !LANGUAGE_PATH.matcher(relativePath).matches()) {
@@ -242,6 +256,23 @@ public final class LocalGuideScanner {
             ));
         } catch (IOException | RuntimeException exception) {
             warnings.add("读取知识文件失败：" + relativePath + "（" + exception.getClass().getSimpleName() + "）");
+        }
+    }
+
+    private byte[] readLimited(Path path, long limit) throws IOException {
+        try (InputStream input = Files.newInputStream(path)) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream(8192);
+            byte[] buffer = new byte[8192];
+            long total = 0L;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > limit) {
+                    return null;
+                }
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
         }
     }
 
@@ -580,6 +611,10 @@ public final class LocalGuideScanner {
         public ScanResult {
             resources = List.copyOf(Objects.requireNonNull(resources));
             warnings = List.copyOf(Objects.requireNonNull(warnings));
+        }
+
+        public KnowledgeScanResult toKnowledgeScanResult() {
+            return new KnowledgeScanResult(resources, warnings);
         }
     }
 
