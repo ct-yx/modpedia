@@ -5,6 +5,8 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 [![Build](https://github.com/ct-yx/modpedia/actions/workflows/build.yml/badge.svg)](https://github.com/ct-yx/modpedia/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/ct-yx/modpedia?include_prereleases&label=release)](https://github.com/ct-yx/modpedia/releases)
 
+English version: [README.en.md](README.en.md)
+
 ## 当前版本
 
 | 项目 | 版本/状态 |
@@ -360,4 +362,11 @@ build/reports/modpedia/knowledge-benchmark.md
 - 作者：ctyx
 - Mod ID：modpedia
 - 包名：io.ctyx.modpedia
-- 许可证：当前元数据标记为 All Rights Reserved。
+- 许可证：[Apache License 2.0](LICENSE)。项目来源与修改版标识要求见 [NOTICE](NOTICE)。
+
+### 再发布与修改
+
+- 未修改的 ModPedia JAR 可以直接放入整合包并随整合包分发；整合包作者不需要声明自己是 ModPedia 的作者或修改者，但应保留 `LICENSE` 和 `NOTICE`。
+- 修改源码或 JAR 后发布时，必须保留原作者 `ctyx` 和 ModPedia 的来源声明，在修改文件或发布说明中显著说明改动，并标注这是第三方修改版、分支或衍生版本。
+- 修改版不得使用 `ctyx`、`ModPedia`、`ModPedia · 模组百科` 的名称、图标或原作者身份暗示官方维护、发布、背书或支持；应使用自己的维护者和版本标识。
+- 以上项目标识说明与 Apache License 2.0 配合使用，代码授权范围以 [LICENSE](LICENSE) 为准。

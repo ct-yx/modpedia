@@ -76,4 +76,6 @@ jobs:
             SHA256SUMS \
             CHANGELOG.md \
             INSTALL.md \
-            KNOWN_LIMITATIONS.md
+            KNOWN_LIMITATIONS.md \
+            LICENSE \
+            NOTICE

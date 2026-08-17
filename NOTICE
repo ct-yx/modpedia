@@ -1,0 +1,22 @@
+ModPedia · 模组百科
+Copyright 2026 ctyx
+
+ModPedia is distributed under the Apache License, Version 2.0. The complete
+license text is in LICENSE.
+
+再发布与修改说明
+
+1. 未修改的 ModPedia JAR 可以直接随整合包收录和分发。整合包作者无需
+   声明自己是 ModPedia 的作者或修改者，但分发内容应保留 LICENSE 和
+   NOTICE。
+
+2. 修改源码或 JAR 后再发布时，应保留原作者 ctyx 的版权和项目声明，
+   在修改文件或发布说明中显著标注修改内容，并明确这是第三方修改版、
+   分支或衍生版本。
+
+3. 第三方修改版不得使用 ctyx、ModPedia、ModPedia · 模组百科的名称、
+   图标或原作者身份，使用户误以为该版本由原作者维护、发布、背书或
+   官方支持。修改版应使用自己的维护者和版本标识。
+
+4. 本 NOTICE 只补充项目来源、修改版标识和品牌使用说明，不收紧
+   LICENSE 中 Apache License 2.0 对代码授予的权利。

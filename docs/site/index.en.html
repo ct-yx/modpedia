@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ModPedia: a local mod knowledge assistant for Minecraft modpacks.">
+  <title>ModPedia · Mod Knowledge Assistant</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="ModPedia home">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span>ModPedia</span>
+      </a>
+      <nav class="nav-links" aria-label="Page navigation">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="#downloads">Download</a>
+        <a href="./index.html">中文</a>
+        <a href="https://github.com/ct-yx/modpedia" target="_blank" rel="noreferrer">GitHub ↗</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero section-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Minecraft · NeoForge 1.21.1</p>
+          <h1>Your modpack knowledge, <span>always within reach.</span></h1>
+          <p class="hero-lede">ModPedia is a local mod knowledge assistant for large Minecraft modpacks. It reads manuals from installed mods, builds a searchable local knowledge base, and can connect to your configured AI to organize answers.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#downloads">Download v1.0.1</a>
+            <a class="button button-quiet" href="https://github.com/ct-yx/modpedia" target="_blank" rel="noreferrer">View source <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="hero-note"><span class="status-dot"></span> Local first · Search only · Optional AI</p>
+        </div>
+        <div class="hero-visual" aria-label="ModPedia assistant UI preview">
+          <div class="glow glow-one"></div>
+          <div class="glow glow-two"></div>
+          <div class="assistant-card">
+            <div class="assistant-header">
+              <span class="mini-logo">✦</span>
+              <span>ModPedia</span>
+              <span class="ready-pill">Knowledge ready</span>
+              <span class="close-icon">×</span>
+            </div>
+            <div class="assistant-body">
+              <div class="bubble bubble-user">What are the prerequisites for the pressure vessel?</div>
+              <div class="bubble bubble-ai"><strong>Pressure vessel</strong> requires a basic framework, a stable pressure source, and the structure requirements for the current version.</div>
+              <div class="source-line"><span class="source-icon">↗</span> Prerequisites and structure</div>
+              <div class="assistant-input"><span>Ask a question…</span><span class="send-icon">↑</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust-strip" aria-label="Project features">
+        <span>Built for modpacks</span><i></i><span>Markdown + SQLite</span><i></i><span>No AI lock-in</span><i></i><span>Optional integrations</span>
+      </section>
+
+      <section id="features" class="content-section">
+        <div class="section-heading">
+          <p class="eyebrow">FEATURES</p>
+          <h2>From “can’t find it” to “can understand it.”</h2>
+          <p>Turn information scattered across manuals, quests, and item Tooltips into a clear local retrieval path.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card feature-card-highlight">
+            <div class="feature-icon">⌕</div>
+            <h3>Local knowledge base</h3>
+            <p>Scan Patchouli, GuideME, and Modonomicon manuals from installed content mods while preserving complete Markdown, heading paths, and source navigation.</p>
+            <span class="card-tag">SQLite · FTS5</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">✦</div>
+            <h3>AI-assisted answers</h3>
+            <p>The model can call the local search tool, continue searching when evidence is incomplete, and cite only sources actually retrieved in the current round.</p>
+            <span class="card-tag">Configurable API</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">▦</div>
+            <h3>Modpack integrations</h3>
+            <p>FTB Quests, JEI, and Jade are optional integrations for task progress, item names, recipe navigation, and crosshair targets.</p>
+            <span class="card-tag">Optional dependencies</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="split-section section-grid">
+        <div class="split-copy">
+          <p class="eyebrow">LOCAL FIRST</p>
+          <h2>Keep your knowledge<br><span>on your computer.</span></h2>
+          <p>You can use ModPedia without AI. Turn on Search-only mode to query the local knowledge base directly; connect a Chat Completions-compatible model when you want more natural explanations.</p>
+          <ul class="check-list">
+            <li><span>✓</span> Import installed mod manuals on first startup</li>
+            <li><span>✓</span> Store complete paragraphs and source data in SQLite</li>
+            <li><span>✓</span> Keep the knowledge base and conversations local</li>
+          </ul>
+        </div>
+        <div class="data-panel" aria-label="Local knowledge base diagram">
+          <div class="panel-top"><span>knowledge.db</span><span class="panel-live">● READY</span></div>
+          <div class="db-row"><span class="db-key">documents</span><span>Manual text</span><b>365+</b></div>
+          <div class="db-row"><span class="db-key">segments_fts</span><span>Full-text search</span><b>FTS5</b></div>
+          <div class="db-row"><span class="db-key">item_catalog</span><span>Item names and Tooltips</span><b>SYNC</b></div>
+          <div class="db-row"><span class="db-key">task_quests</span><span>Static task definitions</span><b>OPTIONAL</b></div>
+          <div class="panel-footer"><span class="tiny-dot"></span> Every source remains traceable</div>
+        </div>
+      </section>
+
+      <section id="install" class="content-section install-section">
+        <div class="section-heading compact-heading">
+          <p class="eyebrow">GET STARTED</p>
+          <h2>Start in three steps.</h2>
+        </div>
+        <div class="steps-grid">
+          <div class="step"><span class="step-number">01</span><h3>Prepare</h3><p>Minecraft 1.21.1, NeoForge 21.1.x, and Java 21.</p></div>
+          <div class="step"><span class="step-number">02</span><h3>Install the Mod</h3><p>Put the ModPedia JAR in the instance <code>mods/</code> directory.</p></div>
+          <div class="step"><span class="step-number">03</span><h3>Open the Assistant</h3><p>Press <kbd>K</kbd> in-game; press <kbd>F9</kbd> when the knowledge base needs rebuilding.</p></div>
+        </div>
+        <div class="optional-note"><strong>No forced bundles.</strong> Patchouli, GuideME, Modonomicon, FTB Quests, JEI, and Jade are all optional integrations. ModPedia still loads normally without them.</div>
+      </section>
+
+      <section id="downloads" class="download-section">
+        <div class="download-copy">
+          <p class="eyebrow">LATEST RELEASE</p>
+          <h2>ModPedia <span>v1.0.1</span></h2>
+          <p>The current official GitHub release for Minecraft 1.21.1 + NeoForge 21.1.x.</p>
+          <div class="release-meta"><span>Java 21</span><span>Client Mod</span><span>Search-only mode</span></div>
+          <p class="download-security-note"><strong>Local key protection:</strong> the AI settings file stores only AES-GCM ciphertext derived from the system identifier. The game decrypts it in memory; logs never record the API key, and a changed system identifier clears the key field.</p>
+        </div>
+        <div class="download-actions">
+          <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.0.1/modpedia-1.0.1.jar">Download Mod JAR <span aria-hidden="true">↓</span></a>
+          <a class="text-link" href="https://github.com/ct-yx/modpedia/releases/tag/v1.0.1" target="_blank" rel="noreferrer">View Release assets and checksums ↗</a>
+          <a class="text-link" href="https://github.com/ct-yx/modpedia/blob/main/INSTALL.md" target="_blank" rel="noreferrer">Read the installation guide ↗</a>
+        </div>
+      </section>
+
+      <section id="pack-release-warning" class="release-warning" aria-labelledby="pack-release-warning-title">
+        <div class="release-warning-heading">
+          <p class="eyebrow">PACK RELEASE NOTICE</p>
+          <h2 id="pack-release-warning-title">Clean ModPedia config before publishing a modpack.</h2>
+          <p>These files may contain personal player settings, an API key, or a knowledge database generated for the current instance. A modpack should carry only reusable source content.</p>
+        </div>
+        <div class="release-warning-grid">
+          <div class="release-warning-folder release-warning-folder-remove">
+            <div class="release-warning-folder-path"><span>01</span><strong>Remove</strong><code>runtime/</code></div>
+            <h3>Remove before publishing</h3>
+            <ul>
+              <li><code>config/modpedia/runtime/ai.json</code></li>
+              <li><code>config/modpedia/runtime/installation-id</code></li>
+              <li><code>config/modpedia/runtime/conversations/</code></li>
+              <li><code>config/modpedia/runtime/diagnostics/</code></li>
+              <li><code>config/modpedia/runtime/worker/</code></li>
+              <li><code>config/modpedia/runtime/assistant-window.json</code></li>
+              <li><code>config/modpedia/runtime/assistant-glass.json</code></li>
+              <li><code>config/modpedia/runtime/knowledge/knowledge.db*</code></li>
+              <li><code>config/modpedia/runtime/knowledge/generated/</code></li>
+              <li><code>config/modpedia/runtime/knowledge/cache/</code></li>
+              <li><code>config/modpedia/runtime/knowledge/manifest.json</code></li>
+              <li><code>config/modpedia/runtime/knowledge/keyword-index.json</code></li>
+              <li><code>config/modpedia/runtime/knowledge/state.json</code></li>
+            </ul>
+          </div>
+          <div class="release-warning-folder release-warning-folder-keep">
+            <div class="release-warning-folder-path"><span>02</span><strong>Keep</strong><code>knowledge/</code></div>
+            <h3>Keep with the modpack</h3>
+            <ul>
+              <li><code>config/modpedia/knowledge/custom/**/*.md</code></li>
+              <li><code>config/modpedia/knowledge/sources/&lt;source-id&gt;/source.json</code></li>
+              <li><code>config/modpedia/knowledge/sources/&lt;source-id&gt;/documents/**/*.md</code></li>
+              <li><code>config/modpedia/knowledge/sources/&lt;source-id&gt;/media.json</code></li>
+              <li><code>config/modpedia/knowledge/source-overrides.json</code></li>
+              <li><code>config/modpedia/knowledge/search-synonyms.json</code></li>
+            </ul>
+          </div>
+        </div>
+        <p class="release-warning-footnote"><code>runtime/</code> is regenerated on first startup or after pressing <kbd>F9</kbd>. <code>media.json</code> stays with its source directory for Wiki media metadata; the current text search indexes Markdown only. <a href="https://github.com/ct-yx/modpedia/blob/main/README.en.md#cleaning-config-before-publishing-a-modpack" target="_blank" rel="noreferrer">Read the complete README rules ↗</a></p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div><a class="brand footer-brand" href="#top"><span class="brand-mark">✦</span><span>ModPedia</span></a><p>Modpack knowledge, always within reach.</p></div>
+      <div class="footer-links"><a href="https://github.com/ct-yx/modpedia" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/ct-yx/modpedia/issues" target="_blank" rel="noreferrer">Report an issue</a><a href="https://github.com/ct-yx/modpedia/blob/main/LICENSE" target="_blank" rel="noreferrer">Apache License 2.0</a><a href="https://github.com/ct-yx/modpedia/blob/main/NOTICE" target="_blank" rel="noreferrer">Redistribution notice</a><a href="#downloads">Download</a></div>
+      <p class="copyright">© 2026 ctyx · ModPedia</p>
+    </footer>
+  </div>
+</body>
+</html>
