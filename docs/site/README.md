@@ -24,4 +24,4 @@ python3 -m http.server 8000
 Settings → Pages → Source: GitHub Actions
 ```
 
-下载链接和项目链接目前指向 `ct-yx/modpedia` 的 `v1.0.1` Release。发布新版本时同步修改 `index.html` 和 `index.en.html` 中的版本号、Release 地址和 JAR 文件名。
+下载链接和项目链接目前指向 `ct-yx/modpedia` 的 `v1.1.0` Release。发布新版本时同步修改 `index.html` 和 `index.en.html` 中的版本号、Release 地址和 JAR 文件名。

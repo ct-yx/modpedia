@@ -35,7 +35,7 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | Java | 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
-| 当前发布版本 | `v1.0.1` |
+| 当前发布版本 | `v1.1.0` |
 | 当前检查分支 | `main` |
 | 当前检查 HEAD | 以 `git log -1` 为准 |
 | 主配置目录 | `config/modpedia/` |
@@ -122,8 +122,6 @@ docs/WORKER_FIX_GUIDE.md
 ```text
 config/modpedia/
 ├── runtime/                         # 发布整合包前删除
-│   ├── ai.json
-│   ├── installation-id
 │   ├── conversations/
 │   │   ├── conversation-*.json
 │   │   └── memory.sqlite
@@ -148,7 +146,14 @@ config/modpedia/
     │   └── media.json
     ├── source-overrides.json
     └── search-synonyms.json
+
+~/.modpedia/
+├── ai.json                           # 跨实例共享的用户级 AI 配置
+└── installation-id                   # 无系统 UUID 时的共享回退标识
 ```
+
+旧版 `config/modpedia/ai.json` 和 `config/modpedia/runtime/ai.json` 会在启动时迁移到
+`~/.modpedia/ai.json`；该用户目录不属于整合包，也不随实例复制。
 
 `runtime/knowledge/knowledge.db` 使用 Schema v7，包含手册、Wiki、静态任务定义和
 `item_catalog`。运行时任务进度使用当前查询的内存快照；会话正文与知识库正文分开保存。

@@ -97,6 +97,7 @@ public final class AiSettingsSelfTest {
             check(standard.effectiveMaxRounds() == 3, "标准档位应使用 3 轮预算");
             check(standard.effectiveMaxResults() == 8, "标准档位应使用 8 条结果预算");
             check(standard.effectiveMaxContextChars() == 16_000, "标准档位应使用 16000 字符预算");
+            migrateConfiguredFileIfRequested();
             System.out.println("ModPedia AI settings self-test passed");
         } finally {
             deleteTree(root);
@@ -107,6 +108,18 @@ public final class AiSettingsSelfTest {
         if (!condition) {
             throw new AssertionError(message);
         }
+    }
+
+    private static void migrateConfiguredFileIfRequested() {
+        String configured = System.getProperty("modpedia.aiSettingsFile", "").strip();
+        if (configured.isBlank()) {
+            return;
+        }
+        AiSettings settings = new AiSettingsStore(Path.of(configured)).load();
+        check(settings != null, "指定的共享 AI 配置应可读取");
+        System.out.println("Shared AI settings loaded: path=" + Path.of(configured).toAbsolutePath()
+                + ", apiKeyPresent=" + !settings.apiKey().isBlank()
+                + ", apiKeyLength=" + settings.apiKey().length());
     }
 
     private static void deleteTree(Path root) throws Exception {

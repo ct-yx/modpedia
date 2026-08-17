@@ -10,9 +10,12 @@ import io.ctyx.modpedia.search.RetrievalService;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** 验证运行时派生文件与整合包事实源的实际磁盘布局及早期目录迁移。 */
 public final class ModPediaPathsSelfTest {
@@ -23,6 +26,7 @@ public final class ModPediaPathsSelfTest {
         Path temporary = Files.createTempDirectory("modpedia-storage-layout-");
         try {
             Path config = temporary.resolve("config");
+            Path userHome = temporary.resolve("user-home");
             Path legacyRoot = config.resolve("modpedia");
             write(legacyRoot.resolve("ai.json"), "{\"mode\":\"ai\"}");
             write(legacyRoot.resolve("conversations/conversation.json"), "history");
@@ -47,10 +51,13 @@ public final class ModPediaPathsSelfTest {
             write(legacyRoot.resolve("knowledge/sources/pack/media.json"), "{}\n");
             write(legacyRoot.resolve("knowledge/source-overrides.json"), "{}\n");
 
-            ModPediaPaths paths = ModPediaPaths.forConfig(config);
+            ModPediaPaths paths = ModPediaPaths.forConfig(config, userHome);
             ModPediaPaths.MigrationResult migration = paths.migrateLegacy();
             check(migration.changed(), "旧布局应产生迁移记录");
-            check(Files.isRegularFile(paths.aiSettings()), "ai.json 应迁移到 runtime");
+            check(Files.isRegularFile(paths.aiSettings()), "ai.json 应迁移到用户共享目录");
+            check(paths.aiSettings().equals(userHome.resolve(".modpedia/ai.json")),
+                    "共享 ai.json 应位于用户目录下的 .modpedia");
+            checkSharedSettingsPermissions(paths);
             check(Files.isRegularFile(paths.conversationsRoot().resolve("conversation.json")),
                     "会话应迁移到 runtime");
             check(Files.isRegularFile(paths.workerRoot().resolve("worker.log")),
@@ -68,11 +75,18 @@ public final class ModPediaPathsSelfTest {
             check(Files.isRegularFile(legacyRoot.resolve("knowledge/source-overrides.json")),
                     "source-overrides.json 必须原地保留");
             check(!Files.exists(legacyRoot.resolve("ai.json")), "旧 ai.json 不应继续散落在根目录");
+            check(!Files.exists(paths.runtimeRoot().resolve("ai.json")),
+                    "旧 runtime ai.json 不应继续留在实例目录");
             check(!Files.exists(legacyRoot.resolve("knowledge/knowledge.db")),
                     "旧 knowledge.db 不应继续散落在事实源目录");
 
             ModPediaPaths.MigrationResult second = paths.migrateLegacy();
             check(!second.changed(), "重复启动不应重复迁移文件");
+            ModPediaPaths anotherInstance = ModPediaPaths.forConfig(
+                    temporary.resolve("other-instance/config"), userHome
+            );
+            check(paths.aiSettings().equals(anotherInstance.aiSettings()),
+                    "不同游戏实例应共享同一个用户级 ai.json");
 
             Path generated = paths.runtimeKnowledgeRoot().resolve("generated/fixture.md");
             ScannedResource scanned = new ScannedResource(
@@ -122,6 +136,26 @@ public final class ModPediaPathsSelfTest {
     private static void check(boolean condition, String message) {
         if (!condition) {
             throw new AssertionError(message);
+        }
+    }
+
+    private static void checkSharedSettingsPermissions(ModPediaPaths paths) {
+        try {
+            Set<PosixFilePermission> directory = Files.getPosixFilePermissions(paths.userRoot());
+            Set<PosixFilePermission> file = Files.getPosixFilePermissions(paths.aiSettings());
+            check(directory.equals(EnumSet.of(
+                            PosixFilePermission.OWNER_READ,
+                            PosixFilePermission.OWNER_WRITE,
+                            PosixFilePermission.OWNER_EXECUTE
+                    )), "共享配置目录应限制为 0700");
+            check(file.equals(EnumSet.of(
+                            PosixFilePermission.OWNER_READ,
+                            PosixFilePermission.OWNER_WRITE
+                    )), "共享 ai.json 应限制为 0600");
+        } catch (UnsupportedOperationException ignored) {
+            // 非 POSIX 文件系统使用平台默认权限。
+        } catch (Exception exception) {
+            throw new AssertionError("共享配置权限检查失败", exception);
         }
     }
 }

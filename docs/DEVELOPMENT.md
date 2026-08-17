@@ -9,7 +9,7 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.0.1` |
+| 发布版本 | `v1.1.0` |
 | GitHub 发布状态 | 正式发布，自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
@@ -24,7 +24,7 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.0.1
+https://github.com/ct-yx/modpedia/releases/tag/v1.1.0
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
@@ -67,7 +67,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.1
 - [x] 双语 10× 基准记录冷/热 p50/p95/p99、SQLite/FTS/dbstat 大小和查询计划，搜索 p95 目标为 `≤50 ms`。
 - [x] FTS5 使用 external-content，正文从 `segments` 事实表读取；Schema/索引创建后执行 `PRAGMA optimize`，全量/大批量变更执行 FTS5 optimize/merge，小增量跳过完整合并。
 - [x] FTS 查询按 `rank` 排序，避免 `bm25(...)` 的排序临时表；性能自测覆盖短语、删除、增量更新和事务回滚。
-- [x] 将 `config/modpedia/` 分为 `runtime/` 与 `knowledge/`：运行时配置、会话、Worker、生成 Markdown、索引和 SQLite 全部位于 `runtime/`；custom/Wiki/source-overrides 等整合包事实源位于 `knowledge/`。
+- [x] 将 `config/modpedia/` 分为 `runtime/` 与 `knowledge/`：会话、Worker、生成 Markdown、索引和 SQLite 全部位于 `runtime/`；custom/Wiki/source-overrides 等整合包事实源位于 `knowledge/`；跨实例共享的 AI 配置位于用户目录 `~/.modpedia/ai.json`。
 - [x] 启动时迁移早期散落路径，且不搬移或删除 `knowledge/custom/`、`knowledge/sources/`、`media.json` 和来源覆盖文件。
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
@@ -148,7 +148,7 @@ git diff --check
 ./gradlew aiClientSelfTest
 # 批量测试当前 API 的全部模型（不会打印或写入 API Key）
 ./gradlew aiModelCompatibility \
-  -PaiSettingsFile=run/config/modpedia/runtime/ai.json \
+  -PaiSettingsFile="$HOME/.modpedia/ai.json" \
   -PaiReportDirectory=build/reports/modpedia \
   -PaiProbeParallelism=2
 ```
@@ -172,12 +172,12 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v1.0.1 发布清单
+## 7. v1.1.0 发布清单
 
-- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.0.1`。
+- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.1.0`。
 - [x] `./gradlew test`、`./gradlew build`、严格 Worker 性能自测和 `git diff --check` 通过。
-- [~] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
-- [~] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.0.1`。
+- [x] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
+- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.1.0`。
 - [x] API Key 密文存储、旧配置迁移、系统标识变化清除和 Worker 启动缓存已通过自动化测试。
 - [x] Mod 列表图标和 Mod 介绍已写入元数据并进入构建 JAR。
 - [~] 图形客户端、第三方手册跳转、可选联动和 Dedicated Server 的持续回归仍按已知限制记录。

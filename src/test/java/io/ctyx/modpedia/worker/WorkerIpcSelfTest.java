@@ -767,7 +767,8 @@ public final class WorkerIpcSelfTest {
 
         private static Harness start(Path root, String token) throws Exception {
             Path config = root.resolve("config");
-            ModPediaPaths paths = ModPediaPaths.forConfig(config);
+            // 测试实例必须把用户级共享配置注入到夹具目录，不能改写维护者真实的 ~/.modpedia/ai.json。
+            ModPediaPaths paths = ModPediaPaths.forConfig(config, root.resolve("user-home"));
             Path knowledge = paths.runtimeKnowledgeRoot();
             Path content = paths.contentRoot();
             Path conversations = paths.conversationsRoot();

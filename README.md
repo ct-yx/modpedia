@@ -11,7 +11,7 @@ English version: [README.en.md](README.en.md)
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.0.1** |
+| Mod | **v1.1.0** |
 | 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
@@ -20,7 +20,7 @@ English version: [README.en.md](README.en.md)
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.1)。`v1.0.0` 和 `v1.0.0-fix` 保留为历史版本；`v1.0.1` 包含 API Key 存储保护、Worker 启动缓存和 Mod 列表图标。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0)。`v1.0.0`、`v1.0.0-fix` 和 `v1.0.1` 保留为历史版本；`v1.1.0` 包含用户级共享 AI 配置、API Key 存储保护、Worker 启动缓存和 Mod 列表图标。
 
 ## 快速安装
 
@@ -32,7 +32,7 @@ English version: [README.en.md](README.en.md)
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.0.1.jar**。
+1. 下载 **modpedia-1.1.0.jar**。
 2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
@@ -69,7 +69,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 - API 地址：兼容 Chat Completions 的 API 根地址，通常以 `/v1` 结尾；如果只填写域名，客户端会自动补全 `/v1`；
 - 模型名称：可以点击右侧“获取模型列表”，成功后再次点击按钮在返回的模型之间切换；
 - API Key：优先使用设置页输入；设置页留空时才使用环境变量 MODPEDIA_API_KEY。
-- `config/modpedia/runtime/ai.json` 不保存 API Key 明文，而是使用当前系统标识派生的 AES-GCM 密钥保存密文；游戏进程首次读取时解密并缓存，系统标识变化后会清除密钥密文。系统标识读取失败时使用运行目录中的 `installation-id` 回退标识。
+- `~/.modpedia/ai.json` 是跨游戏实例共享的用户级配置，不随整合包分发。它不保存 API Key 明文，而是使用当前系统标识派生的 AES-GCM 密钥保存密文；游戏进程首次读取时解密并缓存，系统标识变化后会清除密钥密文。系统标识读取失败时使用同目录的 `installation-id` 回退标识；在支持 POSIX 权限的系统上目录为 `0700`、文件为 `0600`。
 - 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/runtime/diagnostics/`。
 
 如果连接测试提示“API 地址返回了网页内容”，说明地址指向了网页或服务根页面，而不是 API 端点；优先检查 `/v1` 路径。模型列表和连接测试都不会把 API Key 写入日志。
@@ -136,8 +136,6 @@ Patchouli、GuideME 和 Modonomicon 主要是手册框架或前置库，框架 J
 ~~~text
 config/modpedia/
 ├── runtime/                         # 玩家运行时目录，发布整合包前删除
-│   ├── ai.json
-│   ├── installation-id              # 无系统 UUID 时的安装级回退标识
 │   ├── conversations/
 │   ├── diagnostics/
 │   ├── worker/
@@ -156,7 +154,16 @@ config/modpedia/
     │   └── <source-id>/source.json + documents/**/*.md
     ├── source-overrides.json
     └── search-synonyms.json         # 可选搜索同义词
+
+~/.modpedia/
+├── ai.json                           # 跨 Minecraft 实例共享的 AI 设置（密钥为密文）
+└── installation-id                   # 无系统 UUID 时的用户级回退标识
 ~~~
+
+`~/.modpedia/` 位于各游戏实例之外的当前操作系统用户目录，不属于整合包文件。不同 Minecraft
+版本和不同整合包会读取同一份用户级 `ai.json`；旧版本位于 `config/modpedia/ai.json` 或
+`config/modpedia/runtime/ai.json` 的配置会在启动时迁移到这里。移动位置可以避免把个人 AI 配置
+带入整合包发布包；API Key 仍只在当前用户进程内解密到内存，日志和会话不会记录明文。
 
 `knowledge.db` 使用 Schema v7。模组手册、Wiki、FTBQ 静态任务定义和物品目录共用这个文件，但通过
 `content_kind`、`source_type`、`origin_type` 和 `collection_id` 分开检索；早期测试版发现
@@ -180,10 +187,10 @@ FTS5 使用 `content='segments'` 的 external-content 结构：完整 Markdown �
 ModPedia 的 `config/modpedia/` 同时包含玩家运行时状态和整合包作者维护的知识源。发布整合包时，
 不要把本地玩家数据、派生索引或 API 配置一起打包。
 
-发布前删除整个 `config/modpedia/runtime/`，其中包括以下运行时文件和派生文件：
+发布前删除整个 `config/modpedia/runtime/`，其中包括以下运行时文件和派生文件；用户级
+`~/.modpedia/` 不属于整合包发布目录，也不要复制到发布包：
 
 ~~~text
-config/modpedia/runtime/ai.json
 config/modpedia/runtime/conversations/
 config/modpedia/runtime/diagnostics/
 config/modpedia/runtime/worker/
@@ -355,7 +362,7 @@ build/reports/modpedia/knowledge-benchmark.md
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.1)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0)
 
 ## 作者与许可证
 

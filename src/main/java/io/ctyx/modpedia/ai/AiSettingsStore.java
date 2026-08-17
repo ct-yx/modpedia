@@ -12,7 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.StandardCopyOption;
+import java.util.EnumSet;
+import java.util.Set;
 
 /** AI 设置的本地 JSON 存储；API Key 只以密文形式落盘，并在进程内缓存明文。 */
 public final class AiSettingsStore {
@@ -91,7 +94,9 @@ public final class AiSettingsStore {
         Path temporary = null;
         try {
             Files.createDirectories(parent());
+            restrictDirectory(parent());
             temporary = Files.createTempFile(parent(), "ai-", ".tmp");
+            restrictFile(temporary);
             JsonObject stored = GSON.toJsonTree(actual).getAsJsonObject();
             // Gson 的 record 字段名是 apiKey；同时清理可能来自旧版本的 snake_case 字段。
             stored.remove("apiKey");
@@ -107,6 +112,7 @@ public final class AiSettingsStore {
             } catch (AtomicMoveNotSupportedException exception) {
                 Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
             }
+            restrictFile(path);
             AiSettings persisted = decode(
                     JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject()
             ).settings();
@@ -182,6 +188,29 @@ public final class AiSettingsStore {
     private Path parent() {
         Path parent = path.getParent();
         return parent == null ? Path.of(".") : parent;
+    }
+
+    private static void restrictDirectory(Path directory) {
+        try {
+            Files.setPosixFilePermissions(directory, Set.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE
+            ));
+        } catch (IOException | UnsupportedOperationException ignored) {
+            // Windows 和不支持 POSIX 权限的文件系统使用系统默认用户权限。
+        }
+    }
+
+    private static void restrictFile(Path file) {
+        try {
+            Files.setPosixFilePermissions(file, EnumSet.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE
+            ));
+        } catch (IOException | UnsupportedOperationException ignored) {
+            // Windows 和不支持 POSIX 权限的文件系统使用系统默认用户权限。
+        }
     }
 
     private record Decoded(AiSettings settings, boolean migrate, boolean removeStoredKey) {

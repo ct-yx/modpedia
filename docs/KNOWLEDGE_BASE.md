@@ -17,8 +17,6 @@
 ```text
 config/modpedia/
 ├── runtime/                         # 玩家运行时数据，发布整合包前删除
-│   ├── ai.json
-│   ├── installation-id
 │   ├── conversations/
 │   ├── diagnostics/
 │   ├── worker/
@@ -37,7 +35,14 @@ config/modpedia/
     │   └── <source-id>/source.json + documents/**/*.md + media.json
     ├── source-overrides.json
     └── search-synonyms.json
+
+~/.modpedia/
+├── ai.json                           # 跨游戏实例共享的用户级 AI 配置
+└── installation-id                   # 无系统 UUID 时的共享回退标识
 ```
+
+`~/.modpedia/` 位于各游戏实例之外的当前 OS 用户目录，不属于整合包。旧版实例内的
+`config/modpedia/ai.json` 或 `config/modpedia/runtime/ai.json` 会在启动时迁移到用户级路径。
 
 ### `runtime/knowledge/generated/`
 

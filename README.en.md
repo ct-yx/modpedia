@@ -14,7 +14,7 @@ answers while preserving links back to the original manual pages.
 
 | Item | Version / status |
 | --- | --- |
-| Mod | **v1.0.1** |
+| Mod | **v1.1.0** |
 | Release status | Official GitHub release |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244** (compatible with **21.1.x**) |
@@ -24,9 +24,10 @@ answers while preserving links back to the original manual pages.
 | Author | **ctyx** |
 
 The current JAR, checksum, installation guide, and known limitations are
-available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.1).
-`v1.0.0` and `v1.0.0-fix` remain historical versions. `v1.0.1` includes API
-key storage protection, Worker startup caching, and a Mod List icon.
+available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0).
+`v1.0.0`, `v1.0.0-fix`, and `v1.0.1` remain historical versions. `v1.1.0`
+includes user-level shared AI settings, API key storage protection, Worker
+startup caching, and a Mod List icon.
 
 ## Quick installation
 
@@ -38,7 +39,7 @@ key storage protection, Worker startup caching, and a Mod List icon.
 
 ### Installation
 
-1. Download **modpedia-1.0.1.jar**.
+1. Download **modpedia-1.1.0.jar**.
 2. Put the ModPedia JAR in the instance's **mods/** directory.
 3. Start the game and enter a single-player world or server.
 4. Wait for the initial knowledge database and item catalog prefill to finish;
@@ -111,11 +112,13 @@ Select **AI answer** in Settings and fill in:
   again to switch between returned models.
 - **API key**: The Settings field takes priority; the `MODPEDIA_API_KEY`
   environment variable is used only when the field is empty.
-- `config/modpedia/runtime/ai.json` never stores the API key in plaintext. It
+- `~/.modpedia/ai.json` is a user-level configuration shared by game instances
+  and is never part of a modpack. It never stores the API key in plaintext: it
   stores AES-GCM ciphertext derived from the current system identifier. The
   game process decrypts it on first read and keeps it in memory; a changed
   system identifier clears the encrypted key. If the system identifier cannot
-  be read, `installation-id` in the runtime directory is used as a fallback.
+  be read, `~/.modpedia/installation-id` is used as a shared user-level
+  fallback. On POSIX systems the directory is `0700` and the file is `0600`.
 - No one-by-one model testing is required. Click **Batch test models** at the
   bottom of Settings to probe every model returned by `/models` for ordinary
   requests, tool-call continuation, SSE, and streaming tool continuation. The
@@ -204,8 +207,6 @@ should be kept when publishing a modpack:
 ~~~text
 config/modpedia/
 ├── runtime/                         # Remove before publishing a modpack
-│   ├── ai.json
-│   ├── installation-id              # Installation fallback when no system UUID is available
 │   ├── conversations/
 │   ├── diagnostics/
 │   ├── worker/
@@ -224,7 +225,18 @@ config/modpedia/
     │   └── <source-id>/source.json + documents/**/*.md
     ├── source-overrides.json
     └── search-synonyms.json         # Optional search synonyms
+
+~/.modpedia/
+├── ai.json                           # Shared AI settings; the key is ciphertext
+└── installation-id                   # User-level fallback when no system UUID exists
 ~~~
+
+`~/.modpedia/` is outside each game instance and belongs to the current OS user,
+not to a modpack. Different Minecraft versions and modpacks read the same
+user-level `ai.json`. Older files at `config/modpedia/ai.json` or
+`config/modpedia/runtime/ai.json` are moved here on startup. This keeps personal
+AI settings out of modpack archives; the API key is decrypted only into the
+current process memory and is excluded from logs and conversation records.
 
 `knowledge.db` uses Schema v7. Mod manuals, Wiki content, static FTBQ task
 definitions, and the item catalog share this file but are separated by
@@ -256,10 +268,11 @@ can be added without changing the core schema.
 `config/modpedia/` contains both player runtime state and modpack-maintained fact
 sources. Do not package local player data, derived indexes, or API settings.
 
-Remove the entire `config/modpedia/runtime/` before publishing, including:
+Remove the entire `config/modpedia/runtime/` before publishing, including the
+following runtime files and derived data. The user-level `~/.modpedia/` folder
+is outside the modpack and must not be copied into it:
 
 ~~~text
-config/modpedia/runtime/ai.json
 config/modpedia/runtime/conversations/
 config/modpedia/runtime/diagnostics/
 config/modpedia/runtime/worker/
@@ -460,7 +473,7 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)
 - [Known limitations](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.1)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0)
 
 ## Author and license
 

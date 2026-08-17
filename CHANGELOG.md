@@ -1,5 +1,14 @@
 # 更新日志
 
+## v1.1.0
+
+共享 AI 配置和跨实例运行时维护版本。
+
+- AI 设置从实例内的 `config/modpedia/ai.json` / `config/modpedia/runtime/ai.json` 迁移到用户级共享路径 `~/.modpedia/ai.json`，不同 Minecraft 版本和整合包共用同一份配置。
+- `~/.modpedia/installation-id` 作为无法读取系统标识时的共享回退标识；支持 POSIX 权限的系统将用户目录限制为 `0700`、配置文件限制为 `0600`。
+- 发布整合包时只需清理 `config/modpedia/runtime/`；`~/.modpedia/` 位于实例之外，不属于发布内容。
+- 修正测试夹具对用户级配置的隔离，完整测试与构建流程通过。
+
 ## v1.0.1
 
 首个包含本地密钥保护和 Mod 列表图标的正式维护版本。

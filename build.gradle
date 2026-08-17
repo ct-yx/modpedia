@@ -468,6 +468,9 @@ def aiSettingsSelfTest = tasks.register('aiSettingsSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.ai.AiSettingsSelfTest'
+    if (project.hasProperty('aiSettingsFile')) {
+        systemProperty 'modpedia.aiSettingsFile', project.property('aiSettingsFile')
+    }
 }
 
 def aiClientSelfTest = tasks.register('aiClientSelfTest', JavaExec) {

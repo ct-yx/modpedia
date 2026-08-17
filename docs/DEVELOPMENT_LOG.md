@@ -1,5 +1,22 @@
 # ModPedia 开发日志
 
+## 2026-08-18 · v1.1.0 发布与用户级 AI 配置迁移
+
+### 变更
+
+- `ai.json` 从实例内的 `config/modpedia/ai.json` / `config/modpedia/runtime/ai.json` 迁移到 `~/.modpedia/ai.json`，不同 Minecraft 版本和整合包共用同一份用户级配置。
+- `installation-id` 同步放到 `~/.modpedia/installation-id`，作为无法读取系统 UUID 时的共享回退标识。
+- AI 配置继续使用系统标识派生的 AES-GCM 密文；支持 POSIX 的系统将用户目录限制为 `0700`、配置文件限制为 `0600`。
+- 修正 Worker IPC 自测夹具，使用注入的临时用户目录，避免测试改写维护者真实的共享 AI 配置。
+- 同步更新 README、英文 README、架构、知识库、项目入门、开发清单、Schema 和 GitHub Pages 发布警告。
+
+### 验证
+
+- 用户级配置读取回归：通过；API Key 仅输出存在性和长度，不输出内容。
+- `./gradlew test build`：通过，48 个任务成功。
+- `git diff --check`：通过。
+- 迁移前配置 SHA-256、加密后文件权限和独立副本回滚结果记录在临时验证包中；不写入仓库。
+
 ## 2026-08-18 · v1.0.1 正式发布准备
 
 - 将版本号从 `1.0.0-fix` 更新为 `1.0.1`，保留 `v1.0.0-fix` 作为历史修复预发布标签。
