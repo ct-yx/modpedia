@@ -305,3 +305,24 @@ shasum -a 256 -c SHA256SUMS
 - [ ] 发布资产可下载，SHA-256 校验通过。
 - [ ] 安装说明与当前最小尺寸、依赖版本和快捷键一致。
 - [ ] 已知限制明确说明手册覆盖率、AI API 和图形客户端回归范围。
+
+### 12.1 CurseForge 自动发布
+
+`.github/workflows/publish-curseforge.yml` 与版本标签发布流程分开：推送 `v*` 标签时自动执行，
+需要重试时也可以通过 `workflow_dispatch` 输入已有标签。它会重新测试、构建并从当前版本的
+`CHANGELOG.md` 只提取一个版本段落，然后上传 NeoForge 1.21.1 的 Mod JAR。
+
+首次启用前，在仓库的 `Settings → Secrets and variables → Actions` 添加：
+
+```text
+Repository variable: CURSEFORGE_PROJECT_ID=<项目 ID>
+Repository secret:   CURSEFORGE_TOKEN=<发布 API Token>
+```
+
+Token 只通过 Secret 注入 `mc-publish` Action，不进入源码、JAR、更新日志或普通日志。发布前检查：
+
+- [ ] `CURSEFORGE_PROJECT_ID` 与目标项目匹配。
+- [ ] `CURSEFORGE_TOKEN` 具有上传/发布权限且未写入任何文件。
+- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.1.0`。
+- [ ] Action 的 `loaders` 为 `neoforge`、`game-versions` 为 `1.21.1`。
+- [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。

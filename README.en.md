@@ -434,6 +434,21 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the Mod development checklist
 manual regression, and release process. The maintenance, test, and delivery
 record is in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md).
 
+### CurseForge automated publishing
+
+The repository includes `.github/workflows/publish-curseforge.yml`. Pushing a
+`v*` version tag runs tests and builds again, extracts only the matching version
+section from `CHANGELOG.md`, and uploads the NeoForge 1.21.1 JAR. Configure these
+values under `Settings → Secrets and variables → Actions`:
+
+- Repository variable: `CURSEFORGE_PROJECT_ID`, set to the project ID;
+- Repository secret: `CURSEFORGE_TOKEN`, set to the publishing API token.
+
+The token is read only from a GitHub Actions Secret and is not written to the
+repository, build artifacts, or logs. To retry a publication, run
+`Publish Mod Release` from Actions and enter an existing version tag such as
+`v1.1.0`; this does not create another GitHub Release.
+
 ## Known limitations
 
 - Only local manual resources in installed mod JARs are scanned; manuals are not

@@ -337,6 +337,18 @@ build/reports/modpedia/knowledge-benchmark.md
 详细的 Mod 开发清单、手动回归和发布流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 本轮合并前维护、测试记录和交付检查见 [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)。
 
+### CurseForge 自动发布
+
+仓库提供 `.github/workflows/publish-curseforge.yml`：推送 `v*` 版本标签后，会重新执行测试和构建，
+从当前版本的 `CHANGELOG.md` 提取单个版本段落，并上传 NeoForge 1.21.1 JAR。需要在仓库的
+`Settings → Secrets and variables → Actions` 中配置：
+
+- Repository variable：`CURSEFORGE_PROJECT_ID`，填写项目 ID；
+- Repository secret：`CURSEFORGE_TOKEN`，填写发布 API Token。
+
+Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物或日志。若发布过程需要重试，
+在 Actions 中运行 `Publish Mod Release`，输入已有的版本标签，例如 `v1.1.0`；不会重新创建 GitHub Release。
+
 ## 已知限制
 
 - 只扫描整合包中已安装 JAR 的本地手册资源，不联网下载手册。

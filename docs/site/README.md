@@ -5,6 +5,24 @@
 - 中文：[`index.html`](index.html)
 - English: [`index.en.html`](index.en.html)
 
+## 赞助渠道
+
+如果 ModPedia 对你有帮助，可以通过以下已部署的赞助渠道支持后续维护：
+
+- [爱发电](https://ifdian.net/a/Ct_yx)
+- [Buy Me a Coffee](https://buymeacoffee.com/ctyx)
+
+赞助完全自愿，不影响本地知识库和“仅搜索”模式的使用。中英文页面的“支持项目”入口均指向这两个渠道。
+
+## Sponsorship channels
+
+If ModPedia is useful to you, you can support continued maintenance through:
+
+- [爱发电](https://ifdian.net/a/Ct_yx)
+- [Buy Me a Coffee](https://buymeacoffee.com/ctyx)
+
+Sponsorship is optional and does not affect the local knowledge base or Search-only mode. The Support links on both language pages use these same channels.
+
 ## 本地预览
 
 ```bash
