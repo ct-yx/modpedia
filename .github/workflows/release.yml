@@ -41,6 +41,21 @@ jobs:
           printf '%s  %s\n' "$(sha256sum "$jar_file" | awk '{print $1}')" "$jar_name" > SHA256SUMS
           printf '%s\n' "$jar_file" > release-jar-path.txt
 
+      - name: Prepare current release notes
+        shell: bash
+        run: |
+          awk '
+            /^## / {
+              if (found) {
+                exit
+              }
+              found = 1
+            }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          grep -Fxq "## ${GITHUB_REF_NAME}" release-notes.md
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,7 +70,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "ModPedia · 模组百科 $GITHUB_REF_NAME" \
-            --notes-file CHANGELOG.md \
+            --notes-file release-notes.md \
             "${release_args[@]}" \
             "$jar_file" \
             SHA256SUMS \
