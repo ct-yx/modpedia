@@ -9,8 +9,8 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.0.0-fix` |
-| GitHub 发布状态 | 修复预发布，等待真实客户端回归 |
+| 发布版本 | `v1.0.1` |
+| GitHub 发布状态 | 正式发布，自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
 | Java | `21` |
@@ -24,7 +24,7 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-fix
+https://github.com/ct-yx/modpedia/releases/tag/v1.0.1
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
@@ -172,13 +172,14 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v1.0.0-fix 发布清单
+## 7. v1.0.1 发布清单
 
-- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.0.0-fix`。
+- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.0.1`。
 - [x] `./gradlew test`、`./gradlew build`、严格 Worker 性能自测和 `git diff --check` 通过。
 - [~] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
-- [~] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.0.0-fix`。
+- [~] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.0.1`。
 - [x] API Key 密文存储、旧配置迁移、系统标识变化清除和 Worker 启动缓存已通过自动化测试。
+- [x] Mod 列表图标和 Mod 介绍已写入元数据并进入构建 JAR。
 - [~] 图形客户端、第三方手册跳转、可选联动和 Dedicated Server 的持续回归仍按已知限制记录。
 
 ## 7.1 历史：v0.2.0 发布清单

@@ -9,8 +9,8 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.0.0-fix** |
-| 发布状态 | GitHub 修复预发布 |
+| Mod | **v1.0.1** |
+| 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
 | Java | **21** |
@@ -18,7 +18,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前修复包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-fix)。`v1.0.0` 保留为稳定基线，`v1.0.0-fix` 用于验证本次 API Key 存储和 Worker 启动链路修复。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.1)。`v1.0.0` 和 `v1.0.0-fix` 保留为历史版本；`v1.0.1` 包含 API Key 存储保护、Worker 启动缓存和 Mod 列表图标。
 
 ## 快速安装
 
@@ -30,7 +30,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.0.0-fix.jar**。
+1. 下载 **modpedia-1.0.1.jar**。
 2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
@@ -353,7 +353,7 @@ build/reports/modpedia/knowledge-benchmark.md
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-fix)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.1)
 
 ## 作者与许可证
 

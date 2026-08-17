@@ -1,5 +1,12 @@
 # ModPedia 开发日志
 
+## 2026-08-18 · v1.0.1 正式发布准备
+
+- 将版本号从 `1.0.0-fix` 更新为 `1.0.1`，保留 `v1.0.0-fix` 作为历史修复预发布标签。
+- 将生成的 ModPedia 图标写入 `src/main/resources/modpedia.png`，并在 NeoForge 元数据中设置 `logoFile`。
+- 更新 Mod 列表介绍、README、安装说明、开发清单和 GitHub Pages 下载链接。
+- 完成测试、构建和 JAR 元数据验证后提交并发布 `v1.0.1`。
+
 ## 2026-08-18 · v1.0.0-fix 修复预发布
 
 ### 变更

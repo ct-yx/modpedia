@@ -1,5 +1,15 @@
 # 更新日志
 
+## v1.0.1
+
+首个包含本地密钥保护和 Mod 列表图标的正式维护版本。
+
+- `config/modpedia/runtime/ai.json` 只保存系统标识派生的 AES-GCM API Key 密文，Worker 启动时解密并复用内存缓存。
+- 系统标识变化、密文损坏和旧版明文配置均有对应处理；日志不记录 API Key 或系统 UUID。
+- 为 Mod 元数据增加 Mod 列表图标和更完整的功能介绍，图标随 JAR 一起发布。
+- 更新 README、安装说明、开发路线、已知限制和 GitHub Pages 下载链接。
+- 通过 `./gradlew test`、`./gradlew build` 和 `git diff --check` 验证。
+
 ## v1.0.0-fix
 
 面向 `v1.0.0` 的修复预发布版本，用于大型整合包和真实客户端回归。
