@@ -12,30 +12,41 @@
 
 具体模组知识在第一次启动时从本地安装资源生成。
 
-## 2. 运行时目录
+## 2. 实际文件布局
 
 ```text
-config/modpedia/knowledge/
-├── generated/
-├── custom/
-├── sources/
-│   └── <source-id>/source.json + documents/**/*.md
-├── cache/
-├── manifest.json
-├── keyword-index.json
-├── knowledge.db
-└── state.json
+config/modpedia/
+├── runtime/                         # 玩家运行时数据，发布整合包前删除
+│   ├── ai.json
+│   ├── conversations/
+│   ├── diagnostics/
+│   ├── worker/
+│   ├── assistant-window.json
+│   ├── assistant-glass.json
+│   └── knowledge/
+│       ├── knowledge.db*
+│       ├── generated/
+│       ├── cache/
+│       ├── manifest.json
+│       ├── keyword-index.json
+│       └── state.json
+└── knowledge/                       # 随整合包保留的事实源
+    ├── custom/
+    ├── sources/
+    │   └── <source-id>/source.json + documents/**/*.md + media.json
+    ├── source-overrides.json
+    └── search-synonyms.json
 ```
 
-### `generated/`
+### `runtime/knowledge/generated/`
 
 由扫描器生成。重新构建时允许覆盖。
 
-### `custom/`
+### `knowledge/custom/`
 
 玩家手工补充或修正的内容。优先级最高，始终保留。每个文件使用 Front Matter 的稳定 `id`，并可用 `language: zh_cn`、`language: en_us` 或 `language: neutral` 区分语言。
 
-### `knowledge.db`
+### `runtime/knowledge/knowledge.db`
 
 SQLite 派生搜索库，不是事实源。保存文档元数据、SHA-256 指纹、完整 Markdown、完整段落、标题路径和 FTS5 索引；原始 `custom/*.md` 始终保留。Schema v7 另外保存独立的 `item_catalog` 物品目录；FTBQ 任务表只保存静态任务定义。
 
@@ -57,14 +68,14 @@ item_catalog(
 客户端注册表完成后，当前语言的 Tooltip 第一行作为名称，后续行转换为完整 Markdown 无序列表。
 物品目录按 `(item_id, language)` 增量同步，当前策略只保留当前游戏语言；它供 AI 和仅搜索模式
 直接读取，内容不进入 `documents`、`segments` 或 `segments_fts`。游戏 JVM 不把数万条记录直接
-拼成一条 IPC JSON 消息，而是在独立 I/O 线程写入 `config/modpedia/worker/payloads/` 下的原子
+拼成一条 IPC JSON 消息，而是在独立 I/O 线程写入 `config/modpedia/runtime/worker/payloads/` 下的原子
 JSONL 载荷，IPC 只传递载荷路径；Worker 读取完成载荷后使用一条预编译 UPSERT、一个事务和批量
 绑定完成写入。这样 Tooltip JSON 序列化、文件读取、SQLite 写入都不占用游戏 Tick，也不会因为
 逐条提交产生卡顿。相同指纹的再次启动只做顺序指纹比较，不复制或替换整个 `knowledge.db`；
 20,000 条夹具的 Worker 文件载荷同步、首次写入和相同指纹复用均保持在毫秒级，实际整合包仍以
 客户端加载日志和 `worker.log` 中的 `payload_read_ms` / `database_write_ms` 为准。
 
-### `cache/`
+### `runtime/knowledge/cache/`
 
 保存来源清单、关键词索引和扫描报告。
 
@@ -254,7 +265,7 @@ Schema/索引创建后和同步提交前执行 `PRAGMA optimize`；全量或大�
 
 返回结构包含文档 ID、标题、模组、来源路径、标题路径、完整 `segmentMarkdown`、分数和命中词。
 
-可选同义词配置位于 `config/modpedia/search-synonyms.json`：
+可选同义词配置位于 `config/modpedia/knowledge/search-synonyms.json`：
 
 ```json
 {
@@ -322,12 +333,12 @@ returned_count / has_more
 通用上下文管理由 LangChain4j `TokenWindowChatMemory` 完成；持久化读写使用 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore`，消息序列化仍使用 LangChain4j 官方 `ChatMessageSerializer`。ModPedia 只装配 SQLite DataSource 和本地方言，不再自研完整的 ChatMemoryStore。运行时数据保存到：
 
 ```text
-config/modpedia/conversations/
+config/modpedia/runtime/conversations/
 ├── conversation-*.json  # UI 历史、正文来源标注和搜索轨迹
 └── memory.sqlite        # Community SQL 持久化模型上下文
 ```
 
-旧版本会话文件中的 `memoryMessagesJson` 会在首次读取对应会话时迁移到 `memory.sqlite`，成功后清空旧字段；SQLite 写入失败时保留旧 JSON 并继续使用它。历史文件保存查询和来源 ID，不复制 `segment_markdown`；知识正文的唯一事实副本仍是 JAR 资源、`generated/*.md` 和 `custom/*.md`，知识 SQLite 与 AI 上下文 SQLite 分开维护。这样可以独立重建知识库，也可以在不膨胀 UI 历史文件的情况下调整上下文窗口。
+旧版本会话文件中的 `memoryMessagesJson` 会在首次读取对应会话时迁移到 `memory.sqlite`，成功后清空旧字段；SQLite 写入失败时保留旧 JSON 并继续使用它。历史文件保存查询和来源 ID，不复制 `segment_markdown`；知识正文的唯一事实副本仍是 JAR 资源、`runtime/knowledge/generated/*.md` 和 `knowledge/custom/*.md`，知识 SQLite 与 AI 上下文 SQLite 分开维护。这样可以独立重建知识库，也可以在不膨胀 UI 历史文件的情况下调整上下文窗口。
 
 ## 10. 当前实现
 
@@ -340,7 +351,8 @@ MarkdownDocumentConverter / JsonGuideDocumentConverter
   ↓
 KnowledgeCompiler
   ↓
-config/modpedia/knowledge/
+config/modpedia/runtime/knowledge/
+（从 config/modpedia/knowledge/ 的 custom/ 与 sources/ 读取事实源）
 ```
 
 扫描器读取已安装模组 JAR 内的资源。基础手册不联网下载；任务 Wiki 由独立的后台同步器
@@ -380,7 +392,7 @@ Patchouli 书籍页面按每本书独立选择语言：存在 `zh_cn` 时只读�
 
 ### 规模与双语基准
 
-`knowledgeBenchmark` 测试任务不会覆盖运行中的 `config/modpedia/knowledge/`，而是在临时目录执行：
+`knowledgeBenchmark` 测试任务不会覆盖运行中的 `config/modpedia/runtime/knowledge/`，而是在临时目录执行：
 
 ```bash
 ./gradlew knowledgeBenchmark
@@ -416,4 +428,4 @@ cache/build-report.json
 `knowledge_sources` 中的 `mod_manual`/`wiki` 和对应 `documents`；任务同步只替换对应
 `task_snapshots` 及其静态子表。`knowledge.db` 保存事实正文、搜索段落和静态任务定义，
 玩家实时进度只存在于当前 `TaskRuntimeSnapshot`；AI 上下文仍单独保存到
-`conversations/memory.sqlite`。
+`runtime/conversations/memory.sqlite`。

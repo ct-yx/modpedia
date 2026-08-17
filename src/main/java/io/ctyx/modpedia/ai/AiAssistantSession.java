@@ -23,6 +23,7 @@ import io.ctyx.modpedia.client.AssistantSession;
 import io.ctyx.modpedia.client.AssistantUiState;
 import io.ctyx.modpedia.client.BuiltInGuide;
 import io.ctyx.modpedia.client.ConversationSummary;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 import io.ctyx.modpedia.client.MessageRole;
 import io.ctyx.modpedia.client.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
@@ -1094,7 +1095,9 @@ public final class AiAssistantSession implements AssistantSession {
     }
 
     private static java.nio.file.Path defaultKnowledgeRoot() {
-        return FMLPaths.CONFIGDIR.get().resolve("modpedia").resolve("knowledge");
+        ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
+        paths.migrateLegacyQuietly();
+        return paths.runtimeKnowledgeRoot();
     }
 
     public interface StreamingAssistantService {

@@ -14,6 +14,7 @@ import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.KnowledgeDatabase;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 import io.ctyx.modpedia.task.TaskQuery;
 import io.ctyx.modpedia.task.TaskRuntimeFileDescriptor;
 import io.ctyx.modpedia.task.TaskRuntimeSnapshot;
@@ -64,6 +65,7 @@ public final class WorkerServer {
     private final String expectedToken;
     private final Path configDirectory;
     private final Path knowledgeRoot;
+    private final Path contentRoot;
     private final Path conversationsRoot;
     private final Path settingsPath;
     /** 非 AI 的短操作也使用有界队列，避免设置/诊断请求在断线时无限增长。 */
@@ -109,6 +111,7 @@ public final class WorkerServer {
             String expectedToken,
             Path configDirectory,
             Path knowledgeRoot,
+            Path contentRoot,
             Path conversationsRoot,
             Path settingsPath
     ) {
@@ -116,6 +119,7 @@ public final class WorkerServer {
         this.expectedToken = expectedToken == null ? "" : expectedToken;
         this.configDirectory = configDirectory.toAbsolutePath().normalize();
         this.knowledgeRoot = knowledgeRoot.toAbsolutePath().normalize();
+        this.contentRoot = contentRoot.toAbsolutePath().normalize();
         this.conversationsRoot = conversationsRoot.toAbsolutePath().normalize();
         this.settingsPath = settingsPath.toAbsolutePath().normalize();
     }
@@ -475,7 +479,8 @@ public final class WorkerServer {
             boolean force = WorkerProtocol.bool(message, "force_rebuild", false);
             WorkerKnowledgeService.BuildResult result = new WorkerKnowledgeService(
                     configDirectory,
-                    knowledgeRoot
+                    knowledgeRoot,
+                    contentRoot
             ).rebuild(modsDirectory, force);
             if (!result.successful()) {
                 sendError(requestId, result.failureMessage().isBlank()
@@ -483,7 +488,7 @@ public final class WorkerServer {
                         : result.failureMessage());
                 return;
             }
-            new WorkerTaskWikiService(knowledgeRoot).clearPendingRebuild();
+            new WorkerTaskWikiService(contentRoot).clearPendingRebuild();
             JsonObject completed = WorkerProtocol.message(WorkerProtocol.COMPLETED, requestId);
             completed.addProperty("operation", "knowledge.rebuild");
             completed.addProperty("source_count", result.sourceCount());
@@ -501,27 +506,27 @@ public final class WorkerServer {
     private void syncTaskWiki(JsonObject message, String requestId) {
         sendStatus(requestId, "task_wiki_sync", "正在由 Worker 更新任务 Wiki");
         try {
-            WorkerTaskWikiService.SyncResult wiki = new WorkerTaskWikiService(knowledgeRoot)
+            WorkerTaskWikiService.SyncResult wiki = new WorkerTaskWikiService(contentRoot)
                     .synchronize(WorkerProtocol.string(message, "url"));
             WorkerKnowledgeService.BuildResult build = null;
             if (wiki.rebuildRequired()) {
                 sendStatus(requestId, "knowledge_rebuild", "任务 Wiki 已变化，正在重建本地知识库");
                 Path modsDirectory = Path.of(WorkerProtocol.string(message, "mods_directory"));
-                build = new WorkerKnowledgeService(configDirectory, knowledgeRoot)
+                build = new WorkerKnowledgeService(configDirectory, knowledgeRoot, contentRoot)
                         .rebuild(modsDirectory, false);
             }
             if (build != null && !build.successful()) {
                 // 本次 Wiki 文件已经准备好，但导入/SQLite 失败。把“需要再
                 // 试一次”写在 Wiki 来源旁；下一次 Worker bootstrap 或 Wiki
                 // 请求会重新进入构建，而不是因内容指纹未变化被静默跳过。
-                new WorkerTaskWikiService(knowledgeRoot).markPendingRebuild();
+                new WorkerTaskWikiService(contentRoot).markPendingRebuild();
                 sendError(requestId, build.failureMessage().isBlank()
                         ? "任务 Wiki 已更新，但知识库未完成重建"
                         : build.failureMessage());
                 return;
             }
             if (build != null) {
-                new WorkerTaskWikiService(knowledgeRoot).clearPendingRebuild();
+                new WorkerTaskWikiService(contentRoot).clearPendingRebuild();
             }
             JsonObject completed = WorkerProtocol.message(WorkerProtocol.COMPLETED, requestId);
             completed.addProperty("operation", WorkerProtocol.TASK_WIKI_SYNC);
@@ -550,8 +555,8 @@ public final class WorkerServer {
             List<ItemCatalogEntry> entries;
             if (!payloadPath.isBlank()) {
                 payload = Path.of(payloadPath).toAbsolutePath().normalize();
-                Path payloadRoot = configDirectory.resolve("modpedia").resolve("worker")
-                        .resolve("payloads").toAbsolutePath().normalize();
+                Path payloadRoot = ModPediaPaths.forConfig(configDirectory)
+                        .workerPayloadRoot().toAbsolutePath().normalize();
                 if (!payload.startsWith(payloadRoot)) {
                     throw new IOException("物品目录批量载荷路径不在 Worker payload 目录内");
                 }
@@ -708,7 +713,7 @@ public final class WorkerServer {
 
     private void testAllModels(JsonObject message, String requestId) {
         AiSettings settings = WorkerPayloadCodec.aiSettings(object(message, "settings"));
-        Path reportDirectory = configDirectory.resolve("modpedia").resolve("diagnostics");
+        Path reportDirectory = ModPediaPaths.forConfig(configDirectory).diagnosticsRoot();
         AiClient.testAllModels(settings, reportDirectory, 2, result -> {
             JsonObject completed = WorkerProtocol.message(
                     result.failed() ? WorkerProtocol.ERROR : WorkerProtocol.COMPLETED,

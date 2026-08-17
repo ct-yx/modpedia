@@ -7,6 +7,7 @@ import io.ctyx.modpedia.search.SearchStatus;
 import io.ctyx.modpedia.search.SearchLanguage;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.FMLPaths;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -230,7 +231,9 @@ public final class MockAssistantSession implements AssistantSession {
     }
 
     private static Path defaultKnowledgeRoot() {
-        return FMLPaths.CONFIGDIR.get().resolve("modpedia").resolve("knowledge");
+        ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
+        paths.migrateLegacyQuietly();
+        return paths.runtimeKnowledgeRoot();
     }
 
     private void publish(AssistantUiState next) {

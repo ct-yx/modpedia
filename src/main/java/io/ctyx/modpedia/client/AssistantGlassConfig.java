@@ -2,6 +2,7 @@ package io.ctyx.modpedia.client;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -15,9 +16,7 @@ public final class AssistantGlassConfig {
     private static final float DEFAULT_BACKGROUND_OPACITY = 0.70f;
     private static final float DEFAULT_GLOW = 0.78f;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path PATH = FMLPaths.CONFIGDIR.get()
-            .resolve("modpedia")
-            .resolve("assistant-glass.json");
+    private static final Path PATH = runtimePath();
     private static final Settings DEFAULTS = new Settings(
             DEFAULT_THEME_COLOR,
             DEFAULT_BACKGROUND_OPACITY,
@@ -25,6 +24,12 @@ public final class AssistantGlassConfig {
     );
 
     private AssistantGlassConfig() {
+    }
+
+    private static Path runtimePath() {
+        ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
+        paths.migrateLegacyQuietly();
+        return paths.assistantGlass();
     }
 
     public static Style load() {

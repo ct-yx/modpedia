@@ -67,6 +67,9 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.0
 - [x] 双语 10× 基准记录冷/热 p50/p95/p99、SQLite/FTS/dbstat 大小和查询计划，搜索 p95 目标为 `≤50 ms`。
 - [x] FTS5 使用 external-content，正文从 `segments` 事实表读取；Schema/索引创建后执行 `PRAGMA optimize`，全量/大批量变更执行 FTS5 optimize/merge，小增量跳过完整合并。
 - [x] FTS 查询按 `rank` 排序，避免 `bm25(...)` 的排序临时表；性能自测覆盖短语、删除、增量更新和事务回滚。
+- [x] 将 `config/modpedia/` 分为 `runtime/` 与 `knowledge/`：运行时配置、会话、Worker、生成 Markdown、索引和 SQLite 全部位于 `runtime/`；custom/Wiki/source-overrides 等整合包事实源位于 `knowledge/`。
+- [x] 启动时迁移早期散落路径，且不搬移或删除 `knowledge/custom/`、`knowledge/sources/`、`media.json` 和来源覆盖文件。
+- [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
@@ -74,7 +77,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.0
 
 ### 3.1 统一知识库与任务联动
 
-- [x] 统一使用 `config/modpedia/knowledge/knowledge.db`，Schema v7 同时包含文本知识、静态 `task_*` 任务定义和物品目录；玩家实时进度只在查询内存中覆盖。
+- [x] 统一使用 `config/modpedia/runtime/knowledge/knowledge.db`，Schema v7 同时包含文本知识、静态 `task_*` 任务定义和物品目录；玩家实时进度只在查询内存中覆盖。`config/modpedia/knowledge/` 只保存 custom/Wiki 事实源。
 - [x] 用 `content_kind` 区分 `mod_manual`、`wiki` 和 `task_runtime`，用 `source_type` 区分 JAR、Markdown、Wiki 和任务快照格式。
 - [x] 增加 `knowledge_sources` 来源注册表和 `sources/<source-id>/source.json` 扩展目录。
 - [x] APP/Modonomicon 书籍支持 `knowledge.content_kind`、`source-overrides.json` 和 `source.json` 分类覆盖；整合包作者指南可以归入 Wiki。
@@ -116,7 +119,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.0
 
 - [x] 使用 LangChain4j 管理 Chat Memory、工具调用轮次、上下文窗口和流式响应。
 - [x] 使用 LangChain4j Community SQL `SQLChatMemoryStore` 持久化上下文，SQLite 只保留本地方言和路径装配。
-- [x] 旧版 `memoryMessagesJson` 首次读取时迁移到 `config/modpedia/conversations/memory.sqlite`，迁移失败保留旧数据。
+- [x] 旧版 `memoryMessagesJson` 首次读取时迁移到 `config/modpedia/runtime/conversations/memory.sqlite`，迁移失败保留旧数据。
 - [x] `search_knowledge` 返回完整 Markdown 段落、来源、匹配分、`returned_count` 和 `has_more`。
 - [x] 证据不足时支持改写查询、跨语言补搜和已返回文档排除。
 - [x] `language=auto` 合并双语候选、实体锚点过滤通用词误命中，并归一化中文自然语言 `focus`。
@@ -127,7 +130,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.0.0
 - [x] AI 设置保存使用原子替换并回读校验，失败时不会显示“已保存”。
 - [x] `AiClient` 支持 `/models` 模型列表、模型 ID 去重排序、根地址自动补全 `/v1` 和 HTML/401 友好错误提示。
 - [x] 设置页模型名称右侧提供“获取模型列表”，再次点击可循环切换已获取模型。
-- [x] 设置页提供“批量测试模型”，一次性测试 `/models` 返回的全部模型，不要求玩家逐个模型手测；报告写入 `config/modpedia/diagnostics/`。
+- [x] 设置页提供“批量测试模型”，一次性测试 `/models` 返回的全部模型，不要求玩家逐个模型手测；报告写入 `config/modpedia/runtime/diagnostics/`。
 - [x] 兼容性探测分别覆盖普通请求、非流式工具续接、普通 SSE 和流式工具续接，并区分普通+工具可用与流式+工具可用。
 - [x] 503、429、网络超时和孤立工具调用自动重试一次；明确的配置错误直接显示，不重复请求。
 - [x] 设置页支持 `AI` / `SEARCH_ONLY`；仅搜索模式跳过 API 配置和网络请求。
@@ -145,7 +148,7 @@ git diff --check
 ./gradlew aiClientSelfTest
 # 批量测试当前 API 的全部模型（不会打印或写入 API Key）
 ./gradlew aiModelCompatibility \
-  -PaiSettingsFile=run/config/modpedia/ai.json \
+  -PaiSettingsFile=run/config/modpedia/runtime/ai.json \
   -PaiReportDirectory=build/reports/modpedia \
   -PaiProbeParallelism=2
 ```
@@ -156,6 +159,8 @@ git diff --check
 ./gradlew assistantSecondaryLayoutSelfTest
 ./gradlew manualSourceNavigatorSelfTest
 ./gradlew knowledgeDatabaseSelfTest
+./gradlew modPediaPathsSelfTest
+./gradlew workerIpcSelfTest
 ./gradlew runClient       # 需要可用图形环境
 ./gradlew runServer       # Dedicated Server 隔离回归
 ```
@@ -163,7 +168,7 @@ git diff --check
 每次检查都要确认：
 
 - [ ] 日志中没有 API Key、完整请求头或模型密钥。
-- [ ] `run/config/modpedia/knowledge/`、SQLite 数据库和本地 JAR 没有被误提交。
+- [ ] `run/config/modpedia/runtime/`、SQLite 数据库和本地 JAR 没有被误提交；整合包事实源仅来自 `run/config/modpedia/knowledge/`。
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 

@@ -6,6 +6,7 @@ import io.ctyx.modpedia.ModPedia;
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 import io.ctyx.modpedia.task.TaskQuery;
 import io.ctyx.modpedia.task.TaskRuntimeReadResult;
 import io.ctyx.modpedia.task.TaskRuntimeFileDescriptor;
@@ -179,7 +180,12 @@ public final class ModPediaBridge {
         }
         try {
             Path configDirectory = FMLPaths.CONFIGDIR.get().toAbsolutePath().normalize();
-            Path workerDirectory = configDirectory.resolve("modpedia").resolve("worker");
+            ModPediaPaths paths = ModPediaPaths.forConfig(configDirectory);
+            ModPediaPaths.MigrationResult migration = paths.migrateLegacyQuietly();
+            if (migration.changed()) {
+                ModPedia.LOGGER.info("storage_layout_migrated moved={}", migration.moved());
+            }
+            Path workerDirectory = paths.workerRoot();
             Files.createDirectories(workerDirectory);
             cleanupItemPayloads(workerDirectory);
             String token = randomToken();
@@ -194,7 +200,7 @@ public final class ModPediaBridge {
             try (server) {
                 server.setSoTimeout(250);
                 int port = server.getLocalPort();
-                Process launchedProcess = launchWorker(port, LOOPBACK_HOST, token, configDirectory, workerDirectory);
+                Process launchedProcess = launchWorker(port, LOOPBACK_HOST, token, paths);
                 synchronized (writeLock) {
                     if (shuttingDown) {
                         destroyQuietly(launchedProcess);
@@ -639,8 +645,8 @@ public final class ModPediaBridge {
             String requestId,
             List<io.ctyx.modpedia.search.ItemCatalogEntry> entries
     ) throws IOException {
-        Path workerDirectory = FMLPaths.CONFIGDIR.get().toAbsolutePath().normalize()
-                .resolve("modpedia").resolve("worker");
+        Path workerDirectory = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get())
+                .workerRoot();
         Path payloadDirectory = workerDirectory.resolve("payloads");
         Path temporary = payloadDirectory.resolve("items-" + requestId + ".jsonl.tmp");
         Path target = payloadDirectory.resolve("items-" + requestId + ".jsonl");
@@ -739,8 +745,8 @@ public final class ModPediaBridge {
         // stageItemCatalogPayload() 的写线程可能正处在 atomic move 前后；按
         // request_id 逐个清理已知路径后，再清理目录中的残留，避免重连后把旧
         // 载荷带入下一次启动。
-        Path workerDirectory = FMLPaths.CONFIGDIR.get().toAbsolutePath().normalize()
-                .resolve("modpedia").resolve("worker");
+        Path workerDirectory = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get())
+                .workerRoot();
         cleanupItemPayloads(workerDirectory);
     }
 
@@ -879,9 +885,9 @@ public final class ModPediaBridge {
             int port,
             String host,
             String token,
-            Path configDirectory,
-            Path workerDirectory
+            ModPediaPaths paths
     ) throws IOException {
+        Path workerDirectory = paths.workerRoot();
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         command.add("-Dmodpedia.worker=true");
@@ -893,13 +899,15 @@ public final class ModPediaBridge {
         command.add("--host");
         command.add(host);
         command.add("--config");
-        command.add(configDirectory.toString());
+        command.add(paths.configDirectory().toString());
         command.add("--knowledge");
-        command.add(configDirectory.resolve("modpedia").resolve("knowledge").toString());
+        command.add(paths.runtimeKnowledgeRoot().toString());
+        command.add("--content");
+        command.add(paths.contentRoot().toString());
         command.add("--conversations");
-        command.add(configDirectory.resolve("modpedia").resolve("conversations").toString());
+        command.add(paths.conversationsRoot().toString());
         command.add("--settings");
-        command.add(configDirectory.resolve("modpedia").resolve("ai.json").toString());
+        command.add(paths.aiSettings().toString());
         Path log = workerDirectory.resolve("worker.log");
         ProcessBuilder builder = new ProcessBuilder(command)
                 .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()));

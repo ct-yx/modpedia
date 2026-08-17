@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.ctyx.modpedia.client.ChatMessage;
 import io.ctyx.modpedia.client.ConversationSummary;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -35,11 +36,11 @@ public final class ConversationStore {
     }
 
     public static ConversationStore runtime() {
-        return new ConversationStore(
+        ModPediaPaths paths = ModPediaPaths.forConfig(
                 net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get()
-                        .resolve("modpedia")
-                        .resolve("conversations")
         );
+        paths.migrateLegacyQuietly();
+        return new ConversationStore(paths.conversationsRoot());
     }
 
     public synchronized List<ConversationSummary> summaries() {

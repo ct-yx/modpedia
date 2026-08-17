@@ -225,7 +225,6 @@ dependencies {
     additionalRuntimeClasspath "org.apache.opennlp:opennlp-tools:2.5.9"
     additionalRuntimeClasspath "com.knuddels:jtokkit:1.1.0"
     additionalRuntimeClasspath "org.jspecify:jspecify:1.0.0"
-    additionalRuntimeClasspath "com.google.code.gson:gson:2.11.0"
     additionalRuntimeClasspath "org.slf4j:slf4j-api:2.0.9"
 
     // 基准报告和测试夹具直接读取 JSON。
@@ -419,6 +418,12 @@ def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     systemProperty 'modpedia.worker.jar', tasks.named('jar').flatMap { it.archiveFile }.get().asFile.absolutePath
 }
 
+def modPediaPathsSelfTest = tasks.register('modPediaPathsSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.storage.ModPediaPathsSelfTest'
+}
+
 def knowledgeBenchmark = tasks.register('knowledgeBenchmark', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -589,6 +594,7 @@ tasks.named('test', Test) {
     dependsOn knowledgeOperationGateSelfTest
     dependsOn workerConcurrencySelfTest
     dependsOn workerIpcSelfTest
+    dependsOn modPediaPathsSelfTest
     dependsOn knowledgeBenchmarkFixtureSelfTest
     dependsOn conversationStoreSelfTest
     dependsOn aiSettingsSelfTest

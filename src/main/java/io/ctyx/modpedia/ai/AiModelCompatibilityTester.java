@@ -6,6 +6,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.io.IOException;
 import java.net.URI;
@@ -676,7 +677,7 @@ public final class AiModelCompatibilityTester {
     public static void main(String[] args) throws Exception {
         Path settingsPath = Path.of(System.getProperty(
                 "modpedia.aiSettings",
-                "run/config/modpedia/ai.json"
+                ModPediaPaths.forConfig(Path.of("run/config")).aiSettings().toString()
         ));
         Path reportDirectory = Path.of(System.getProperty(
                 "modpedia.aiReportDirectory",

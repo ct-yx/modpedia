@@ -39,9 +39,9 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | 当前检查分支 | `agent/full-maintenance-checkpoint` |
 | 当前检查 HEAD | `406a205` |
 | 主配置目录 | `config/modpedia/` |
-| 知识库 | `config/modpedia/knowledge/knowledge.db` |
-| 会话目录 | `config/modpedia/conversations/` |
-| Worker 日志 | `config/modpedia/worker/worker.log` |
+| 知识库 | `config/modpedia/runtime/knowledge/knowledge.db` |
+| 会话目录 | `config/modpedia/runtime/conversations/` |
+| Worker 日志 | `config/modpedia/runtime/worker/worker.log` |
 
 当前工作区存在大量未提交修改。维护者进入项目后的第一项工作是保存当前 diff：
 
@@ -121,23 +121,36 @@ docs/WORKER_FIX_GUIDE.md
 
 ```text
 config/modpedia/
-├── ai.json
-├── conversations/
-│   ├── conversation-*.json
-│   └── memory.sqlite
-├── knowledge/
-│   ├── knowledge.db
-│   ├── generated/
-│   ├── custom/
-│   ├── sources/
-│   ├── manifest.json
-│   └── keyword-index.json
-└── worker/
-    ├── worker.log
-    └── payloads/
+├── runtime/                         # 发布整合包前删除
+│   ├── ai.json
+│   ├── conversations/
+│   │   ├── conversation-*.json
+│   │   └── memory.sqlite
+│   ├── diagnostics/
+│   ├── worker/
+│   │   ├── worker.log
+│   │   └── payloads/
+│   ├── assistant-window.json
+│   ├── assistant-glass.json
+│   └── knowledge/
+│       ├── knowledge.db*
+│       ├── generated/
+│       ├── cache/
+│       ├── manifest.json
+│       ├── keyword-index.json
+│       └── state.json
+└── knowledge/                       # 随整合包保留
+    ├── custom/
+    ├── sources/<source-id>/
+    │   ├── source.json
+    │   ├── documents/**/*.md
+    │   └── media.json
+    ├── source-overrides.json
+    └── search-synonyms.json
 ```
 
-`knowledge.db` 使用 Schema v7，包含手册、Wiki、静态任务定义和 `item_catalog`。运行时任务进度使用当前查询的内存快照；会话正文与知识库正文分开保存。
+`runtime/knowledge/knowledge.db` 使用 Schema v7，包含手册、Wiki、静态任务定义和
+`item_catalog`。运行时任务进度使用当前查询的内存快照；会话正文与知识库正文分开保存。
 
 ## 6. 开发环境
 

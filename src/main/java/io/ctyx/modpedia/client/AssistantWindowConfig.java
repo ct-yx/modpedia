@@ -2,6 +2,7 @@ package io.ctyx.modpedia.client;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -21,9 +22,13 @@ public final class AssistantWindowConfig {
     private static final int LEGACY_MIN_WIDTH = 320;
     private static final int LEGACY_MIN_HEIGHT = 240;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private final Path path = FMLPaths.CONFIGDIR.get()
-            .resolve("modpedia")
-            .resolve("assistant-window.json");
+    private final Path path = runtimePath();
+
+    private static Path runtimePath() {
+        ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
+        paths.migrateLegacyQuietly();
+        return paths.assistantWindow();
+    }
 
     public WindowBounds load(WindowBounds fallback) {
         if (!Files.isRegularFile(path)) {

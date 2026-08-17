@@ -1,5 +1,13 @@
 # ModPedia 开发日志
 
+## 2026-08-18 · 运行时与整合包事实源目录分离
+
+- 将 `config/modpedia/` 拆为 `runtime/` 和 `knowledge/`：前者保存 AI 设置、会话、诊断、Worker、窗口配置以及派生知识库；后者只保存 `custom/`、Wiki 来源、媒体元数据、来源覆盖和同义词配置。
+- 启动入口自动把早期散落在根目录的运行时文件迁移到 `runtime/`；`custom/`、`sources/`、`media.json` 和 `source-overrides.json` 原地保留。
+- Worker 接收独立的 runtime knowledge root 与 content root；SQLite、生成 Markdown、索引和状态写入 `runtime/knowledge/`，手册/Wiki 事实源从 `knowledge/` 读取。
+- 新增 `modPediaPathsSelfTest` 和分离目录 Worker IPC 夹具，覆盖迁移幂等、事实源保留、独立 JVM 构建和 runtime SQLite 输出。
+- 移除开发运行时额外注入的 Gson 2.11 依赖，继续使用 NeoForge/Minecraft 提供的 Gson，修复 `runServer` 的 Gson 版本约束冲突。
+
 ## 2026-08-18 · v1.0.0 正式发布
 
 ### 发布状态
@@ -64,7 +72,7 @@ git diff --check                                         exit 0
 
 ### 当前知识库现场快照
 
-以下数据来自本地开发实例的 `run/config/modpedia/knowledge/knowledge.db`，不是提交内容：
+以下数据来自本地开发实例的 `run/config/modpedia/runtime/knowledge/knowledge.db`，不是提交内容：
 
 ```text
 Schema:      7

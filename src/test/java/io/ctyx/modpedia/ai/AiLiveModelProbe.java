@@ -9,6 +9,7 @@ import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.UserMessage;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,7 +26,7 @@ public final class AiLiveModelProbe {
     public static void main(String[] args) throws Exception {
         Path settingsPath = Path.of(System.getProperty(
                 "modpedia.aiSettings",
-                "run/config/modpedia/ai.json"
+                ModPediaPaths.forConfig(Path.of("run/config")).aiSettings().toString()
         ));
         AiSettings settings = new AiSettingsStore(settingsPath).load();
         if (!settings.configured() || settings.effectiveApiKey().isBlank()) {
@@ -36,7 +37,11 @@ public final class AiLiveModelProbe {
         try {
             ConversationStore conversations = new ConversationStore(conversationRoot);
             RetrievalService retrieval = new RetrievalService(Path.of(
-                    System.getProperty("modpedia.knowledgeRoot", "run/config/modpedia/knowledge")
+                    System.getProperty(
+                            "modpedia.knowledgeRoot",
+                            ModPediaPaths.forConfig(Path.of("run/config"))
+                                    .runtimeKnowledgeRoot().toString()
+                    )
             ));
             List<SearchTrace> traces = new ArrayList<>();
             SearchKnowledgeTool tool = new SearchKnowledgeTool(

@@ -33,13 +33,27 @@
     ]
   },
   "runtime_directories": {
-    "generated": "config/modpedia/knowledge/generated",
+    "root": "config/modpedia/runtime",
+    "generated": "config/modpedia/runtime/knowledge/generated",
+    "cache": "config/modpedia/runtime/knowledge/cache",
+    "manifest": "config/modpedia/runtime/knowledge/manifest.json",
+    "keyword_index": "config/modpedia/runtime/knowledge/keyword-index.json",
+    "state": "config/modpedia/runtime/knowledge/state.json",
+    "database": "config/modpedia/runtime/knowledge/knowledge.db",
+    "ai_settings": "config/modpedia/runtime/ai.json",
+    "conversations": "config/modpedia/runtime/conversations",
+    "diagnostics": "config/modpedia/runtime/diagnostics",
+    "worker": "config/modpedia/runtime/worker"
+  },
+  "content_directories": {
+    "root": "config/modpedia/knowledge",
     "custom": "config/modpedia/knowledge/custom",
     "sources": "config/modpedia/knowledge/sources/<source-id>",
     "source_descriptor": "config/modpedia/knowledge/sources/<source-id>/source.json",
     "source_documents": "config/modpedia/knowledge/sources/<source-id>/documents/**/*.md",
-    "cache": "config/modpedia/knowledge/cache",
-    "database": "config/modpedia/knowledge/knowledge.db"
+    "media": "config/modpedia/knowledge/sources/<source-id>/media.json",
+    "source_overrides": "config/modpedia/knowledge/source-overrides.json",
+    "search_synonyms": "config/modpedia/knowledge/search-synonyms.json"
   },
   "content_kinds": [
     "mod_manual",

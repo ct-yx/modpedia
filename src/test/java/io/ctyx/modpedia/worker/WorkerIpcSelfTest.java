@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -739,6 +740,7 @@ public final class WorkerIpcSelfTest {
         private final Process process;
         private final Path classLog;
         private final Path knowledgeRoot;
+        private final Path contentRoot;
         private final Path modsDirectory;
 
         private Harness(
@@ -749,6 +751,7 @@ public final class WorkerIpcSelfTest {
                 Process process,
                 Path classLog,
                 Path knowledgeRoot,
+                Path contentRoot,
                 Path modsDirectory
         ) {
             this.listener = listener;
@@ -758,27 +761,41 @@ public final class WorkerIpcSelfTest {
             this.process = process;
             this.classLog = classLog;
             this.knowledgeRoot = knowledgeRoot;
+            this.contentRoot = contentRoot;
             this.modsDirectory = modsDirectory;
         }
 
         private static Harness start(Path root, String token) throws Exception {
             Path config = root.resolve("config");
-            Path knowledge = config.resolve("modpedia/knowledge");
-            Path conversations = config.resolve("modpedia/conversations");
-            Path settings = config.resolve("modpedia/ai.json");
+            ModPediaPaths paths = ModPediaPaths.forConfig(config);
+            Path knowledge = paths.runtimeKnowledgeRoot();
+            Path content = paths.contentRoot();
+            Path conversations = paths.conversationsRoot();
+            Path settings = paths.aiSettings();
             Path mods = root.resolve("mods");
             Path logs = root.resolve("logs");
             Files.createDirectories(knowledge);
+            Files.createDirectories(content);
             Files.createDirectories(conversations);
             Files.createDirectories(mods);
             Files.createDirectories(logs);
+            Path custom = content.resolve("custom/ipc-guide.md");
+            Files.createDirectories(custom.getParent());
+            Files.writeString(custom, "---\n"
+                    + "id: fixture:ipc-guide\n"
+                    + "language: zh_cn\n"
+                    + "title: IPC 夹具指南\n"
+                    + "---\n"
+                    + "# IPC 本地夹具查询\n\n"
+                    + "用于验证 content/knowledge 与 runtime/knowledge 分离。\n",
+                    StandardCharsets.UTF_8);
             Path outputLog = logs.resolve("worker.log");
             Path classLog = logs.resolve("worker-classes.log");
 
             ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
             Process process = null;
             try {
-                process = launch(listener.getLocalPort(), token, config, knowledge, conversations, settings,
+                process = launch(listener.getLocalPort(), token, config, knowledge, content, conversations, settings,
                         outputLog, classLog, root.resolve("lib"));
                 listener.setSoTimeout(START_TIMEOUT_MILLIS);
                 Socket socket = listener.accept();
@@ -787,7 +804,8 @@ public final class WorkerIpcSelfTest {
                         socket.getInputStream(), StandardCharsets.UTF_8));
                 BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
                         socket.getOutputStream(), StandardCharsets.UTF_8));
-                return new Harness(listener, socket, reader, writer, process, classLog, knowledge, mods);
+                return new Harness(listener, socket, reader, writer, process, classLog,
+                        knowledge, content, mods);
             } catch (Throwable failure) {
                 if (process != null) {
                     destroy(process);
@@ -802,6 +820,7 @@ public final class WorkerIpcSelfTest {
                 String token,
                 Path config,
                 Path knowledge,
+                Path content,
                 Path conversations,
                 Path settings,
                 Path outputLog,
@@ -821,6 +840,8 @@ public final class WorkerIpcSelfTest {
             command.add(config.toString());
             command.add("--knowledge");
             command.add(knowledge.toString());
+            command.add("--content");
+            command.add(content.toString());
             command.add("--conversations");
             command.add(conversations.toString());
             command.add("--settings");

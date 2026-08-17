@@ -2,6 +2,7 @@ package io.ctyx.modpedia.ai;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -22,9 +23,9 @@ public final class AiSettingsStore {
     }
 
     public static AiSettingsStore runtime() {
-        return new AiSettingsStore(FMLPaths.CONFIGDIR.get()
-                .resolve("modpedia")
-                .resolve("ai.json"));
+        ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
+        paths.migrateLegacyQuietly();
+        return new AiSettingsStore(paths.aiSettings());
     }
 
     public synchronized AiSettings load() {

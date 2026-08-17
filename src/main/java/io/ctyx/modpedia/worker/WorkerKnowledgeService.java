@@ -18,10 +18,16 @@ public final class WorkerKnowledgeService {
     private static final Logger LOG = Logger.getLogger("ModPediaWorker");
     private final Path configDirectory;
     private final Path knowledgeRoot;
+    private final Path contentRoot;
 
     public WorkerKnowledgeService(Path configDirectory, Path knowledgeRoot) {
+        this(configDirectory, knowledgeRoot, knowledgeRoot);
+    }
+
+    public WorkerKnowledgeService(Path configDirectory, Path knowledgeRoot, Path contentRoot) {
         this.configDirectory = configDirectory.toAbsolutePath().normalize();
         this.knowledgeRoot = knowledgeRoot.toAbsolutePath().normalize();
+        this.contentRoot = contentRoot.toAbsolutePath().normalize();
     }
 
     public BuildResult rebuild(Path modsDirectory, boolean forceRebuild) throws IOException {
@@ -41,19 +47,20 @@ public final class WorkerKnowledgeService {
                 + " force=" + forceRebuild);
         List<String> scanWarnings = new ArrayList<>();
         try {
-            new WorkerTaskWikiService(knowledgeRoot).prepareLocal();
+            new WorkerTaskWikiService(contentRoot).prepareLocal();
         } catch (IOException exception) {
             scanWarnings.add("任务 Wiki 本地副本准备失败");
         }
         WorkerGuideScanner.ScanResult scan = new WorkerGuideScanner()
-                .scan(resolvedModsDirectory, knowledgeRoot);
+                .scan(resolvedModsDirectory, contentRoot);
         scanWarnings.addAll(scan.warnings());
         LOG.info(() -> "knowledge.scan completed mods=" + resolvedModsDirectory
                 + " archives=" + archiveCount
                 + " resources=" + scan.resources().size()
                 + " warnings=" + scan.warnings().size());
         KnowledgeCompiler.CompileResult result = new KnowledgeCompiler().compile(
-                configDirectory,
+                contentRoot,
+                knowledgeRoot,
                 new KnowledgeScanResult(
                         scan.resources(),
                         scanWarnings

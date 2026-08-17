@@ -24,10 +24,12 @@ import java.util.Set;
  */
 public final class RetrievalService implements AutoCloseable {
     private final Path knowledgeRoot;
+    private final Path contentRoot;
     private final Path manifestPath;
     private final Path keywordIndexPath;
     private final Path databasePath;
     private final Path synonymsPath;
+    private final Path legacySynonymsPath;
     private final Object reloadLock = new Object();
 
     private volatile Snapshot snapshot;
@@ -43,11 +45,43 @@ public final class RetrievalService implements AutoCloseable {
     private volatile SearchLanguage defaultLanguage = SearchLanguage.ZH_CN;
 
     public RetrievalService(Path knowledgeRoot) {
+        this(resolveRuntimeRoot(knowledgeRoot), resolveContentRoot(knowledgeRoot));
+    }
+
+    /**
+     * @param knowledgeRoot runtime/knowledge，保存 SQLite、generated 和索引
+     * @param contentRoot config/modpedia/knowledge，保存 custom 和 sources 原始文件
+     */
+    public RetrievalService(Path knowledgeRoot, Path contentRoot) {
         this.knowledgeRoot = knowledgeRoot.toAbsolutePath().normalize();
+        this.contentRoot = contentRoot.toAbsolutePath().normalize();
         this.manifestPath = this.knowledgeRoot.resolve("manifest.json");
         this.keywordIndexPath = this.knowledgeRoot.resolve("keyword-index.json");
         this.databasePath = KnowledgeDatabase.path(this.knowledgeRoot);
-        this.synonymsPath = this.knowledgeRoot.resolve("..").normalize().resolve("search-synonyms.json");
+        this.synonymsPath = this.contentRoot.resolve("search-synonyms.json");
+        this.legacySynonymsPath = this.knowledgeRoot.resolve("..").normalize().resolve("search-synonyms.json");
+    }
+
+    private static Path resolveRuntimeRoot(Path knowledgeRoot) {
+        Path normalized = knowledgeRoot.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent != null && "runtime".equals(parent.getFileName().toString())) {
+            return normalized;
+        }
+        Path siblingRuntime = normalized.resolve("..").normalize().resolve("runtime/knowledge");
+        return Files.exists(siblingRuntime) ? siblingRuntime : normalized;
+    }
+
+    private static Path resolveContentRoot(Path knowledgeRoot) {
+        Path normalized = knowledgeRoot.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent != null && "runtime".equals(parent.getFileName().toString())) {
+            Path modpediaRoot = parent.getParent();
+            if (modpediaRoot != null) {
+                return modpediaRoot.resolve("knowledge");
+            }
+        }
+        return normalized;
     }
 
     /** 返回当前知识库根目录；任务运行数据与文本检索共用同一个 knowledge.db。 */
@@ -278,7 +312,7 @@ public final class RetrievalService implements AutoCloseable {
                 return;
             }
             closeDatabaseReaderLocked();
-            FileStamp currentStamp = FileStamp.capture(manifestPath, keywordIndexPath, synonymsPath);
+            FileStamp currentStamp = FileStamp.capture(manifestPath, keywordIndexPath, synonymsFile());
             try {
                 Snapshot next = loadSnapshot();
                 snapshot = next;
@@ -298,7 +332,7 @@ public final class RetrievalService implements AutoCloseable {
 
     private void ensureFreshDatabaseLocked() {
         FileState current = FileState.capture(databasePath);
-        FileState currentSynonyms = FileState.capture(synonymsPath);
+        FileState currentSynonyms = FileState.capture(synonymsFile());
         if (databaseReader == null || !current.equals(loadedDatabaseStamp)) {
             reloadDatabaseLocked();
         } else if (!currentSynonyms.equals(loadedDatabaseSynonymsStamp)) {
@@ -309,7 +343,7 @@ public final class RetrievalService implements AutoCloseable {
 
     private void reloadDatabaseLocked() {
         FileState current = FileState.capture(databasePath);
-        FileState currentSynonyms = FileState.capture(synonymsPath);
+        FileState currentSynonyms = FileState.capture(synonymsFile());
         if (KnowledgeDatabase.isUsable(databasePath)) {
             try {
                 KnowledgeDatabase.Reader next = KnowledgeDatabase.openReader(databasePath);
@@ -362,7 +396,7 @@ public final class RetrievalService implements AutoCloseable {
     }
 
     private void ensureFreshSnapshot() {
-        FileStamp currentStamp = FileStamp.capture(manifestPath, keywordIndexPath, synonymsPath);
+        FileStamp currentStamp = FileStamp.capture(manifestPath, keywordIndexPath, synonymsFile());
         if (snapshot == null || !currentStamp.equals(loadedStamp)) {
             reload();
         }
@@ -458,12 +492,13 @@ public final class RetrievalService implements AutoCloseable {
     }
 
     private Map<String, Set<String>> loadSynonyms() throws IOException {
-        if (!Files.isRegularFile(synonymsPath)) {
+        Path path = synonymsFile();
+        if (!Files.isRegularFile(path)) {
             return Map.of();
         }
 
         try {
-            JsonObject root = parseObject(synonymsPath, "search-synonyms.json");
+            JsonObject root = parseObject(path, "search-synonyms.json");
             JsonElement groupsElement = root.get("groups");
             if (groupsElement == null || !groupsElement.isJsonArray()) {
                 return Map.of();
@@ -540,10 +575,26 @@ public final class RetrievalService implements AutoCloseable {
         }
     }
 
+    private Path synonymsFile() {
+        if (Files.isRegularFile(synonymsPath) || !Files.isRegularFile(legacySynonymsPath)) {
+            return synonymsPath;
+        }
+        return legacySynonymsPath;
+    }
+
+    private Path documentFile(String relativePath) {
+        String normalized = relativePath == null ? "" : relativePath.replace('\\', '/');
+        Path base = normalized.startsWith("custom/") || normalized.startsWith("sources/")
+                ? contentRoot
+                : knowledgeRoot;
+        Path path = base.resolve(normalized).normalize();
+        return path.startsWith(base) ? path : null;
+    }
+
     private SearchResult bestSegment(DocumentMetadata document, SearchTextNormalizer.QueryTerms query) {
         Score metadataScore = scoreMetadata(document, query);
-        Path documentPath = knowledgeRoot.resolve(document.path()).normalize();
-        if (!documentPath.startsWith(knowledgeRoot) || !Files.isRegularFile(documentPath)) {
+        Path documentPath = documentFile(document.path());
+        if (documentPath == null || !Files.isRegularFile(documentPath)) {
             return null;
         }
 

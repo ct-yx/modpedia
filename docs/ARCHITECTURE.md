@@ -25,6 +25,40 @@ AssistantScreen（非暂停客户端 Screen）
     └── SourceCard / SourceNavigator
 ```
 
+## 1.1 实际文件布局
+
+`config/modpedia/` 分成“运行时目录”和“随整合包分发的事实源目录”。Worker 只把前者当作
+可删除、可重建的派生数据目录；手册源、Wiki 和人工 Markdown 始终从后者读取：
+
+```text
+config/modpedia/
+├── runtime/                         # 玩家本地运行时数据，发布整合包前删除
+│   ├── ai.json
+│   ├── conversations/
+│   ├── diagnostics/
+│   ├── worker/
+│   ├── assistant-window.json
+│   ├── assistant-glass.json
+│   └── knowledge/
+│       ├── knowledge.db*
+│       ├── generated/
+│       ├── cache/
+│       ├── manifest.json
+│       ├── keyword-index.json
+│       └── state.json
+└── knowledge/                       # 整合包作者维护的事实源
+    ├── custom/**/*.md
+    ├── sources/<source-id>/
+    │   ├── source.json
+    │   ├── documents/**/*.md
+    │   └── media.json
+    ├── source-overrides.json
+    └── search-synonyms.json
+```
+
+旧版本散落在 `config/modpedia/` 根目录的运行时文件会在启动时迁移到 `runtime/`；原始
+`custom/`、`sources/`、`media.json` 和覆盖文件不会被搬走或删除。
+
 ## 2. 模块职责
 
 ### `knowledge`
@@ -78,22 +112,22 @@ AiServices
           │
           ▼
 PersistentChatMemoryStore
-  ├── Community SQL SQLChatMemoryStore → conversations/memory.sqlite
+  ├── Community SQL SQLChatMemoryStore → runtime/conversations/memory.sqlite
   └── 旧版 memoryMessagesJson 一次性迁移
-ConversationStore → conversations/conversation-*.json
+ConversationStore → runtime/conversations/conversation-*.json
 ```
 
 `AiClient` 负责构造 OpenAI Chat Completions 兼容模型、设置页的异步连通性测试、`/models` 模型列表请求和全部模型批量兼容性测试。域名根地址在请求层自动补全 `/v1`，已经填写的自定义路径保持不变；HTML 响应和 401 响应转换为不含密钥的用户提示。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，避免上游返回 `No tool output found for function call`。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
 
 NeoForge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识构建、网络和 AI 工作由独立 Worker JVM 执行，双方通过带随机令牌的 localhost JSONL IPC 通信。Minecraft 的 UI、注册表/Tooltip 和可选运行时 API仍由客户端线程负责。任务问题的查询顺序固定为：`search_tasks` → 取得当前玩家运行时上下文 → Worker 得到临时快照 → Worker 查询 `knowledge.db` 中的静态任务定义 → 在内存中覆盖当前状态。单机优先只发送当前存档路径描述，由 Worker 直接读取很小的 `ftbquests/<team-uuid>.snbt`；多人服务器或本地文件不可用时，游戏 JVM 才读取已同步的 TeamData 并通过 IPC 返回。无论哪条路径，实时进度只在当前请求内存中存在，不写入数据库。
 
-持久化读写实际由 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore` 完成，ModPedia 只装配已有 SQLite 驱动、文件路径和四条 SQLite 方言 SQL。这样工具调用消息仍使用 LangChain4j 官方 JSON 序列化，原始 `tool_call_id` 不经过自研格式转换。旧版本会话中的 `memoryMessagesJson` 在首次读取时迁移到 `config/modpedia/conversations/memory.sqlite`，成功后清空旧字段；迁移失败则继续使用旧 JSON。
+持久化读写实际由 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore` 完成，ModPedia 只装配已有 SQLite 驱动、文件路径和四条 SQLite 方言 SQL。这样工具调用消息仍使用 LangChain4j 官方 JSON 序列化，原始 `tool_call_id` 不经过自研格式转换。旧版本会话中的 `memoryMessagesJson` 在首次读取时迁移到 `config/modpedia/runtime/conversations/memory.sqlite`，成功后清空旧字段；迁移失败则继续使用旧 JSON。
 
-`AiModelCompatibilityTester` 不参与正常回答链路，使用当前 API Key 读取 `/models` 后对每个模型验证四个能力：普通非流式、非流式工具结果续接、普通 SSE、流式工具结果续接。报告同时标记普通+工具可用和流式+工具可用，写入 `config/modpedia/diagnostics/ai-model-compatibility.{json,md}`；报告只保留接口主机、模型 ID、状态、耗时和脱敏错误，不保存 API Key。设置页批量按钮和 Gradle `aiModelCompatibility` 任务共用这套探测器。
+`AiModelCompatibilityTester` 不参与正常回答链路，使用当前 API Key 读取 `/models` 后对每个模型验证四个能力：普通非流式、非流式工具结果续接、普通 SSE、流式工具结果续接。报告同时标记普通+工具可用和流式+工具可用，写入 `config/modpedia/runtime/diagnostics/ai-model-compatibility.{json,md}`；报告只保留接口主机、模型 ID、状态、耗时和脱敏错误，不保存 API Key。设置页批量按钮和 Gradle `aiModelCompatibility` 任务共用这套探测器。
 
 `SearchKnowledgeTool` 每轮返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`。`language=auto` 会同时查询当前语言和另一语言，再按文档 ID 去重合并；自然语言 `focus` 会归一化为标准值并参与段落排序。工具会优先保留查询实体锚点，避免“设置/前置条件/步骤”等通用词把示例页面抬到目标手册之前。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、物品显示协议、资料缺口和来源格式规则。回答完成后只接受模型明确引用的来源，最多保留 5 个，并从 `[来源: document_id | 标注: ...]` 提取正文对应行的来源标注按钮；按钮点击优先跳转原手册，目标不可用时回退来源预览，没有明确引用时不自动展示全部候选。客户端还会对普通文本中的已注册 `namespace:path` 物品 ID 做本地化渲染，按住 Ctrl 才显示原始 ID；模型和会话始终保留原始 ID。模型回答末尾的 `<modpedia_follow_up_questions>` 协议会被提取为三个后续问题按钮，不显示原始标签。
 
-历史会话的 UI 消息、正文来源标注、后续问题和 `SearchTrace` 保存到 `config/modpedia/conversations/conversation-*.json`；模型上下文单独保存到同目录的 `memory.sqlite`，知识正文不复制到会话文件。API Key 优先从设置读取，设置为空时回退到 `MODPEDIA_API_KEY`，不进入搜索轨迹和错误日志。设置保存后会原子替换并回读校验，失败会在页面显示。
+历史会话的 UI 消息、正文来源标注、后续问题和 `SearchTrace` 保存到 `config/modpedia/runtime/conversations/conversation-*.json`；模型上下文单独保存到同目录的 `memory.sqlite`，知识正文不复制到会话文件。API Key 优先从设置读取，设置为空时回退到 `MODPEDIA_API_KEY`，不进入搜索轨迹和错误日志。设置保存后会原子替换并回读校验，失败会在页面显示。
 
 `AiSettings.mode` 支持 `AI` 和 `SEARCH_ONLY`。仅搜索模式复用相同的 `RetrievalService` 和会话持久化，但跳过模型初始化、API Key 读取和连接测试；`LocalSearchMessageFormatter` 将完整段落转换为带正文来源标注按钮的助手消息。
 
@@ -159,7 +193,8 @@ TeamData 没有历史的进度变化使用 ModPedia 检测时间；工具会按�
 
 ### 自定义文档导入边界
 
-`config/modpedia/knowledge/custom/` 下的 Markdown 是人工维护的事实源，不写入 `generated/`。启动构建按以下顺序处理：
+`config/modpedia/knowledge/custom/` 下的 Markdown 是人工维护的事实源，不写入
+`config/modpedia/runtime/knowledge/generated/`。启动构建按以下顺序处理：
 
 ```text
 扫描 custom/*.md
@@ -215,13 +250,13 @@ safeArea = viewport - 12px;
 模组 ID + 模组版本 + 手册资源路径 + 资源内容哈希
 ```
 
-启动时读取 `config/modpedia/knowledge/state.json`：
+启动时读取 `config/modpedia/runtime/knowledge/state.json`：
 
 - 指纹未变化且生成文件存在：复用现有 Markdown。
 - 新增来源或指纹变化：重新转换该来源。
 - 当前扫描中不存在的旧来源：删除对应生成文件。
 - `manifest.json`、`keyword-index.json` 和扫描报告每次都会重新生成。
-- `knowledge.db` 作为派生搜索库旁路构建：先写临时数据库，事务成功后原子替换；同步失败时继续使用上一份数据库。
+- `runtime/knowledge/knowledge.db` 作为派生搜索库旁路构建：先写临时数据库，事务成功后原子替换；同步失败时继续使用上一份数据库。
 - 数据库损坏或 Schema 不匹配时不复用旧数据库；从当前模组手册、`custom/`、本地 Wiki 和内置任务 Wiki 写入旁路数据库，成功校验后再原子替换正式库。替换失败时恢复上一份数据库，WAL/SHM 与临时文件一并清理；原始 JAR、Markdown 和 Wiki 源文件不删除。
 
 按键 `F9` 触发强制完整转换和索引重建；后台任务正在运行时，重复请求合并为一次 pending 构建，不丢失 Wiki 更新，也不并发改写 SQLite。

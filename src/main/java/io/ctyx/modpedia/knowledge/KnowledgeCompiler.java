@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import io.ctyx.modpedia.search.KnowledgeDatabase;
+import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -43,11 +44,29 @@ public final class KnowledgeCompiler {
             KnowledgeScanResult scanResult,
             boolean forceRebuild
     ) throws IOException {
-        Path knowledgeRoot = configDirectory.resolve("modpedia").resolve("knowledge");
-        Path generatedRoot = knowledgeRoot.resolve("generated");
-        Path customRoot = knowledgeRoot.resolve("custom");
-        Path sourcesRoot = knowledgeRoot.resolve("sources");
-        Path cacheRoot = knowledgeRoot.resolve("cache");
+        ModPediaPaths paths = ModPediaPaths.forConfig(configDirectory);
+        paths.migrateLegacy();
+        return compile(paths.contentRoot(), paths.runtimeKnowledgeRoot(), scanResult, forceRebuild);
+    }
+
+    /**
+     * 使用分离后的事实源目录和运行时派生目录构建知识库。
+     *
+     * @param contentRoot 随整合包保留的 {@code config/modpedia/knowledge}
+     * @param runtimeKnowledgeRoot 可删除并可从事实源重建的运行时知识目录
+     */
+    public CompileResult compile(
+            Path contentRoot,
+            Path runtimeKnowledgeRoot,
+            KnowledgeScanResult scanResult,
+            boolean forceRebuild
+    ) throws IOException {
+        contentRoot = contentRoot.toAbsolutePath().normalize();
+        runtimeKnowledgeRoot = runtimeKnowledgeRoot.toAbsolutePath().normalize();
+        Path generatedRoot = runtimeKnowledgeRoot.resolve("generated");
+        Path customRoot = contentRoot.resolve("custom");
+        Path sourcesRoot = contentRoot.resolve("sources");
+        Path cacheRoot = runtimeKnowledgeRoot.resolve("cache");
         Files.createDirectories(generatedRoot);
         Files.createDirectories(customRoot);
         Files.createDirectories(sourcesRoot);
@@ -55,7 +74,7 @@ public final class KnowledgeCompiler {
 
         List<String> warnings = new ArrayList<>();
         Map<String, SourceState> previousSources = loadPreviousSources(
-                knowledgeRoot.resolve("state.json"),
+                runtimeKnowledgeRoot.resolve("state.json"),
                 warnings
         );
         Map<String, String> previousFingerprints = previousSources.entrySet().stream()
@@ -72,7 +91,7 @@ public final class KnowledgeCompiler {
         // 即使是 F9 强制重建，也要保留这份缓存作为非法自定义文档的回退来源；
         // 强制重建只禁止“未变化直接复用”，不应让一次格式错误删除上一份有效内容。
         Map<String, KnowledgeDatabase.CachedDocument> cachedCustomDocuments =
-                KnowledgeDatabase.readCachedCustomDocuments(KnowledgeDatabase.path(knowledgeRoot));
+                KnowledgeDatabase.readCachedCustomDocuments(KnowledgeDatabase.path(runtimeKnowledgeRoot));
         int generatedCount = 0;
         int updatedCount = 0;
         int reusedCount = 0;
@@ -86,7 +105,7 @@ public final class KnowledgeCompiler {
                     && !previous.outputPaths().isEmpty();
             if (reused) {
                 try {
-                    converted = loadGeneratedDocuments(source, knowledgeRoot, previous.outputPaths());
+                    converted = loadGeneratedDocuments(source, runtimeKnowledgeRoot, previous.outputPaths());
                     reused = !converted.isEmpty();
                 } catch (IOException | RuntimeException exception) {
                     warnings.add("读取缓存知识失败，重新转换：" + source.path());
@@ -100,12 +119,12 @@ public final class KnowledgeCompiler {
             if (!reused) {
                 List<KnowledgeDocument> generated = convertAll(source);
                 List<String> outputPaths = outputPaths(source, generated);
-                deleteObsoleteOutputs(knowledgeRoot, previous, outputPaths, warnings);
+                deleteObsoleteOutputs(runtimeKnowledgeRoot, previous, outputPaths, warnings);
                 List<DocumentEntry> entries = new ArrayList<>(generated.size());
                 for (int index = 0; index < generated.size(); index++) {
                     KnowledgeDocument document = generated.get(index);
                     String relativePath = outputPaths.get(index);
-                    writeDocument(knowledgeRoot.resolve(relativePath), document);
+                    writeDocument(runtimeKnowledgeRoot.resolve(relativePath), document);
                     entries.add(new DocumentEntry(document, relativePath));
                 }
                 converted = List.copyOf(entries);
@@ -138,10 +157,10 @@ public final class KnowledgeCompiler {
             }
         }
 
-        loadWikiSources(knowledgeRoot, documents, databaseInputs, warnings);
+        loadWikiSources(contentRoot, documents, databaseInputs, warnings);
 
         int removedCount = removeRemovedGenerated(
-                knowledgeRoot,
+                runtimeKnowledgeRoot,
                 previousSources,
                 currentSources.keySet(),
                 warnings
@@ -156,7 +175,7 @@ public final class KnowledgeCompiler {
         );
         boolean databaseSynchronized = true;
         try {
-            KnowledgeDatabase.sync(knowledgeRoot, databaseInputs.values(), forceRebuild);
+            KnowledgeDatabase.sync(runtimeKnowledgeRoot, databaseInputs.values(), forceRebuild);
         } catch (IOException | RuntimeException exception) {
             // SQLite 是派生搜索库；同步失败时保留旧数据库，JSON/Markdown 仍可用于迁移和诊断。
             databaseSynchronized = false;
@@ -166,9 +185,9 @@ public final class KnowledgeCompiler {
         // 只有 SQLite 替换成功后才提交这些派生清单。否则下一次启动会看到
         // “新 manifest + 旧 knowledge.db”的混合状态，日志也会误导诊断。
         if (databaseSynchronized) {
-            writeManifest(knowledgeRoot, documents);
-            writeKeywordIndex(knowledgeRoot, documents);
-            writeState(knowledgeRoot, currentSources, documents);
+            writeManifest(runtimeKnowledgeRoot, documents);
+            writeKeywordIndex(runtimeKnowledgeRoot, documents);
+            writeState(runtimeKnowledgeRoot, currentSources, documents);
         }
 
         BuildReport report = new BuildReport(
@@ -183,7 +202,7 @@ public final class KnowledgeCompiler {
                 warnings
         );
         Files.writeString(cacheRoot.resolve("build-report.json"), GSON.toJson(report), StandardCharsets.UTF_8);
-        return new CompileResult(knowledgeRoot, report, databaseSynchronized);
+        return new CompileResult(runtimeKnowledgeRoot, report, databaseSynchronized);
     }
 
     private List<KnowledgeDocument> convertAll(ScannedResource source) {

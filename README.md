@@ -67,7 +67,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 - API 地址：兼容 Chat Completions 的 API 根地址，通常以 `/v1` 结尾；如果只填写域名，客户端会自动补全 `/v1`；
 - 模型名称：可以点击右侧“获取模型列表”，成功后再次点击按钮在返回的模型之间切换；
 - API Key：优先使用设置页输入；设置页留空时才使用环境变量 MODPEDIA_API_KEY。
-- 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/diagnostics/`。
+- 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/runtime/diagnostics/`。
 
 如果连接测试提示“API 地址返回了网页内容”，说明地址指向了网页或服务根页面，而不是 API 端点；优先检查 `/v1` 路径。模型列表和连接测试都不会把 API Key 写入日志。
 
@@ -103,7 +103,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 - 历史和设置在同一个助手窗口内打开，不创建全屏二级 Screen；
 - 设置字段、历史列表和按钮随父窗口约束并使用 scissor 裁剪；
 - 游戏背景保持清晰，只绘制蓝光半透明面板；
-- 主题色、透明度和发光效果保存在 assistant-glass.json；
+- 主题色、透明度和发光效果保存在 `runtime/assistant-glass.json`；
 - 高对比度或减少透明度时回退到不透明表面；
 - 折叠输入只保留右下角的小型入口，展开后使用单行输入。
 
@@ -128,18 +128,30 @@ Patchouli、GuideME 和 Modonomicon 主要是手册框架或前置库，框架 J
 
 ## 本地知识库
 
-运行时目录：
+实际文件布局：运行时数据和整合包事实源分成两个目录。发布整合包时只保留后者：
 
 ~~~text
-config/modpedia/knowledge/
-├── generated/       # 自动扫描手册生成的 Markdown
-├── custom/          # 玩家维护的 Markdown 源文件
-├── sources/         # 可扩展 Wiki 来源集合及 documents/**/*.md
-├── cache/           # 构建报告、扫描缓存和索引
-├── manifest.json    # 当前文档清单
-├── keyword-index.json
-├── knowledge.db     # SQLite 派生搜索库
-└── state.json       # JAR 与资源指纹
+config/modpedia/
+├── runtime/                         # 玩家运行时目录，发布整合包前删除
+│   ├── ai.json
+│   ├── conversations/
+│   ├── diagnostics/
+│   ├── worker/
+│   ├── assistant-window.json
+│   ├── assistant-glass.json
+│   └── knowledge/
+│       ├── knowledge.db*            # SQLite 派生搜索库
+│       ├── generated/                # 自动扫描手册生成的 Markdown
+│       ├── cache/                    # 构建报告和扫描缓存
+│       ├── manifest.json
+│       ├── keyword-index.json
+│       └── state.json                # JAR 与资源指纹
+└── knowledge/                       # 整合包作者随包保留的事实源
+    ├── custom/                      # 人工维护的 Markdown
+    ├── sources/                     # 可扩展 Wiki 来源集合
+    │   └── <source-id>/source.json + documents/**/*.md
+    ├── source-overrides.json
+    └── search-synonyms.json         # 可选搜索同义词
 ~~~
 
 `knowledge.db` 使用 Schema v7。模组手册、Wiki、FTBQ 静态任务定义和物品目录共用这个文件，但通过
@@ -164,20 +176,21 @@ FTS5 使用 `content='segments'` 的 external-content 结构：完整 Markdown �
 ModPedia 的 `config/modpedia/` 同时包含玩家运行时状态和整合包作者维护的知识源。发布整合包时，
 不要把本地玩家数据、派生索引或 API 配置一起打包。
 
-发布前移除以下运行时文件和派生文件：
+发布前删除整个 `config/modpedia/runtime/`，其中包括以下运行时文件和派生文件：
 
 ~~~text
-config/modpedia/ai.json                         # API 地址、模型和可能存在的 API Key
-config/modpedia/conversations/                 # 本地历史会话和上下文
-config/modpedia/diagnostics/                   # 模型测试和诊断报告
-config/modpedia/assistant-window.json          # 玩家个人窗口位置和尺寸
-config/modpedia/assistant-glass.json           # 玩家个人主题和透明度
-config/modpedia/knowledge/knowledge.db*
-config/modpedia/knowledge/generated/
-config/modpedia/knowledge/cache/
-config/modpedia/knowledge/manifest.json
-config/modpedia/knowledge/keyword-index.json
-config/modpedia/knowledge/state.json
+config/modpedia/runtime/ai.json
+config/modpedia/runtime/conversations/
+config/modpedia/runtime/diagnostics/
+config/modpedia/runtime/worker/
+config/modpedia/runtime/assistant-window.json
+config/modpedia/runtime/assistant-glass.json
+config/modpedia/runtime/knowledge/knowledge.db*
+config/modpedia/runtime/knowledge/generated/
+config/modpedia/runtime/knowledge/cache/
+config/modpedia/runtime/knowledge/manifest.json
+config/modpedia/runtime/knowledge/keyword-index.json
+config/modpedia/runtime/knowledge/state.json
 ~~~
 
 这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
@@ -189,8 +202,9 @@ config/modpedia/knowledge/state.json
 config/modpedia/knowledge/custom/**/*.md
 config/modpedia/knowledge/sources/<source-id>/source.json
 config/modpedia/knowledge/sources/<source-id>/documents/**/*.md
+config/modpedia/knowledge/sources/<source-id>/media.json
 config/modpedia/knowledge/source-overrides.json       # 使用 APP/Modonomicon 书籍分类覆盖时保留
-config/modpedia/search-synonyms.json                  # 自定义搜索同义词时可选保留
+config/modpedia/knowledge/search-synonyms.json        # 自定义搜索同义词时可选保留
 ~~~
 
 - `source.json` 描述一个 Wiki 来源的 ID、集合、语言、版本、优先级和 Markdown 根目录。

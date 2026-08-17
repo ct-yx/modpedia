@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.worker;
 
+import io.ctyx.modpedia.storage.ModPediaPaths;
+
 import java.net.Socket;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -24,14 +26,19 @@ public final class WorkerMain {
             throw new IllegalArgumentException("Worker 缺少 MODPEDIA_WORKER_TOKEN");
         }
         Path configDirectory = Path.of(options.getOrDefault("config", "."));
+        ModPediaPaths paths = ModPediaPaths.forConfig(configDirectory);
+        paths.migrateLegacyQuietly();
         Path knowledgeRoot = Path.of(options.getOrDefault(
-                "knowledge", configDirectory.resolve("modpedia").resolve("knowledge").toString()
+                "knowledge", paths.runtimeKnowledgeRoot().toString()
+        ));
+        Path contentRoot = Path.of(options.getOrDefault(
+                "content", paths.contentRoot().toString()
         ));
         Path conversationsRoot = Path.of(options.getOrDefault(
-                "conversations", configDirectory.resolve("modpedia").resolve("conversations").toString()
+                "conversations", paths.conversationsRoot().toString()
         ));
         Path settingsPath = Path.of(options.getOrDefault(
-                "settings", configDirectory.resolve("modpedia").resolve("ai.json").toString()
+                "settings", paths.aiSettings().toString()
         ));
 
         try (Socket socket = new Socket(host, port)) {
@@ -41,6 +48,7 @@ public final class WorkerMain {
                     token,
                     configDirectory,
                     knowledgeRoot,
+                    contentRoot,
                     conversationsRoot,
                     settingsPath
             );
