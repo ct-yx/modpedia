@@ -208,14 +208,27 @@ dependencies {
             strictly '[1.0.0, 2.0)'
         }
     }
+    // Gson 已由 Minecraft/NeoForge 运行时提供。不要把它作为 Jar-in-Jar
+    // 嵌入，否则发布模组会和游戏自身的 com.google.gson 模块重复。
+    compileOnly("com.google.code.gson:gson:2.11.0") {
+        version {
+            strictly '[2.11, 2.12)'
+        }
+    }
+    // SLF4J API 由 NeoForge/Minecraft 运行时提供。Worker 复用游戏进程的基础
+    // classpath，因此只保留编译依赖和开发运行时依赖，不能再把同一个 API
+    // 作为 Jar-in-Jar 嵌入模组，否则会和整合包的 org.slf4j 模块重复。
+    compileOnly("org.slf4j:slf4j-api:2.0.9")
     additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-annotations:2.22"
     additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-core:2.22.1"
     additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-databind:2.22.1"
     additionalRuntimeClasspath "org.apache.opennlp:opennlp-tools:2.5.9"
     additionalRuntimeClasspath "com.knuddels:jtokkit:1.1.0"
     additionalRuntimeClasspath "org.jspecify:jspecify:1.0.0"
+    additionalRuntimeClasspath "com.google.code.gson:gson:2.11.0"
+    additionalRuntimeClasspath "org.slf4j:slf4j-api:2.0.9"
 
-    // 基准报告和测试夹具直接读取 JSON；运行时 Gson 由 NeoForge 提供，测试侧显式声明编译路径。
+    // 基准报告和测试夹具直接读取 JSON。
     testImplementation "com.google.code.gson:gson:2.11.0"
 
     // Example optional mod dependency with JEI
@@ -253,6 +266,48 @@ def manualSourceNavigatorSelfTest = tasks.register('manualSourceNavigatorSelfTes
     mainClass = 'io.ctyx.modpedia.client.ManualSourceNavigatorSelfTest'
 }
 
+def jeiRecipeNavigatorSelfTest = tasks.register('jeiRecipeNavigatorSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.JeiRecipeNavigatorSelfTest'
+}
+
+def jadeTargetStoreSelfTest = tasks.register('jadeTargetStoreSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.JadeTargetStoreSelfTest'
+}
+
+def itemCatalogSchedulingSelfTest = tasks.register('itemCatalogSchedulingSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.ItemCatalogSchedulingSelfTest'
+}
+
+def modPediaBridgeSelfTest = tasks.register('modPediaBridgeSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.ModPediaBridgeSelfTest'
+}
+
+def runtimeContextCoordinatorSelfTest = tasks.register('runtimeContextCoordinatorSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.RuntimeContextCoordinatorSelfTest'
+}
+
+def knowledgeStatusSelfTest = tasks.register('knowledgeStatusSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.KnowledgeStatusSelfTest'
+}
+
+def aiResponseSanitizerSelfTest = tasks.register('aiResponseSanitizerSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiResponseSanitizerSelfTest'
+}
+
 def assistantSecondaryLayoutSelfTest = tasks.register('assistantSecondaryLayoutSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -281,6 +336,82 @@ def knowledgeDatabaseSelfTest = tasks.register('knowledgeDatabaseSelfTest', Java
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.search.KnowledgeDatabaseSelfTest'
+}
+
+def itemCatalogSelfTest = tasks.register('itemCatalogSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.ItemCatalogSelfTest'
+}
+
+def knowledgeFtsPerformanceSelfTest = tasks.register('knowledgeFtsPerformanceSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.search.KnowledgeFtsPerformanceSelfTest'
+}
+
+def taskKnowledgeStoreSelfTest = tasks.register('taskKnowledgeStoreSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.task.TaskKnowledgeStoreSelfTest'
+}
+
+def completedQuestSnapshotSelfTest = tasks.register('completedQuestSnapshotSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.task.CompletedQuestSnapshotSelfTest'
+}
+
+def ftbQuestIdCodecSelfTest = tasks.register('ftbQuestIdCodecSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.task.FtbQuestIdCodecSelfTest'
+}
+
+def workerTaskStaticImporterSelfTest = tasks.register('workerTaskStaticImporterSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerTaskStaticImporterSelfTest'
+}
+
+def workerTaskWikiServiceSelfTest = tasks.register('workerTaskWikiServiceSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerTaskWikiServiceSelfTest'
+}
+
+def workerTaskRuntimeFileSelfTest = tasks.register('workerTaskRuntimeFileSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerTaskRuntimeFileSelfTest'
+}
+
+def workerGuideScannerSelfTest = tasks.register('workerGuideScannerSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerGuideScannerSelfTest'
+}
+
+def knowledgeOperationGateSelfTest = tasks.register('knowledgeOperationGateSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.KnowledgeOperationGateSelfTest'
+}
+
+def workerConcurrencySelfTest = tasks.register('workerConcurrencySelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerConcurrencySelfTest'
+}
+
+def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
+    // 使用最终 Jar-in-Jar 产物启动子 JVM，验证发布 JAR 的 Worker 入口，而不是只
+    // 验证 Gradle 开发 classpath。测试夹具不调用模型，也不访问网络。
+    dependsOn tasks.named('jar')
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerIpcSelfTest'
+    systemProperty 'modpedia.worker.jar', tasks.named('jar').flatMap { it.archiveFile }.get().asFile.absolutePath
 }
 
 def knowledgeBenchmark = tasks.register('knowledgeBenchmark', JavaExec) {
@@ -416,6 +547,9 @@ def aiLiveModelProbe = tasks.register('aiLiveModelProbe', JavaExec) {
     if (project.hasProperty('knowledgeRoot')) {
         systemProperty 'modpedia.knowledgeRoot', project.property('knowledgeRoot')
     }
+    if (project.hasProperty('aiProbeQuestion')) {
+        systemProperty 'modpedia.aiProbeQuestion', project.property('aiProbeQuestion')
+    }
 }
 
 def markdownRendererSelfTest = tasks.register('markdownRendererSelfTest', JavaExec) {
@@ -427,11 +561,29 @@ def markdownRendererSelfTest = tasks.register('markdownRendererSelfTest', JavaEx
 tasks.named('test', Test) {
     dependsOn searchSelfTest
     dependsOn manualSourceNavigatorSelfTest
+    dependsOn jeiRecipeNavigatorSelfTest
+    dependsOn jadeTargetStoreSelfTest
+    dependsOn itemCatalogSchedulingSelfTest
+    dependsOn modPediaBridgeSelfTest
+    dependsOn runtimeContextCoordinatorSelfTest
+    dependsOn knowledgeStatusSelfTest
+    dependsOn aiResponseSanitizerSelfTest
     dependsOn assistantSecondaryLayoutSelfTest
     dependsOn appGuideAdapterSelfTest
     dependsOn localizedSearchSelfTest
     dependsOn assistantUsageSelfTest
     dependsOn knowledgeDatabaseSelfTest
+    dependsOn itemCatalogSelfTest
+    dependsOn taskKnowledgeStoreSelfTest
+    dependsOn completedQuestSnapshotSelfTest
+    dependsOn ftbQuestIdCodecSelfTest
+    dependsOn workerTaskStaticImporterSelfTest
+    dependsOn workerTaskWikiServiceSelfTest
+    dependsOn workerTaskRuntimeFileSelfTest
+    dependsOn workerGuideScannerSelfTest
+    dependsOn knowledgeOperationGateSelfTest
+    dependsOn workerConcurrencySelfTest
+    dependsOn workerIpcSelfTest
     dependsOn knowledgeBenchmarkFixtureSelfTest
     dependsOn conversationStoreSelfTest
     dependsOn aiSettingsSelfTest
@@ -456,7 +608,6 @@ var generateModMetadata = tasks.register("generateModMetadata", ProcessResources
             minecraft_version      : minecraft_version,
             minecraft_version_range: minecraft_version_range,
             neo_version            : neo_version,
-            modernui_version       : modernui_version,
             langchain4j_version    : langchain4j_version,
             loader_version_range   : loader_version_range,
             mod_id                 : mod_id,

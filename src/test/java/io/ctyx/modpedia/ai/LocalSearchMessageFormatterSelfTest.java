@@ -3,6 +3,7 @@ package io.ctyx.modpedia.ai;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
+import io.ctyx.modpedia.search.ItemCatalogEntry;
 
 import java.util.List;
 
@@ -41,6 +42,23 @@ public final class LocalSearchMessageFormatterSelfTest {
                 formatted,
                 "demo:pressure"
         );
+        io.ctyx.modpedia.client.ChatMessage withItem = LocalSearchMessageFormatter.format(
+                "[[item:demo:pressure|压力容器]] 怎么使用",
+                new SearchResponse(SearchStatus.NO_MATCH, "", List.of(), ""),
+                List.of(new ItemCatalogEntry(
+                        "demo:pressure",
+                        "zh_cn",
+                        "压力容器",
+                        "- 需要能源\n- 需要控制器",
+                        "demo",
+                        "item-v1"
+                ))
+        );
+        ChatMessageAssertions.assertMessage(withItem, "仅搜索模式应显示物品目录简介", "需要能源");
+        ChatMessageAssertions.assertMessage(withItem, "物品上下文应使用可渲染令牌", "[[item:demo:pressure|压力容器]]");
+        if (!withItem.sources().isEmpty()) {
+            throw new AssertionError("物品目录内容不应生成手册来源卡片");
+        }
         ChatMessageAssertions.assertMessage(
                 LocalSearchMessageFormatter.format(
                         "未知内容",

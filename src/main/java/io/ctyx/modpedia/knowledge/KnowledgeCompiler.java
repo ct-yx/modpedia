@@ -29,7 +29,7 @@ public final class KnowledgeCompiler {
     private final JsonGuideDocumentConverter jsonConverter = new JsonGuideDocumentConverter();
     private final AppGuideDocumentConverter appConverter = new AppGuideDocumentConverter();
 
-    public CompileResult compile(Path configDirectory, LocalGuideScanner.ScanResult scanResult) throws IOException {
+    public CompileResult compile(Path configDirectory, KnowledgeScanResult scanResult) throws IOException {
         return compile(configDirectory, scanResult, false);
     }
 
@@ -40,15 +40,17 @@ public final class KnowledgeCompiler {
      */
     public CompileResult compile(
             Path configDirectory,
-            LocalGuideScanner.ScanResult scanResult,
+            KnowledgeScanResult scanResult,
             boolean forceRebuild
     ) throws IOException {
         Path knowledgeRoot = configDirectory.resolve("modpedia").resolve("knowledge");
         Path generatedRoot = knowledgeRoot.resolve("generated");
         Path customRoot = knowledgeRoot.resolve("custom");
+        Path sourcesRoot = knowledgeRoot.resolve("sources");
         Path cacheRoot = knowledgeRoot.resolve("cache");
         Files.createDirectories(generatedRoot);
         Files.createDirectories(customRoot);
+        Files.createDirectories(sourcesRoot);
         Files.createDirectories(cacheRoot);
 
         List<String> warnings = new ArrayList<>();
@@ -128,13 +130,15 @@ public final class KnowledgeCompiler {
                                 source.fingerprint(),
                                 entry.relativePath(),
                                 languageOf(document.sourcePath()),
-                                0,
+                                source.priority(),
                                 document
                         )
                 );
                 generatedCount++;
             }
         }
+
+        loadWikiSources(knowledgeRoot, documents, databaseInputs, warnings);
 
         int removedCount = removeRemovedGenerated(
                 knowledgeRoot,
@@ -150,20 +154,26 @@ public final class KnowledgeCompiler {
                 forceRebuild,
                 warnings
         );
-        writeManifest(knowledgeRoot, documents);
-        writeKeywordIndex(knowledgeRoot, documents);
-        writeState(knowledgeRoot, currentSources, documents);
-
+        boolean databaseSynchronized = true;
         try {
             KnowledgeDatabase.sync(knowledgeRoot, databaseInputs.values(), forceRebuild);
         } catch (IOException | RuntimeException exception) {
             // SQLite 是派生搜索库；同步失败时保留旧数据库，JSON/Markdown 仍可用于迁移和诊断。
+            databaseSynchronized = false;
             warnings.add("SQLite 知识库同步失败，保留上一版本：" + messageOf(exception));
+        }
+
+        // 只有 SQLite 替换成功后才提交这些派生清单。否则下一次启动会看到
+        // “新 manifest + 旧 knowledge.db”的混合状态，日志也会误导诊断。
+        if (databaseSynchronized) {
+            writeManifest(knowledgeRoot, documents);
+            writeKeywordIndex(knowledgeRoot, documents);
+            writeState(knowledgeRoot, currentSources, documents);
         }
 
         BuildReport report = new BuildReport(
                 Instant.now().toString(),
-                scanResult.resources().size(),
+                countDocumentSources(documents),
                 generatedCount,
                 updatedCount,
                 reusedCount,
@@ -173,7 +183,7 @@ public final class KnowledgeCompiler {
                 warnings
         );
         Files.writeString(cacheRoot.resolve("build-report.json"), GSON.toJson(report), StandardCharsets.UTF_8);
-        return new CompileResult(knowledgeRoot, report);
+        return new CompileResult(knowledgeRoot, report, databaseSynchronized);
     }
 
     private List<KnowledgeDocument> convertAll(ScannedResource source) {
@@ -205,7 +215,13 @@ public final class KnowledgeCompiler {
                     source.sourceType(),
                     content,
                     source.fingerprint(),
-                    source.translations()
+                    source.translations(),
+                    source.contentKind(),
+                    source.sourceId(),
+                    source.collectionId(),
+                    source.priority(),
+                    source.originType(),
+                    source.metadataJson()
             );
             result.add(new DocumentEntry(markdownConverter.convert(cachedSource), relativePath));
         }
@@ -268,7 +284,7 @@ public final class KnowledgeCompiler {
             for (Path path : paths.filter(Files::isRegularFile).filter(this::isMarkdown).sorted().toList()) {
                 String relativePath = "custom/" + customRoot.relativize(path).toString().replace('\\', '/');
                 try {
-                    byte[] bytes = Files.readAllBytes(path);
+                    byte[] bytes = readLimited(path, 8L * 1024L * 1024L);
                     String content = new String(bytes, StandardCharsets.UTF_8);
                     String fingerprint = sha256(bytes);
                     KnowledgeDatabase.CachedDocument cached = cachedDocuments.get(relativePath);
@@ -300,12 +316,12 @@ public final class KnowledgeCompiler {
                     databaseInputs.put(
                             sourceKey,
                             new KnowledgeDatabase.DocumentInput(
-                                    sourceKey,
-                                    fingerprint,
-                                    relativePath,
-                                    metadata.language(),
-                                    100,
-                                    document
+                                sourceKey,
+                                fingerprint,
+                                relativePath,
+                                metadata.language(),
+                                metadata.priority(),
+                                document
                             )
                     );
                     count++;
@@ -326,12 +342,43 @@ public final class KnowledgeCompiler {
         return count;
     }
 
+    private void loadWikiSources(
+            Path knowledgeRoot,
+            Map<String, DocumentEntry> documents,
+            Map<String, KnowledgeDatabase.DocumentInput> databaseInputs,
+            List<String> warnings
+    ) throws IOException {
+        WikiSourceLoader.LoadResult loadResult = new WikiSourceLoader().load(knowledgeRoot, warnings);
+        if (!loadResult.complete()) {
+            // Wiki 输入是可编辑的本地事实源。任何一个来源损坏时必须让本次
+            // 编译失败，而不是拿不完整的输入删除上一版索引；KnowledgeDatabase
+            // 仍负责保留正式库，下一次启动会再次尝试读取修复后的来源。
+            throw new IOException("Wiki 来源不完整，已取消本次知识库替换；上一版本仍保留");
+        }
+        for (KnowledgeSourceImporter.ImportedKnowledgeDocument entry : loadResult.documents()) {
+            KnowledgeDocument document = entry.document();
+            documents.put(document.id(), new DocumentEntry(document, entry.relativePath()));
+            String sourceKey = "wiki:" + document.sourceId() + ":" + entry.relativePath();
+            databaseInputs.put(
+                    sourceKey,
+                    new KnowledgeDatabase.DocumentInput(
+                            sourceKey,
+                            entry.fingerprint(),
+                            entry.relativePath(),
+                            entry.language(),
+                            entry.priority(),
+                            document
+                    )
+            );
+        }
+    }
+
     private String languageOf(String path) {
         String normalized = path == null ? "" : path.replace('\\', '/').toLowerCase(Locale.ROOT);
-        if (normalized.contains("/zh_cn/")) {
+        if (normalized.contains("/zh_cn/") || normalized.contains("/_zh_cn/")) {
             return "zh_cn";
         }
-        if (normalized.contains("/en_us/")) {
+        if (normalized.contains("/en_us/") || normalized.contains("/_en_us/")) {
             return "en_us";
         }
         return "neutral";
@@ -350,8 +397,57 @@ public final class KnowledgeCompiler {
         }
     }
 
+    private byte[] readLimited(Path path, long limit) throws IOException {
+        long size = Files.size(path);
+        if (size > limit) {
+            throw new IOException("自定义 Markdown 超过大小上限：" + path);
+        }
+        try (var input = Files.newInputStream(path);
+             var output = new java.io.ByteArrayOutputStream((int) Math.min(size, 8192L))) {
+            byte[] buffer = new byte[8192];
+            long total = 0L;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > limit) {
+                    throw new IOException("自定义 Markdown 超过大小上限：" + path);
+                }
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
+
+    private int countDocumentSources(Map<String, DocumentEntry> documents) {
+        return (int) documents.values().stream()
+                .map(entry -> {
+                    KnowledgeDocument document = entry.document();
+                    String sourceId = document.sourceId();
+                    if (sourceId == null || sourceId.isBlank()) {
+                        return document.sourceMod();
+                    }
+                    return document.sourceType() + ":" + sourceId;
+                })
+                .filter(source -> source != null && !source.isBlank())
+                .distinct()
+                .count();
+    }
+
     private String messageOf(Exception exception) {
-        return exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+        StringBuilder message = new StringBuilder();
+        Throwable current = exception;
+        int depth = 0;
+        while (current != null && depth++ < 4) {
+            if (message.length() > 0) {
+                message.append(" <- ");
+            }
+            message.append(current.getClass().getSimpleName());
+            if (current.getMessage() != null && !current.getMessage().isBlank()) {
+                message.append(": ").append(current.getMessage());
+            }
+            current = current.getCause();
+        }
+        return message.toString();
     }
 
     private void writeManifest(Path root, Map<String, DocumentEntry> documents) throws IOException {
@@ -363,6 +459,10 @@ public final class KnowledgeCompiler {
             value.put("path", entry.relativePath());
             value.put("source_mod", document.sourceMod());
             value.put("source_type", document.sourceType());
+            value.put("content_kind", document.contentKind().id());
+            value.put("source_id", document.sourceId());
+            value.put("collection_id", document.collectionId());
+            value.put("origin_type", document.originType());
             value.put("title", document.title());
             value.put("category", document.category());
             value.put("keywords", document.keywords());
@@ -402,7 +502,7 @@ public final class KnowledgeCompiler {
         state.put("schema_version", 2);
         state.put("updated_at", Instant.now().toString());
         state.put("document_count", documents.size());
-        state.put("source_count", currentSources.size());
+        state.put("source_count", countDocumentSources(documents));
         Map<String, Object> sources = new TreeMap<>();
         currentSources.forEach((sourceKey, source) -> {
             Map<String, Object> value = new LinkedHashMap<>();
@@ -541,7 +641,15 @@ public final class KnowledgeCompiler {
         return fileName + ".md";
     }
 
-    public record CompileResult(Path knowledgeRoot, BuildReport report) {
+    public record CompileResult(
+            Path knowledgeRoot,
+            BuildReport report,
+            boolean databaseSynchronized
+    ) {
+        /** SQLite 同步失败时，report 仍用于诊断，但本次构建不能作为完成状态发布。 */
+        public boolean successful() {
+            return databaseSynchronized;
+        }
     }
 
     public record BuildReport(

@@ -25,7 +25,7 @@ public final class MarkdownRenderer {
     }
 
     public static List<RenderedLine> layout(String markdown, Font font, int width) {
-        return layout(markdown, font, width, List.of());
+        return layout(markdown, font, width, List.of(), false);
     }
 
     /**
@@ -40,26 +40,61 @@ public final class MarkdownRenderer {
             int width,
             List<SourceReference> availableSources
     ) {
+        return layout(markdown, font, width, availableSources, false);
+    }
+
+    /** 布局正文；按住 Ctrl 时显示稳定 ID，否则显示当前语言的本地化名称。 */
+    public static List<RenderedLine> layout(
+            String markdown,
+            Font font,
+            int width,
+            List<SourceReference> availableSources,
+            boolean showIds
+    ) {
         List<RenderedLine> result = new ArrayList<>();
         int lineWidth = Math.max(1, width);
         List<SourceReference> normalizedSources = uniqueSources(availableSources);
+        ItemNameMatcher displayNameMatcher = showIds
+                ? ItemNameResolver.displayNameMatcher()
+                : ItemNameMatcher.empty();
         boolean hasInlineAnnotations = false;
         for (MarkdownLine line : MarkdownParser.parse(markdown)) {
             List<SourceReference> annotations = sourceAnnotations(line, normalizedSources);
+            ItemTokenParser.Parsed itemText = line.kind() == MarkdownLine.Kind.CODE
+                    ? new ItemTokenParser.Parsed(line.text(), List.of())
+                    : ItemTokenParser.parse(
+                            line.text(),
+                            showIds,
+                            ItemNameResolver::registeredName,
+                            displayNameMatcher
+                    );
             String displayText = line.kind() == MarkdownLine.Kind.CODE
                     ? line.text()
-                    : SourceCitationParser.removeCitationMarkup(line.text());
+                    : SourceCitationParser.removeCitationMarkup(itemText.text());
             MarkdownLine displayLine = displayLine(line, displayText);
             Component component = component(displayLine);
             List<FormattedCharSequence> wrapped = font.split(component, lineWidth);
+            List<ItemReference> remainingItems = new ArrayList<>(itemText.references());
             if (wrapped.isEmpty()) {
-                result.add(new RenderedLine(FormattedCharSequence.EMPTY, displayLine, annotations));
+                result.add(new RenderedLine(
+                        FormattedCharSequence.EMPTY,
+                        displayLine,
+                        annotations,
+                        List.of()
+                ));
             } else {
                 for (int index = 0; index < wrapped.size(); index++) {
-                    result.add(new RenderedLine(
-                            wrapped.get(index),
+                    FormattedCharSequence sequence = wrapped.get(index);
+                    String wrappedText = plainText(sequence);
+                    MarkdownLine renderedLine = displayLine(
                             displayLine,
-                            index + 1 == wrapped.size() ? annotations : List.of()
+                            wrappedText
+                    );
+                    result.add(new RenderedLine(
+                            sequence,
+                            renderedLine,
+                            index + 1 == wrapped.size() ? annotations : List.of(),
+                            takeItems(remainingItems, wrappedText)
                     ));
                 }
             }
@@ -111,6 +146,35 @@ public final class MarkdownRenderer {
             resolved.putIfAbsent(key, annotated);
         }
         return List.copyOf(resolved.values());
+    }
+
+    private static List<ItemReference> takeItems(List<ItemReference> remaining, String lineText) {
+        if (remaining.isEmpty() || lineText == null || lineText.isBlank()) {
+            return List.of();
+        }
+        List<ItemReference> result = new ArrayList<>();
+        for (int index = 0; index < remaining.size();) {
+            ItemReference reference = remaining.get(index);
+            if (reference.displayText().isBlank() || !lineText.contains(reference.displayText())) {
+                index++;
+                continue;
+            }
+            result.add(reference);
+            remaining.remove(index);
+        }
+        return List.copyOf(result);
+    }
+
+    private static String plainText(FormattedCharSequence sequence) {
+        if (sequence == null) {
+            return "";
+        }
+        StringBuilder result = new StringBuilder();
+        sequence.accept((codePointIndex, style, codePoint) -> {
+            result.appendCodePoint(codePoint);
+            return true;
+        });
+        return result.toString();
     }
 
     private static MarkdownLine displayLine(MarkdownLine source, String displayText) {
@@ -166,6 +230,7 @@ public final class MarkdownRenderer {
     private static Style baseStyle(MarkdownLine.Kind kind) {
         return switch (kind) {
             case HEADING -> Style.EMPTY.withBold(true).withColor(HEADING_COLOR);
+            case TABLE_HEADER -> Style.EMPTY.withBold(true).withColor(HEADING_COLOR);
             case BLOCK_QUOTE -> Style.EMPTY.withColor(QUOTE_COLOR).withItalic(true);
             default -> Style.EMPTY;
         };
@@ -201,18 +266,28 @@ public final class MarkdownRenderer {
     public record RenderedLine(
             FormattedCharSequence sequence,
             MarkdownLine source,
-            List<SourceReference> annotations
+            List<SourceReference> annotations,
+            List<ItemReference> items
     ) {
         public RenderedLine(FormattedCharSequence sequence, MarkdownLine source) {
-            this(sequence, source, List.of());
+            this(sequence, source, List.of(), List.of());
+        }
+
+        public RenderedLine(
+                FormattedCharSequence sequence,
+                MarkdownLine source,
+                List<SourceReference> annotations
+        ) {
+            this(sequence, source, annotations, List.of());
         }
 
         public RenderedLine {
             annotations = annotations == null ? List.of() : List.copyOf(annotations);
+            items = items == null ? List.of() : List.copyOf(items);
         }
 
         public RenderedLine withAnnotations(List<SourceReference> value) {
-            return new RenderedLine(sequence, source, value);
+            return new RenderedLine(sequence, source, value, items);
         }
     }
 }

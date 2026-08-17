@@ -17,6 +17,8 @@ public record MarkdownLine(String text, Kind kind, int level) {
         BLANK,
         PARAGRAPH,
         HEADING,
+        TABLE_HEADER,
+        TABLE_ROW,
         UNORDERED_LIST,
         ORDERED_LIST,
         BLOCK_QUOTE,

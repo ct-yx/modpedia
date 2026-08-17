@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 7,
   "document_front_matter": {
     "required": [
       "id",
@@ -9,17 +9,69 @@
       "category",
       "keywords",
       "source_version",
-      "source_path"
+      "source_path",
+      "content_kind",
+      "source_id",
+      "collection_id",
+      "origin_type"
     ]
   },
   "custom_document_front_matter": {
     "required": ["id"],
-    "optional": ["language", "title", "category", "keywords", "source_type"]
+    "optional": [
+      "language",
+      "title",
+      "category",
+      "keywords",
+      "source_type",
+      "content_kind",
+      "source_id",
+      "collection_id",
+      "origin_type",
+      "priority",
+      "metadata_json"
+    ]
   },
   "runtime_directories": {
     "generated": "config/modpedia/knowledge/generated",
     "custom": "config/modpedia/knowledge/custom",
+    "sources": "config/modpedia/knowledge/sources/<source-id>",
+    "source_descriptor": "config/modpedia/knowledge/sources/<source-id>/source.json",
+    "source_documents": "config/modpedia/knowledge/sources/<source-id>/documents/**/*.md",
     "cache": "config/modpedia/knowledge/cache",
     "database": "config/modpedia/knowledge/knowledge.db"
+  },
+  "content_kinds": [
+    "mod_manual",
+    "wiki",
+    "task_runtime"
+  ],
+  "source_types": [
+    "app_json",
+    "patchouli_json",
+    "guideme_json",
+    "guideme_markdown",
+    "modonomicon_json",
+    "custom_markdown",
+    "wiki_markdown",
+    "task_snapshot"
+  ],
+  "database_tables": {
+    "text": ["knowledge_sources", "documents", "segments", "segments_fts"],
+    "task_runtime": [
+      "task_snapshots",
+      "task_quests",
+      "task_dependencies",
+      "task_tasks",
+      "task_rewards"
+    ]
+  },
+  "fts5": {
+    "storage": "external-content",
+    "content_table": "segments",
+    "content_rowid": "segment_id",
+    "indexed_columns": ["title", "keywords", "heading_path", "normalized_text"],
+    "full_markdown_source": "segments.markdown",
+    "optimize": "PRAGMA optimize plus FTS5 optimize after full or large-batch imports"
   }
 }

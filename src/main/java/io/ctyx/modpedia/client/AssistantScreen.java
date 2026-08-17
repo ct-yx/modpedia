@@ -1,7 +1,6 @@
 package io.ctyx.modpedia.client;
 
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
-import io.ctyx.modpedia.knowledge.KnowledgeUpdateService;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -29,6 +28,7 @@ public final class AssistantScreen extends Screen {
     private static final int TEXT_COLOR = 0xFFF3F6FA;
     private static final int SUBTLE_TEXT_COLOR = 0xFFB8C3D3;
     private static final int ERROR_COLOR = 0xFFFFB4AB;
+    private static final int TARGET_INSERT_WIDTH = 18;
 
     private final Screen previousScreen;
     private final AssistantSession session;
@@ -39,6 +39,7 @@ public final class AssistantScreen extends Screen {
     private WindowBounds bounds;
     private AssistantInput input;
     private boolean inputExpanded;
+    private boolean targetButtonVisible;
     private AssistantGlassConfig.Style glassStyle = AssistantGlassConfig.load();
     private AssistantUiState currentState;
     private boolean listening;
@@ -51,7 +52,21 @@ public final class AssistantScreen extends Screen {
     private double scrollOffset;
     private boolean scrollToEnd = true;
     private List<SourceCard> sourceCards = List.of();
+    private List<ItemHit> itemHits = List.of();
     private List<SuggestionHit> suggestionHits = List.of();
+    /**
+     * 消息布局不随鼠标移动变化。之前每一帧都会重新拆 Markdown、构建物品名称
+     * 候选并计算换行；大型整合包按 Cmd/Ctrl 时会因此把数万物品名称重复扫描。
+     * 这里按状态、宽度、字体和名称索引代数缓存普通/ID 两套布局。
+     */
+    private AssistantUiState cachedLayoutState;
+    private Font cachedLayoutFont;
+    private int cachedLayoutWidth = -1;
+    private long cachedLayoutGeneration = Long.MIN_VALUE;
+    private boolean normalLayoutReady;
+    private boolean idLayoutReady;
+    private List<MessageBubble> cachedNormalLayouts = List.of();
+    private List<MessageBubble> cachedIdLayouts = List.of();
     private SourceReference previewSource;
     private String previewStatus = "";
     private Bounds retryBounds;
@@ -91,6 +106,9 @@ public final class AssistantScreen extends Screen {
         if (!draft.isBlank()) {
             inputExpanded = true;
         }
+        targetButtonVisible = inputExpanded
+                && secondaryPanel == SecondaryPanel.NONE
+                && JadeTargetStore.current() != null;
         constrainBounds();
         clearWidgets();
         settingsContentWidgets.clear();
@@ -144,12 +162,20 @@ public final class AssistantScreen extends Screen {
         if (bounds != null) {
             bounds = bounds.clampTo(width, height);
         }
+        invalidateMessageLayouts();
         super.resize(minecraft, width, height);
     }
 
     @Override
     public void tick() {
         super.tick();
+        boolean shouldShowTargetButton = inputExpanded
+                && secondaryPanel == SecondaryPanel.NONE
+                && JadeTargetStore.current() != null;
+        if (shouldShowTargetButton != targetButtonVisible) {
+            targetButtonVisible = shouldShowTargetButton;
+            rebuildWidgets();
+        }
         if (secondaryPanel == SecondaryPanel.NONE && inputExpanded && input != null && input.isFocused()) {
             input.setFocused(true);
         }
@@ -335,12 +361,24 @@ public final class AssistantScreen extends Screen {
             }
             return true;
         }
+        if (inputExpanded && targetInsertBounds().contains(mouseX, mouseY)) {
+            insertLookTarget();
+            return true;
+        }
         if (retryBounds != null && retryBounds.contains(mouseX, mouseY)) {
             session.retry();
             scrollToEnd = true;
             return true;
         }
         if (messageBounds().contains(mouseX, mouseY)) {
+            if (hasShiftDown()) {
+                for (ItemHit hit : itemHits) {
+                    if (hit.bounds().contains(mouseX, mouseY)) {
+                        JeiRecipeNavigator.open(hit.reference().id());
+                        return true;
+                    }
+                }
+            }
             for (SourceCard card : sourceCards) {
                 if (card.contains(mouseX, mouseY)) {
                     openSourceOrPreview(card.source());
@@ -497,7 +535,7 @@ public final class AssistantScreen extends Screen {
         // 欢迎语、建议文字和输入控件也不会出现在二级页面文字之上。
         if (secondaryPanel == SecondaryPanel.NONE) {
             drawMessages(graphics, mouseX, mouseY);
-            drawInputChrome(graphics);
+            drawInputChrome(graphics, mouseX, mouseY);
         } else if (secondaryPanel == SecondaryPanel.HISTORY) {
             renderHistoryPage(graphics, mouseX, mouseY);
         } else if (secondaryPanel == SecondaryPanel.SETTINGS && settingsPanel != null) {
@@ -514,7 +552,7 @@ public final class AssistantScreen extends Screen {
         updateCursor(edge);
     }
 
-    private void drawInputChrome(GuiGraphics graphics) {
+    private void drawInputChrome(GuiGraphics graphics, int mouseX, int mouseY) {
         if (!inputExpanded) {
             Bounds trigger = inputTriggerBounds();
             graphics.fill(
@@ -541,6 +579,32 @@ public final class AssistantScreen extends Screen {
         Bounds row = inputRowBounds();
         Bounds send = sendBounds();
         graphics.renderOutline(row.left() - 1, row.top() - 1, row.width() + 2, row.height() + 2, glassStyle.glowInnerColor());
+        Bounds targetButton = targetInsertBounds();
+        JadeTargetStore.Target target = JadeTargetStore.current();
+        if (targetButtonVisible && target != null) {
+            boolean hovered = targetButton.contains(mouseX, mouseY);
+            graphics.fill(
+                    targetButton.left(),
+                    targetButton.top(),
+                    targetButton.right(),
+                    targetButton.bottom(),
+                    hovered ? glassStyle.glowInnerColor() : glassStyle.assistantBubbleColor()
+            );
+            graphics.renderOutline(
+                    targetButton.left(),
+                    targetButton.top(),
+                    targetButton.width(),
+                    targetButton.height(),
+                    glassStyle.glowInnerColor()
+            );
+            graphics.drawCenteredString(
+                    font,
+                    Component.literal("⌖"),
+                    targetButton.left() + targetButton.width() / 2,
+                    targetButton.top() + Math.max(1, (targetButton.height() - font.lineHeight) / 2),
+                    hovered ? TEXT_COLOR : glassStyle.accentColor()
+            );
+        }
         int color = input != null && input.hasText() && !session.isLoading()
                 ? glassStyle.accentColor()
                 : SUBTLE_TEXT_COLOR;
@@ -556,10 +620,10 @@ public final class AssistantScreen extends Screen {
     private void drawMessages(GuiGraphics graphics, int mouseX, int mouseY) {
         Bounds area = messageBounds();
         List<ChatMessage> visibleMessages = visibleMessages();
-        List<MessageBubble> layouts = MessageList.layout(
+        List<MessageBubble> layouts = messageLayouts(
                 visibleMessages,
-                font,
-                area.width() - CONTENT_PADDING * 2
+                area.width() - CONTENT_PADDING * 2,
+                hasControlDown()
         );
         int messageContentHeight = layouts.isEmpty() ? 0 : layouts.get(layouts.size() - 1).bottom();
         int contentHeight = messageContentHeight + (layouts.isEmpty() ? 0 : stateNoticeHeight());
@@ -570,6 +634,7 @@ public final class AssistantScreen extends Screen {
         }
         scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset));
         sourceCards = new ArrayList<>();
+        itemHits = new ArrayList<>();
         suggestionHits = new ArrayList<>();
         retryBounds = null;
 
@@ -727,6 +792,7 @@ public final class AssistantScreen extends Screen {
                 );
             }
             graphics.drawString(font, line.sequence(), bubbleX + 12, textY, TEXT_COLOR, false);
+                recordItemHits(line, bubbleX + 12, textY);
             textY += font.lineHeight;
             if (!line.annotations().isEmpty()) {
                 int annotationWidth = Math.max(1, layout.width() - 20);
@@ -751,6 +817,20 @@ public final class AssistantScreen extends Screen {
                 }
                 textY += SourceCard.inlineHeight(line.annotations(), font, annotationWidth);
             }
+        }
+
+        List<FormattedCharSequence> taskSummaryLines = MessageBubble.taskSummaryLines(
+                message,
+                font,
+                layout.width()
+        );
+        if (!taskSummaryLines.isEmpty()) {
+            textY += MessageBubble.taskSummaryTopGap();
+            for (FormattedCharSequence line : taskSummaryLines) {
+                graphics.drawString(font, line, bubbleX + 12, textY, SUBTLE_TEXT_COLOR, false);
+                textY += font.lineHeight;
+            }
+            textY += 3;
         }
 
         if (layout.showFollowUps()) {
@@ -1052,7 +1132,7 @@ public final class AssistantScreen extends Screen {
     }
 
     private String statusText() {
-        KnowledgeStatus status = KnowledgeUpdateService.status();
+        KnowledgeStatus status = ModPediaBridge.get().knowledgeStatus();
         String text;
         if (status.updating()) {
             text = "知识库更新中 · " + status.sourceCount() + " 来源 · " + status.documentCount() + " 文档";
@@ -1083,7 +1163,52 @@ public final class AssistantScreen extends Screen {
 
     private void onStateChanged(AssistantUiState state) {
         currentState = state;
+        invalidateMessageLayouts();
         scrollToEnd = true;
+    }
+
+    private List<MessageBubble> messageLayouts(
+            List<ChatMessage> visibleMessages,
+            int contentWidth,
+            boolean showIds
+    ) {
+        long generation = ItemNameResolver.indexGeneration();
+        if (cachedLayoutState != currentState
+                || cachedLayoutFont != font
+                || cachedLayoutWidth != contentWidth
+                || cachedLayoutGeneration != generation) {
+            cachedLayoutState = currentState;
+            cachedLayoutFont = font;
+            cachedLayoutWidth = contentWidth;
+            cachedLayoutGeneration = generation;
+            normalLayoutReady = false;
+            idLayoutReady = false;
+            cachedNormalLayouts = List.of();
+            cachedIdLayouts = List.of();
+        }
+        if (showIds) {
+            if (!idLayoutReady) {
+                cachedIdLayouts = MessageList.layout(visibleMessages, font, contentWidth, true);
+                idLayoutReady = true;
+            }
+            return cachedIdLayouts;
+        }
+        if (!normalLayoutReady) {
+            cachedNormalLayouts = MessageList.layout(visibleMessages, font, contentWidth, false);
+            normalLayoutReady = true;
+        }
+        return cachedNormalLayouts;
+    }
+
+    private void invalidateMessageLayouts() {
+        cachedLayoutState = null;
+        cachedLayoutFont = null;
+        cachedLayoutWidth = -1;
+        cachedLayoutGeneration = Long.MIN_VALUE;
+        normalLayoutReady = false;
+        idLayoutReady = false;
+        cachedNormalLayouts = List.of();
+        cachedIdLayouts = List.of();
     }
 
     void addSettingsContentWidget(AbstractWidget widget) {
@@ -1373,12 +1498,70 @@ public final class AssistantScreen extends Screen {
 
     private Bounds inputFieldBounds() {
         Bounds row = inputRowBounds();
+        int targetWidth = targetButtonVisible ? TARGET_INSERT_WIDTH + FloatingAssistantWindow.INPUT_GAP : 0;
         return new Bounds(
                 row.left(),
                 row.top(),
-                Math.max(1, row.width() - FloatingAssistantWindow.SEND_BUTTON_SIZE - FloatingAssistantWindow.INPUT_GAP),
+                Math.max(1, row.width() - FloatingAssistantWindow.SEND_BUTTON_SIZE
+                        - FloatingAssistantWindow.INPUT_GAP - targetWidth),
                 row.height()
         );
+    }
+
+    private Bounds targetInsertBounds() {
+        if (!targetButtonVisible || !inputExpanded || secondaryPanel != SecondaryPanel.NONE) {
+            return new Bounds(0, 0, 0, 0);
+        }
+        Bounds send = sendBounds();
+        return new Bounds(
+                send.left() - FloatingAssistantWindow.INPUT_GAP - TARGET_INSERT_WIDTH,
+                send.top(),
+                TARGET_INSERT_WIDTH,
+                send.height()
+        );
+    }
+
+    private void insertLookTarget() {
+        if (input == null) {
+            return;
+        }
+        JadeTargetStore.Target target = JadeTargetStore.current();
+        if (target == null || target.itemId().isBlank()) {
+            return;
+        }
+        String token = "[[item:" + target.itemId() + "|" + target.displayName() + "]]";
+        String value = input.getValue();
+        input.setValue(value.isBlank() ? token : value + " " + token);
+        input.setFocused(true);
+    }
+
+    private void recordItemHits(
+            MarkdownRenderer.RenderedLine line,
+            int textLeft,
+            int textTop
+    ) {
+        if (line.items().isEmpty() || line.source().kind() == MarkdownLine.Kind.CODE) {
+            return;
+        }
+        String text = formattedText(line.sequence());
+        int searchFrom = 0;
+        for (ItemReference reference : line.items()) {
+            String display = reference.displayText();
+            if (display.isBlank()) {
+                continue;
+            }
+            int start = text.indexOf(display, searchFrom);
+            if (start < 0) {
+                start = text.indexOf(display);
+            }
+            if (start < 0) {
+                continue;
+            }
+            int left = textLeft + font.width(text.substring(0, start));
+            Bounds hit = new Bounds(left, textTop, Math.max(1, font.width(display)), font.lineHeight);
+            itemHits = append(itemHits, new ItemHit(hit, reference));
+            searchFrom = start + display.length();
+        }
     }
 
     private Bounds previewBounds() {
@@ -1413,6 +1596,18 @@ public final class AssistantScreen extends Screen {
         return copy;
     }
 
+    private static String formattedText(FormattedCharSequence sequence) {
+        if (sequence == null) {
+            return "";
+        }
+        StringBuilder result = new StringBuilder();
+        sequence.accept((codePointIndex, style, codePoint) -> {
+            result.appendCodePoint(codePoint);
+            return true;
+        });
+        return result.toString();
+    }
+
     private record Bounds(int left, int top, int width, int height) {
         int right() {
             return left + width;
@@ -1434,6 +1629,9 @@ public final class AssistantScreen extends Screen {
     }
 
     private record HistoryHit(Bounds bounds, ConversationSummary summary) {
+    }
+
+    private record ItemHit(Bounds bounds, ItemReference reference) {
     }
 
     private enum SecondaryPanel {

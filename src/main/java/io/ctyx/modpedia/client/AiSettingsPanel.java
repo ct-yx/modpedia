@@ -1,21 +1,22 @@
 package io.ctyx.modpedia.client;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiClient;
-import io.ctyx.modpedia.ai.AiModelCompatibilityTester;
 import io.ctyx.modpedia.ai.AiSettings;
-import io.ctyx.modpedia.ai.AiSettingsStore;
 import io.ctyx.modpedia.ai.AssistantMode;
 import io.ctyx.modpedia.ai.SearchIntensity;
-import net.minecraft.client.Minecraft;
+import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
+import io.ctyx.modpedia.protocol.WorkerProtocol;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
-import net.neoforged.fml.loading.FMLPaths;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 
 /** 设置二级页面；控件随页面缩放，内容滚动，页脚固定。 */
@@ -36,7 +37,7 @@ final class AiSettingsPanel {
     private static final int BASE_ADVANCED_ROW_GAP = 52;
     private static final int BASE_CONTENT_BOTTOM_PADDING = 12;
 
-    private final AiSettingsStore settingsStore = AiSettingsStore.runtime();
+    private final ModPediaBridge bridge = ModPediaBridge.get();
     private AssistantScreen owner;
     private Font font;
     private AssistantGlassConfig.Style buttonStyle;
@@ -75,10 +76,15 @@ final class AiSettingsPanel {
     private AssistantPanelButton modelListButton;
     private AssistantPanelButton restoreButton;
     private AssistantPanelButton cancelButton;
-    private List<AiClient.ModelInfo> availableModels = List.of();
+    private List<String> availableModels = List.of();
     private String modelsEndpoint = "";
     private boolean fetchingModels;
     private long modelRequestId;
+    private long settingsRequestId;
+    private boolean settingsLoadRequested;
+    private boolean settingsLoaded;
+    private boolean savingSettings;
+    private long settingsOperationId;
     private String status = "";
     private boolean statusError;
     private boolean testing;
@@ -93,7 +99,11 @@ final class AiSettingsPanel {
             int width,
             int bottom
     ) {
-        AiSettings values = endpoint == null ? settingsStore.load() : readSettings();
+        boolean requestSettings = endpoint == null && !settingsLoaded && !settingsLoadRequested;
+        if (requestSettings) {
+            settingsLoadRequested = true;
+        }
+        AiSettings values = endpoint == null ? AiSettings.defaults() : readSettings();
         this.owner = owner;
         this.font = font;
         this.buttonStyle = buttonStyle;
@@ -239,6 +249,9 @@ final class AiSettingsPanel {
 
         createFooterButtons(owner, fieldLeft, fieldWidth);
         applyModeEnabled(values.mode());
+        if (requestSettings) {
+            loadSettingsFromWorker();
+        }
     }
 
     private EditBox advancedField(int fieldLeft, int fieldWidth, int smallWidth, int value, int index, String hint) {
@@ -384,7 +397,12 @@ final class AiSettingsPanel {
 
     void cancelPendingModelRequest() {
         modelRequestId++;
+        settingsRequestId++;
+        settingsOperationId++;
         fetchingModels = false;
+        settingsLoadRequested = false;
+        savingSettings = false;
+        testing = false;
         testingModels = false;
     }
 
@@ -479,7 +497,7 @@ final class AiSettingsPanel {
         SearchIntensity selectedIntensity = intensity == null ? SearchIntensity.STANDARD : intensity.getValue();
         return new AiSettings(
                 selectedMode,
-                value(endpoint),
+                AiClient.normalizedEndpoint(value(endpoint)),
                 value(model),
                 value(apiKey),
                 streaming == null || streaming.getValue(),
@@ -493,13 +511,20 @@ final class AiSettingsPanel {
 
     private void applyModeEnabled(AssistantMode selected) {
         boolean ai = selected != AssistantMode.SEARCH_ONLY;
-        if (endpoint != null) endpoint.active = ai;
-        if (model != null) model.active = ai;
-        if (apiKey != null) apiKey.active = ai;
-        if (streaming != null) streaming.active = ai;
-        if (testButton != null) testButton.active = ai && !testingModels;
-        if (testAllModelsButton != null) testAllModelsButton.active = ai && !testingModels && !fetchingModels;
-        if (modelListButton != null) modelListButton.active = ai && !fetchingModels && !testingModels;
+        boolean ready = settingsLoaded && !settingsLoadRequested && !savingSettings
+                && !testing && !testingModels && !fetchingModels;
+        if (endpoint != null) endpoint.active = ai && ready;
+        if (model != null) model.active = ai && ready;
+        if (apiKey != null) apiKey.active = ai && ready;
+        if (streaming != null) streaming.active = ai && ready;
+        if (testButton != null) testButton.active = ai && ready;
+        if (testAllModelsButton != null) testAllModelsButton.active = ai && ready;
+        if (modelListButton != null) modelListButton.active = ai && ready;
+        if (saveButton != null) saveButton.active = ready;
+        if (restoreButton != null) restoreButton.active = ready;
+        if (cancelButton != null) cancelButton.active = true;
+        if (mode != null) mode.active = ready;
+        if (intensity != null) intensity.active = ready;
     }
 
     private int modelButtonWidth(int fieldWidth) {
@@ -519,7 +544,9 @@ final class AiSettingsPanel {
     }
 
     private void fetchOrSelectModel() {
-        if (fetchingModels || mode == null || mode.getValue() == AssistantMode.SEARCH_ONLY) {
+        if (fetchingModels || savingSettings || testing || testingModels
+                || settingsLoadRequested || mode == null
+                || mode.getValue() == AssistantMode.SEARCH_ONLY) {
             return;
         }
         String currentEndpoint = value(endpoint).strip();
@@ -527,14 +554,14 @@ final class AiSettingsPanel {
             String currentModel = value(model).strip();
             int currentIndex = -1;
             for (int index = 0; index < availableModels.size(); index++) {
-                if (availableModels.get(index).id().equals(currentModel)) {
+                if (availableModels.get(index).equals(currentModel)) {
                     currentIndex = index;
                     break;
                 }
             }
             int nextIndex = (currentIndex + 1 + availableModels.size()) % availableModels.size();
-            model.setValue(availableModels.get(nextIndex).id());
-            setStatus("已选择模型：" + availableModels.get(nextIndex).id(), false);
+            model.setValue(availableModels.get(nextIndex));
+            setStatus("已选择模型：" + availableModels.get(nextIndex), false);
             return;
         }
 
@@ -554,44 +581,45 @@ final class AiSettingsPanel {
         setStatus("正在获取模型列表……", false);
         applyModeEnabled(values.mode());
         owner.rebuildAssistantWidgets();
-        AiClient.fetchModels(values, result -> Minecraft.getInstance().execute(() -> {
+        bridge.fetchModels(values, event -> {
             if (!owner.settingsPanelOpen() || requestId != modelRequestId) {
                 return;
             }
             fetchingModels = false;
-            if (result.failed()) {
+            if (isError(event)) {
                 availableModels = List.of();
                 modelsEndpoint = "";
-                setStatus(result.message(), true);
+                setStatus(workerMessage(event, "获取模型列表失败。"), true);
             } else {
-                availableModels = result.models();
+                availableModels = modelIds(event);
                 modelsEndpoint = value(endpoint).strip();
-                String normalized = AiClient.normalizedEndpoint(modelsEndpoint);
+                String normalized = normalizeEndpoint(modelsEndpoint);
                 boolean endpointChanged = !normalized.equals(modelsEndpoint);
                 if (endpointChanged) {
                     endpoint.setValue(normalized);
                     modelsEndpoint = normalized;
                 }
-                setStatus(result.message() + (endpointChanged ? " 已自动补全 /v1。" : ""), false);
+                setStatus(workerMessage(event, "模型列表获取完成。")
+                        + (endpointChanged ? " 已自动补全 /v1。" : ""), false);
                 if (!availableModels.isEmpty()) {
                     String currentModel = value(model).strip();
-                    boolean found = availableModels.stream().anyMatch(info -> info.id().equals(currentModel));
+                    boolean found = availableModels.stream().anyMatch(currentModel::equals);
                     if (!found) {
-                        model.setValue(availableModels.get(0).id());
+                        model.setValue(availableModels.getFirst());
                     }
                 }
             }
             applyModeEnabled(readSettings().mode());
             owner.rebuildAssistantWidgets();
-        }));
+        });
     }
 
     private void saveSettings() {
-        boolean saved = settingsStore.save(readSettings());
-        setStatus(
-                saved ? "已保存并验证。" : "保存失败，请检查当前实例的配置目录。",
-                !saved
-        );
+        if (savingSettings || testing || testingModels || settingsLoadRequested) {
+            return;
+        }
+        AiSettings values = readSettings();
+        persistSettings(values, "正在保存设置……", ignored -> setStatus("已保存并验证。", false));
     }
 
     private void testConnection() {
@@ -608,21 +636,56 @@ final class AiSettingsPanel {
             setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
             return;
         }
+        if (savingSettings || testing || testingModels || settingsLoadRequested) {
+            return;
+        }
+        // 先保存当前 UI 值，再用 Worker 回传的同一份值测试，避免保存和测试两个 IPC
+        // 请求并行时测试到旧配置。
         testing = true;
-        setStatus("正在测试连接……", false);
-        AiClient.testConnection(values, result -> Minecraft.getInstance().execute(() -> {
-            if (!owner.settingsPanelOpen() || !testing) {
+        savingSettings = true;
+        long operationId = ++settingsOperationId;
+        setStatus("正在保存并测试连接……", false);
+        applyModeEnabled(values.mode());
+        owner.rebuildAssistantWidgets();
+        if (!bridge.saveSettings(values, event -> {
+            if (!owner.settingsPanelOpen() || operationId != settingsOperationId || !testing) {
                 return;
             }
-            testing = false;
-            String message = result.message() == null || result.message().isBlank()
-                    ? "未知错误"
-                    : result.message();
-            if (!values.effectiveApiKey().isBlank()) {
-                message = message.replace(values.effectiveApiKey(), "[已隐藏密钥]");
+            savingSettings = false;
+            if (isError(event)) {
+                testing = false;
+                setStatus("保存失败，未发起连接测试：" + workerMessage(event, "未知错误"), true);
+                applyModeEnabled(readSettings().mode());
+                owner.rebuildAssistantWidgets();
+                return;
             }
-            setStatus(result.failed() ? "连接失败：" + message : message, result.failed());
-        }));
+            settingsLoaded = true;
+            AiSettings persisted = settingsFromEvent(event, values);
+            applySettings(persisted);
+            setStatus("正在测试连接……", false);
+            owner.rebuildAssistantWidgets();
+            if (!bridge.testConnection(persisted, result -> {
+                if (!owner.settingsPanelOpen() || operationId != settingsOperationId || !testing) {
+                    return;
+                }
+                testing = false;
+                String message = workerMessage(result, "未知错误");
+                setStatus(isError(result) ? "连接失败：" + message : message, isError(result));
+                applyModeEnabled(readSettings().mode());
+                owner.rebuildAssistantWidgets();
+            })) {
+                testing = false;
+                setStatus("ModPedia Worker 不可用，无法测试连接。", true);
+                applyModeEnabled(readSettings().mode());
+                owner.rebuildAssistantWidgets();
+            }
+        })) {
+            savingSettings = false;
+            testing = false;
+            setStatus("ModPedia Worker 不可用，设置未保存，无法测试连接。", true);
+            applyModeEnabled(values.mode());
+            owner.rebuildAssistantWidgets();
+        }
     }
 
     private void testAllModels() {
@@ -639,61 +702,157 @@ final class AiSettingsPanel {
             setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
             return;
         }
+        if (savingSettings || testing || testingModels || settingsLoadRequested) {
+            return;
+        }
         testingModels = true;
         long requestId = ++modelRequestId;
         setStatus("正在批量测试全部模型，期间无需逐个发送问题……", false);
         applyModeEnabled(values.mode());
         owner.rebuildAssistantWidgets();
-        AiClient.testAllModels(
-                values,
-                FMLPaths.CONFIGDIR.get().resolve("modpedia").resolve("diagnostics"),
-                2,
-                result -> Minecraft.getInstance().execute(() -> {
+        if (!bridge.testAllModels(values, event -> {
                     if (!owner.settingsPanelOpen() || requestId != modelRequestId) {
                         return;
                     }
                     testingModels = false;
-                    if (result.failed() || result.report() == null) {
-                        setStatus("批量测试失败：" + result.message(), true);
+                    if (isError(event)) {
+                        setStatus("批量测试失败：" + workerMessage(event, "未知错误"), true);
                     } else {
-                        long core = result.report().models().stream()
-                                .filter(AiModelCompatibilityTester.ModelReport::usable)
-                                .count();
-                        long streamingReady = result.report().models().stream()
-                                .filter(AiModelCompatibilityTester.ModelReport::streamingUsable)
-                                .count();
-                        String recommended = result.report().models().stream()
-                                .filter(values.streaming()
-                                        ? AiModelCompatibilityTester.ModelReport::streamingUsable
-                                        : AiModelCompatibilityTester.ModelReport::usable)
-                                .map(AiModelCompatibilityTester.ModelReport::model)
-                                .findFirst()
-                                .orElse("无");
-                        setStatus(
-                                "完成：" + result.report().totalModels() + " 个；普通+工具 " + core
-                                        + " 个；流式+工具 " + streamingReady + " 个；推荐 " + recommended
-                                        + "。报告已保存到 diagnostics。",
-                                false
-                        );
+                        setStatus(workerMessage(event, "批量模型测试完成。")
+                                + " 报告已保存到 diagnostics。", false);
                     }
                     applyModeEnabled(readSettings().mode());
                     owner.rebuildAssistantWidgets();
-                })
-        );
+                })) {
+            testingModels = false;
+            setStatus("ModPedia Worker 不可用，批量测试未启动。", true);
+        }
     }
 
     private void restoreDefaults() {
-        boolean restored = settingsStore.save(AiSettings.defaults());
-        endpoint = null;
-        testing = false;
-        testingModels = false;
-        modelRequestId++;
-        scrollOffset = 0;
-        setStatus(
-                restored ? "已恢复默认值。" : "恢复默认失败，请检查当前实例的配置目录。",
-                !restored
-        );
+        if (savingSettings || testing || testingModels || settingsLoadRequested) {
+            return;
+        }
+        AiSettings defaults = AiSettings.defaults();
+        persistSettings(defaults, "正在恢复默认设置……", ignored -> {
+            testing = false;
+            testingModels = false;
+            modelRequestId++;
+            scrollOffset = 0;
+            setStatus("已恢复默认值。", false);
+        });
+    }
+
+    private void persistSettings(
+            AiSettings values,
+            String pendingMessage,
+            java.util.function.Consumer<AiSettings> onSuccess
+    ) {
+        savingSettings = true;
+        long operationId = ++settingsOperationId;
+        setStatus(pendingMessage, false);
+        applyModeEnabled(values.mode());
         owner.rebuildAssistantWidgets();
+        if (!bridge.saveSettings(values, event -> {
+            if (!owner.settingsPanelOpen() || operationId != settingsOperationId) {
+                return;
+            }
+            savingSettings = false;
+        if (isError(event)) {
+                setStatus(workerMessage(event, "设置保存失败。"), true);
+            } else {
+                settingsLoaded = true;
+                AiSettings persisted = settingsFromEvent(event, values);
+                applySettings(persisted);
+                if (onSuccess != null) {
+                    onSuccess.accept(persisted);
+                }
+            }
+            applyModeEnabled(readSettings().mode());
+            owner.rebuildAssistantWidgets();
+        })) {
+            savingSettings = false;
+            setStatus("ModPedia Worker 不可用，设置未保存。", true);
+            applyModeEnabled(values.mode());
+            owner.rebuildAssistantWidgets();
+        }
+    }
+
+    private void loadSettingsFromWorker() {
+        long requestId = ++settingsRequestId;
+        setStatus("正在读取设置……", false);
+        if (!bridge.loadSettings(event -> {
+            if (!owner.settingsPanelOpen() || requestId != settingsRequestId) {
+                return;
+            }
+            settingsLoadRequested = false;
+            if (isError(event)) {
+                settingsLoaded = true;
+                setStatus(workerMessage(event, "设置读取失败。"), true);
+                applyModeEnabled(readSettings().mode());
+                owner.rebuildAssistantWidgets();
+                return;
+            }
+            JsonObject value = event.getAsJsonObject("settings");
+            applySettings(WorkerPayloadCodec.aiSettings(value));
+            settingsLoaded = true;
+            applyModeEnabled(readSettings().mode());
+            setStatus("", false);
+            owner.rebuildAssistantWidgets();
+        })) {
+            settingsLoadRequested = false;
+            settingsLoaded = true;
+            setStatus("ModPedia Worker 不可用，暂时使用默认设置。", true);
+            applyModeEnabled(readSettings().mode());
+            owner.rebuildAssistantWidgets();
+        }
+    }
+
+    private AiSettings settingsFromEvent(JsonObject event, AiSettings fallback) {
+        JsonElement value = event == null ? null : event.get("settings");
+        return value != null && value.isJsonObject()
+                ? WorkerPayloadCodec.aiSettings(value.getAsJsonObject())
+                : fallback;
+    }
+
+    private void applySettings(AiSettings values) {
+        AiSettings actual = values == null ? AiSettings.defaults() : values;
+        if (endpoint != null) endpoint.setValue(actual.endpoint());
+        if (model != null) model.setValue(actual.model());
+        if (apiKey != null) apiKey.setValue(actual.apiKey());
+        if (maxRounds != null) maxRounds.setValue(Integer.toString(actual.maxRounds()));
+        if (maxResults != null) maxResults.setValue(Integer.toString(actual.maxResults()));
+        if (maxContextChars != null) maxContextChars.setValue(Integer.toString(actual.maxContextChars()));
+        if (timeoutSeconds != null) timeoutSeconds.setValue(Integer.toString(actual.timeoutSeconds()));
+        if (mode != null) mode.setValue(actual.mode());
+        if (intensity != null) intensity.setValue(actual.intensity());
+        if (streaming != null) streaming.setValue(actual.streaming());
+        applyModeEnabled(actual.mode());
+    }
+
+    private boolean isError(JsonObject event) {
+        return event == null || WorkerProtocol.ERROR.equals(WorkerProtocol.string(event, "type"))
+                || WorkerProtocol.bool(event, "failed", false);
+    }
+
+    private String workerMessage(JsonObject event, String fallback) {
+        String message = WorkerProtocol.string(event, "message").strip();
+        return message.isBlank() ? fallback : message;
+    }
+
+    private List<String> modelIds(JsonObject event) {
+        List<String> result = new ArrayList<>();
+        for (JsonElement value : WorkerPayloadCodec.array(event, "models")) {
+            if (value.isJsonObject()) {
+                String id = WorkerProtocol.string(value.getAsJsonObject(), "id").strip();
+                if (!id.isBlank()) result.add(id);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private String normalizeEndpoint(String endpoint) {
+        return AiClient.normalizedEndpoint(endpoint);
     }
 
     private void setStatus(String value, boolean error) {

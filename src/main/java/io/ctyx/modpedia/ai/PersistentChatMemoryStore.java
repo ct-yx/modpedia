@@ -7,7 +7,6 @@ import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
-import io.ctyx.modpedia.ModPedia;
 import org.sqlite.SQLiteDataSource;
 
 import java.io.IOException;
@@ -17,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.logging.Logger;
 
 /**
  * ModPedia 对 Community SQL ChatMemoryStore 的轻量装配层。
@@ -25,6 +25,7 @@ import java.util.Set;
  * SQLite 文件路径、旧版会话 JSON 的一次性迁移，以及失败重试时的工具调用清理。</p>
  */
 public final class PersistentChatMemoryStore implements ChatMemoryStore {
+    private static final Logger LOG = Logger.getLogger("ModPediaChatMemory");
     private static final String DATABASE_FILE = "memory.sqlite";
     private static final String TABLE_NAME = "chat_memory";
     private static final String MEMORY_ID_COLUMN = "memory_id";
@@ -114,11 +115,8 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             }
             return messages.size() - sanitized.size();
         } catch (RuntimeException exception) {
-            ModPedia.LOGGER.warn(
-                    "AI memory repair failed: conversation={}, reason={}",
-                    memoryId,
-                    messageOf(exception)
-            );
+            LOG.warning("AI memory repair failed: conversation=" + memoryId
+                    + ", reason=" + messageOf(exception));
             return -1;
         }
     }
@@ -191,11 +189,8 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             }
         } catch (RuntimeException exception) {
             // 旧版 JSON 仍可能是本次启动的可用回退；如果没有旧数据，再以空上下文启动。
-            ModPedia.LOGGER.warn(
-                    "AI SQLite memory read failed, trying legacy conversation JSON: conversation={}, reason={}",
-                    memoryId,
-                    messageOf(exception)
-            );
+            LOG.warning("AI SQLite memory read failed, trying legacy conversation JSON: conversation="
+                    + memoryId + ", reason=" + messageOf(exception));
         }
 
         String legacyJson = conversations.memoryMessagesJson(memoryId);
@@ -209,19 +204,13 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
                 clearLegacyMessages(memoryId);
             } catch (RuntimeException exception) {
                 // 导入失败时继续使用旧 JSON；下一次读取仍会重试导入。
-                ModPedia.LOGGER.warn(
-                        "AI legacy memory import failed, keeping old conversation JSON: conversation={}, reason={}",
-                        memoryId,
-                        messageOf(exception)
-                );
+                LOG.warning("AI legacy memory import failed, keeping old conversation JSON: conversation="
+                        + memoryId + ", reason=" + messageOf(exception));
             }
             return legacy;
         } catch (RuntimeException exception) {
-            ModPedia.LOGGER.warn(
-                    "AI legacy memory JSON is invalid: conversation={}, reason={}",
-                    memoryId,
-                    messageOf(exception)
-            );
+            LOG.warning("AI legacy memory JSON is invalid: conversation="
+                    + memoryId + ", reason=" + messageOf(exception));
             return List.of();
         }
     }

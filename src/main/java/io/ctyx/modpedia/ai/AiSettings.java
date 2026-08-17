@@ -1,5 +1,9 @@
 package io.ctyx.modpedia.ai;
 
+import java.net.URI;
+import java.util.List;
+import java.util.Locale;
+
 /** AI 客户端设置；设置页填写的密钥优先，留空时才回退到环境变量。 */
 public record AiSettings(
         AssistantMode mode,
@@ -15,7 +19,7 @@ public record AiSettings(
 ) {
     public AiSettings {
         mode = mode == null ? AssistantMode.AI : mode;
-        endpoint = endpoint == null ? "" : endpoint.strip();
+        endpoint = normalizeEndpoint(endpoint);
         model = model == null ? "" : model.strip();
         apiKey = apiKey == null ? "" : apiKey.strip();
         intensity = intensity == null ? SearchIntensity.STANDARD : intensity;
@@ -60,6 +64,38 @@ public record AiSettings(
     /** 模型请求真正需要的完整配置；仅搜索模式不调用此检查。 */
     public boolean requestConfigured() {
         return configured() && !effectiveApiKey().isBlank();
+    }
+
+    /** 统一设置页、连接测试、模型列表和真实对话使用的 API 根地址。 */
+    public static String normalizeEndpoint(String endpoint) {
+        String value = stripTrailingSlash(endpoint == null ? "" : endpoint.strip());
+        if (value.isBlank()) {
+            return "";
+        }
+        for (String suffix : List.of("/chat/completions", "/models")) {
+            if (value.toLowerCase(Locale.ROOT).endsWith(suffix)) {
+                value = stripTrailingSlash(value.substring(0, value.length() - suffix.length()));
+                break;
+            }
+        }
+        try {
+            URI uri = URI.create(value);
+            String path = uri.getPath();
+            if (uri.isAbsolute() && (path == null || path.isBlank() || "/".equals(path))) {
+                return value + "/v1";
+            }
+        } catch (IllegalArgumentException ignored) {
+            // 保留原值，让真正请求链路给出地址格式错误。
+        }
+        return value;
+    }
+
+    private static String stripTrailingSlash(String value) {
+        String result = value == null ? "" : value;
+        while (result.length() > 1 && result.endsWith("/")) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
     }
 
     public int effectiveMaxRounds() {

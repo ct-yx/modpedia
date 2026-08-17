@@ -291,7 +291,8 @@ public final class ConversationStore {
                     message.role(),
                     markdown,
                     sources,
-                    message.followUpQuestions()
+                    message.followUpQuestions(),
+                    message.taskSummary()
             ));
             changed = true;
         }

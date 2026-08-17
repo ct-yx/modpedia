@@ -29,6 +29,9 @@ public final class AiSettingsSelfTest {
             check(store.save(settings), "设置保存后应能回读校验");
             AiSettings restored = store.load();
             check("https://example.invalid/v1".equals(restored.endpoint()), "API 地址应去除首尾空白");
+            check("https://example.invalid/v1".equals(
+                            AiSettings.normalizeEndpoint("https://example.invalid/v1/chat/completions")),
+                    "完整 Chat Completions 地址应归一化为 API 根地址");
             check("test-model".equals(restored.model()), "模型名称应去除首尾空白");
             check(restored.maxRounds() == 8, "最大轮数应限制到 8");
             check(restored.maxResults() == 1, "每轮结果应限制到 1");

@@ -1,8 +1,8 @@
 package io.ctyx.modpedia.search;
 
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
+import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.JsonGuideDocumentConverter;
-import io.ctyx.modpedia.knowledge.LocalGuideScanner;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
 import io.ctyx.modpedia.knowledge.ScannedResource;
 
@@ -44,7 +44,7 @@ public final class LocalizedSearchSelfTest {
             );
             KnowledgeCompiler.CompileResult build = new KnowledgeCompiler().compile(
                     tempDirectory,
-                    new LocalGuideScanner.ScanResult(List.of(source, relatedPage), List.of()),
+                    new KnowledgeScanResult(List.of(source, relatedPage), List.of()),
                     true
             );
 

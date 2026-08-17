@@ -1,5 +1,18 @@
 # 更新日志
 
+## v0.3.0
+
+本版本完成统一知识库、独立 Worker、物品目录和可选联动的整合，并通过自动化与大型整合包回归。
+
+- 统一使用 Schema v7 的 `knowledge.db` 保存模组手册、Wiki、FTBQ 静态任务定义和物品目录；旧结构检测后删除派生库并从原始来源重建。
+- FTS5 改为 external-content，完整 Markdown 从 `segments` 事实表读取；加入 `PRAGMA optimize`、大批量 optimize/merge、`rank` 排序和冷/热双语性能基准。
+- 增加 `knowledge_sources` 来源注册表、`sources/<source-id>/` Wiki 目录和 APP/Modonomicon 书籍的 `content_kind` 分类覆盖。
+- 增加 FTB Quests 静态任务快照、依赖、要求和随机奖励响应；内置任务 Wiki 在后台尝试更新，网络失败时保留本地副本。
+- 修正 FTB Quests 读取链路：移除客户端 Tick 全量扫描；单机优先由 Worker 直接读取当前存档的轻量 SNBT 进度文件，多人或本地文件不可用时回退 TeamData，随后再从 SQLite 抽取静态任务定义；局部进度只在 TaskRuntimeSnapshot 内存覆盖，同一 AI 请求只执行一次。
+- 增加 JEI 配方跳转、Jade 视线目标插入和物品 ID/名称渲染协议；FTB Quests、JEI、Jade 均保持可选。
+- 更正客户端 UI 依赖声明：助手界面由 `AssistantScreen` 和 `FloatingAssistantWindow` 基于 NeoForge 原生 GUI API 自绘，不再要求外部 UI 模组。
+- 更新 README、架构、知识库、开发清单、路线和已知限制，明确手册框架与内容模组的边界。
+
 ## v0.2.0
 
 完成 M0 稳定性收尾的大部分自动化与链路维护工作。
@@ -7,7 +20,7 @@
 - 修复 AI 来源引用被全局移除的问题：来源标注现在保留在对应正文位置，点击可直接跳转 Patchouli、GuideME 或 Modonomicon 页面，失败时回退来源预览。
 - 仅搜索模式、模拟会话和旧历史会话统一使用正文内来源标注，不再在回答底部重复堆叠来源按钮。
 - 更新 Markdown 渲染、来源标注布局、点击命中区域和历史引用迁移测试。
-- 固定 Minecraft 1.21.1、NeoForge 21.1.244、Java 21 和 ModernUI 3.12.0.2 的发布基线。
+- 固定 Minecraft 1.21.1、NeoForge 21.1.244 和 Java 21 的发布基线。
 - 发布流程同时支持正式版和预发布标签，构建产物自动生成 SHA-256 校验文件。
 - 统一发布显示名为 `ModPedia · 模组百科 <version>`。
 

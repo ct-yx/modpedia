@@ -24,10 +24,3 @@ ModPedia：面向整合包的 AI 模组知识助手。
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"
-
-[[dependencies.${mod_id}]]
-    modId="modernui"
-    type="required"
-    versionRange="[${modernui_version}]"
-    ordering="AFTER"
-    side="CLIENT"

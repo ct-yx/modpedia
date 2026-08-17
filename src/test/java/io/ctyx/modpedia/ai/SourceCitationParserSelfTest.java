@@ -50,6 +50,17 @@ public final class SourceCitationParserSelfTest {
         check("energy prerequisites".equals(english.get(0).annotation()),
                 "英文 AI 标注应被解析");
 
+        List<SourceCitationParser.Citation> protocol = SourceCitationParser.parse(
+                "控制器说明 [[source:ae2:guide/controller|搭建条件和启动步骤]]。"
+        );
+        check(protocol.size() == 1
+                        && "ae2:guide/controller".equals(protocol.get(0).documentId())
+                        && "搭建条件和启动步骤".equals(protocol.get(0).annotation()),
+                "正文来源协议 [[source:...]] 应解析为可点击标注");
+        check(!SourceCitationParser.removeCitationMarkup(
+                "控制器说明 [[source:ae2:guide/controller|搭建条件]]。"
+        ).contains("[[source:"), "正文来源协议应在渲染文本中隐藏");
+
         List<SourceCitationParser.Citation> markdownLink = SourceCitationParser.parse(
                 "参见 [压力容器](ae2:guide/pressure#page=2)。"
         );

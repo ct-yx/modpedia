@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -21,7 +22,7 @@ import java.util.Set;
  *
  * <p>服务本身不依赖客户端 Screen 或 AI API，可以被后续会话层直接调用。</p>
  */
-public final class RetrievalService {
+public final class RetrievalService implements AutoCloseable {
     private final Path knowledgeRoot;
     private final Path manifestPath;
     private final Path keywordIndexPath;
@@ -49,6 +50,11 @@ public final class RetrievalService {
         this.synonymsPath = this.knowledgeRoot.resolve("..").normalize().resolve("search-synonyms.json");
     }
 
+    /** 返回当前知识库根目录；任务运行数据与文本检索共用同一个 knowledge.db。 */
+    public Path knowledgeRoot() {
+        return knowledgeRoot;
+    }
+
     /** 更新游戏当前语言；AUTO 查询会使用这个值。 */
     public void setLanguage(SearchLanguage language) {
         defaultLanguage = language == null || language == SearchLanguage.AUTO
@@ -58,6 +64,91 @@ public final class RetrievalService {
 
     public SearchLanguage language() {
         return defaultLanguage;
+    }
+
+    /**
+     * 关闭长期持有的 SQLite 只读连接。
+     *
+     * <p>客户端会话通常跟随进程一直存活，但自测、重建工具和世界切换都可能
+     * 提前结束一个检索服务。显式关闭可以避免旧连接继续持有已替换数据库的
+     * 文件句柄。</p>
+     */
+    @Override
+    public void close() {
+        synchronized (reloadLock) {
+            closeDatabaseReaderLocked();
+            snapshot = null;
+            loadedStamp = null;
+            loadedDatabaseStamp = null;
+            loadedDatabaseSynonymsStamp = null;
+            databaseStatus = SearchStatus.INDEX_NOT_READY;
+            databaseError = "";
+            loadStatus = SearchStatus.INDEX_NOT_READY;
+            loadError = "";
+        }
+    }
+
+    /** 查询玩家已确认的物品目录资料；目录与手册检索使用同一个 SQLite 文件。 */
+    public List<ItemCatalogEntry> lookupItems(
+            Collection<String> itemIds,
+            SearchLanguage language
+    ) {
+        if (itemIds == null || itemIds.isEmpty() || !Files.isRegularFile(databasePath)) {
+            return List.of();
+        }
+        synchronized (reloadLock) {
+            ensureFreshDatabaseLocked();
+            if (databaseStatus != SearchStatus.READY || databaseReader == null) {
+                return List.of();
+            }
+            SearchLanguage selected = language == null || language == SearchLanguage.AUTO
+                    ? defaultLanguage
+                    : language;
+            return databaseReader.lookupItems(itemIds, selected);
+        }
+    }
+
+    /** 按当前语言精确匹配物品显示名称；同名物品不在检索层擅自选择。 */
+    public List<ItemCatalogEntry> lookupItemsByDisplayName(
+            Collection<String> displayNames,
+            SearchLanguage language
+    ) {
+        if (displayNames == null || displayNames.isEmpty() || !Files.isRegularFile(databasePath)) {
+            return List.of();
+        }
+        synchronized (reloadLock) {
+            ensureFreshDatabaseLocked();
+            if (databaseStatus != SearchStatus.READY || databaseReader == null) {
+                return List.of();
+            }
+            SearchLanguage selected = language == null || language == SearchLanguage.AUTO
+                    ? defaultLanguage
+                    : language;
+            return databaseReader.lookupItemsByDisplayName(displayNames, selected);
+        }
+    }
+
+    /** 从问题中提取物品 ID 并读取对应目录资料。 */
+    public List<ItemCatalogEntry> lookupItemContext(String query, SearchLanguage language) {
+        ItemQueryParser.Parsed parsed = ItemQueryParser.parse(query);
+        List<ItemCatalogEntry> result = new ArrayList<>(lookupItems(parsed.itemIds(), language));
+        Set<String> existingIds = result.stream()
+                .map(ItemCatalogEntry::itemId)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        // 已确认的协议令牌/裸 ID 是最高置信度来源。此时不再把令牌中的显示名
+        // 扩展成其它同名物品，避免 [[item:a:x|铁锭]] 被误补成 b:iron_ingot。
+        // 没有 ID 时才按自然语言显示名称返回全部候选，并由模型处理歧义。
+        if (parsed.itemIds().isEmpty()) {
+            for (ItemCatalogEntry entry : lookupItemsByDisplayName(
+                    ItemQueryParser.displayNameCandidates(parsed.searchableText()),
+                    language
+            )) {
+                if (existingIds.add(entry.itemId())) {
+                    result.add(entry);
+                }
+            }
+        }
+        return List.copyOf(result);
     }
 
     /** 读取完整 Markdown，供后续模型构造上下文。 */

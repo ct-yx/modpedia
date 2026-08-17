@@ -67,6 +67,7 @@ public record SourceCard(SourceReference source, int left, int top, int width, i
         String label = source.displayLabel().isBlank() ? source.documentId() : source.displayLabel();
         int preferred = font.width("↗ " + label) + 10;
         int maximum = Math.min(220, Math.max(1, availableWidth));
-        return Math.min(maximum, Math.max(52, Math.min(maximum, preferred)));
+        int minimum = Math.min(52, maximum);
+        return Math.min(maximum, Math.max(minimum, preferred));
     }
 }

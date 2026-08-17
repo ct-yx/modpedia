@@ -19,6 +19,8 @@
   "screen.modpedia.phase.analyzing": "正在分析问题……",
   "screen.modpedia.phase.searching": "正在搜索本地知识库……",
   "screen.modpedia.phase.more_search": "发现资料不足，继续搜索……",
+  "screen.modpedia.task_summary": "任务定义 %s · 运行时状态 %s · 实时进度项 %s · 时间线 %s",
+  "screen.modpedia.task_summary_unavailable": "任务定义 %s · 运行时状态 %s · 实时进度未同步 · 时间线 %s",
   "screen.modpedia.phase.results": "正在分析搜索结果……",
   "screen.modpedia.phase.organizing": "正在整理回答……",
   "screen.modpedia.phase.stream_fallback": "流式响应失败，正在获取完整回答……",

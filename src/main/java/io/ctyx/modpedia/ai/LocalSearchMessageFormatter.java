@@ -3,6 +3,7 @@ package io.ctyx.modpedia.ai;
 import io.ctyx.modpedia.client.ChatMessage;
 import io.ctyx.modpedia.client.MessageRole;
 import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
@@ -15,17 +16,29 @@ public final class LocalSearchMessageFormatter {
     }
 
     public static ChatMessage format(String query, SearchResponse response) {
+        return format(query, response, List.of());
+    }
+
+    /** 将物品目录事实和手册结果组合成仅搜索模式的助手消息。 */
+    public static ChatMessage format(
+            String query,
+            SearchResponse response,
+            List<ItemCatalogEntry> itemContext
+    ) {
         SearchResponse actual = response == null
                 ? new SearchResponse(SearchStatus.INDEX_ERROR, query, List.of(), "搜索响应为空")
                 : response;
+        List<ItemCatalogEntry> actualItemContext = itemContext == null ? List.of() : List.copyOf(itemContext);
         List<SourceReference> sources = actual.results().stream()
                 .map(LocalSearchMessageFormatter::sourceOf)
                 .toList();
 
         String markdown = switch (actual.status()) {
-            case READY -> readyMarkdown(query, actual.results());
+            case READY -> readyMarkdown(query, actual.results(), actualItemContext);
             case EMPTY_QUERY -> "请输入要搜索的模组、物品、机器或手册关键词。";
-            case NO_MATCH -> "未找到与 **" + safe(query) + "** 直接匹配的手册段落。\n\n"
+            case NO_MATCH -> itemContextMarkdown(query, actualItemContext)
+                    + (actualItemContext.isEmpty() ? "" : "\n\n")
+                    + "未找到与 **" + safe(query) + "** 直接匹配的手册段落。\n\n"
                     + "可以尝试使用模组 ID、物品 ID、机器名，或换一种中文/英文关键词。";
             case INDEX_NOT_READY -> "本地知识库尚未生成。请等待启动扫描完成，或按 **F9** 重建后重试。";
             case INDEX_ERROR -> "本地知识库读取失败："
@@ -34,9 +47,16 @@ public final class LocalSearchMessageFormatter {
         return new ChatMessage(MessageRole.ASSISTANT, markdown, sources);
     }
 
-    private static String readyMarkdown(String query, List<SearchResult> results) {
-        StringBuilder markdown = new StringBuilder()
-                .append("本地搜索命中 ")
+    private static String readyMarkdown(
+            String query,
+            List<SearchResult> results,
+            List<ItemCatalogEntry> itemContext
+    ) {
+        StringBuilder markdown = new StringBuilder();
+        if (!itemContext.isEmpty()) {
+            markdown.append(itemContextMarkdown(query, itemContext)).append("\n\n");
+        }
+        markdown.append("本地搜索命中 ")
                 .append(results.size())
                 .append(" 条完整段落。\n\n")
                 .append("查询：**")
@@ -66,6 +86,32 @@ public final class LocalSearchMessageFormatter {
             markdown.append("\n\n")
                     .append(result.segmentMarkdown())
                     .append("\n\n");
+        }
+        return markdown.toString().strip();
+    }
+
+    private static String itemContextMarkdown(String query, List<ItemCatalogEntry> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return "";
+        }
+        StringBuilder markdown = new StringBuilder("### 已确认物品\n\n");
+        for (ItemCatalogEntry entry : entries) {
+            String display = entry.displayName().isBlank() ? entry.itemId() : entry.displayName();
+            markdown.append("**[[item:")
+                    .append(entry.itemId())
+                    .append('|')
+                    .append(display.replace("]", "）"))
+                    .append("]]**");
+            if (!entry.sourceMod().isBlank()) {
+                markdown.append(" · 模组：").append(entry.sourceMod());
+            }
+            markdown.append('\n');
+            if (!entry.descriptionMarkdown().isBlank()) {
+                markdown.append(entry.descriptionMarkdown()).append('\n');
+            } else {
+                markdown.append("暂无 Tooltip 简介。\n");
+            }
+            markdown.append('\n');
         }
         return markdown.toString().strip();
     }

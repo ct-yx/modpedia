@@ -2,8 +2,8 @@ package io.ctyx.modpedia.search;
 
 import io.ctyx.modpedia.knowledge.AppGuideDocumentConverter;
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
+import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
-import io.ctyx.modpedia.knowledge.LocalGuideScanner;
 import io.ctyx.modpedia.knowledge.ScannedResource;
 
 import java.io.IOException;
@@ -168,10 +168,29 @@ public final class AppGuideAdapterSelfTest {
         check(categoryDocument.id().endsWith("/basics/__category"), "分类资源应生成分类概览文档");
         check(!categoryDocument.sourcePath().contains("entry="), "分类概览不能伪造条目跳转");
 
+        KnowledgeDocument wikiDocument = converter.convertAll(new ScannedResource(
+                "pack", "Pack Guide", "1.0.0",
+                "data/pack/modonomicon/books/guide/entries/start.json", "app_json",
+                "{\"book_id\":\"guide\",\"entries\":[{\"id\":\"start\",\"title\":\"开始\",\"pages\":[{\"type\":\"text\",\"text\":\"Wiki 内容\"}]}]}",
+                "fingerprint-wiki",
+                Map.of(),
+                io.ctyx.modpedia.knowledge.KnowledgeContentKind.WIKI,
+                "pack-guide",
+                "example-pack",
+                60,
+                "local_file",
+                "{\"content_kind\":\"wiki\"}"
+        )).getFirst();
+        check(wikiDocument.contentKind() == io.ctyx.modpedia.knowledge.KnowledgeContentKind.WIKI,
+                "APP 书籍被标记为 Wiki 时必须保留内容类型");
+        check("pack-guide".equals(wikiDocument.sourceId())
+                        && "example-pack".equals(wikiDocument.collectionId()),
+                "APP Wiki 必须保留来源 ID 和集合 ID");
+
         KnowledgeCompiler compiler = new KnowledgeCompiler();
         KnowledgeCompiler.CompileResult first = compiler.compile(
                 config,
-                new LocalGuideScanner.ScanResult(List.of(source), List.of())
+                new KnowledgeScanResult(List.of(source), List.of())
         );
         check(first.report().documentCount() == 2, "编译结果应包含两个 APP 文档");
         RetrievalService retrieval = new RetrievalService(first.knowledgeRoot());
@@ -181,7 +200,7 @@ public final class AppGuideAdapterSelfTest {
 
         KnowledgeCompiler.CompileResult reused = compiler.compile(
                 config,
-                new LocalGuideScanner.ScanResult(List.of(source), List.of())
+                new KnowledgeScanResult(List.of(source), List.of())
         );
         check(reused.report().reusedCount() == 2, "内容和指纹未变化时应复用两个 APP 文档");
 
@@ -196,7 +215,7 @@ public final class AppGuideAdapterSelfTest {
         );
         KnowledgeCompiler.CompileResult updated = compiler.compile(
                 config,
-                new LocalGuideScanner.ScanResult(List.of(changed), List.of())
+                new KnowledgeScanResult(List.of(changed), List.of())
         );
         check(updated.report().updatedCount() == 2, "APP 内容变化后应重新生成逻辑文档");
         SearchResponse changedSearch = new RetrievalService(updated.knowledgeRoot()).search("新的压力");
