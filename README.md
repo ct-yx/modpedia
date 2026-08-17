@@ -9,8 +9,8 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.0.0** |
-| 发布状态 | GitHub 正式发布 |
+| Mod | **v1.0.0-fix** |
+| 发布状态 | GitHub 修复预发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
 | Java | **21** |
@@ -18,7 +18,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0)。此前的 `v0.2.0`、`v0.3.0`、`v1.0.0-beta.1` 和 `v1.0.0-beta.2` 保留为历史版本标签；当前进入 `1.x` 稳定版本序列。
+当前修复包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-fix)。`v1.0.0` 保留为稳定基线，`v1.0.0-fix` 用于验证本次 API Key 存储和 Worker 启动链路修复。
 
 ## 快速安装
 
@@ -30,7 +30,7 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.0.0.jar**。
+1. 下载 **modpedia-1.0.0-fix.jar**。
 2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
@@ -67,6 +67,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 - API 地址：兼容 Chat Completions 的 API 根地址，通常以 `/v1` 结尾；如果只填写域名，客户端会自动补全 `/v1`；
 - 模型名称：可以点击右侧“获取模型列表”，成功后再次点击按钮在返回的模型之间切换；
 - API Key：优先使用设置页输入；设置页留空时才使用环境变量 MODPEDIA_API_KEY。
+- `config/modpedia/runtime/ai.json` 不保存 API Key 明文，而是使用当前系统标识派生的 AES-GCM 密钥保存密文；游戏进程首次读取时解密并缓存，系统标识变化后会清除密钥密文。系统标识读取失败时使用运行目录中的 `installation-id` 回退标识。
 - 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/runtime/diagnostics/`。
 
 如果连接测试提示“API 地址返回了网页内容”，说明地址指向了网页或服务根页面，而不是 API 端点；优先检查 `/v1` 路径。模型列表和连接测试都不会把 API Key 写入日志。
@@ -134,6 +135,7 @@ Patchouli、GuideME 和 Modonomicon 主要是手册框架或前置库，框架 J
 config/modpedia/
 ├── runtime/                         # 玩家运行时目录，发布整合包前删除
 │   ├── ai.json
+│   ├── installation-id              # 无系统 UUID 时的安装级回退标识
 │   ├── conversations/
 │   ├── diagnostics/
 │   ├── worker/
@@ -351,7 +353,7 @@ build/reports/modpedia/knowledge-benchmark.md
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.0.0-fix)
 
 ## 作者与许可证
 

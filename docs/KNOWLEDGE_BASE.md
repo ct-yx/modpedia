@@ -18,6 +18,7 @@
 config/modpedia/
 ├── runtime/                         # 玩家运行时数据，发布整合包前删除
 │   ├── ai.json
+│   ├── installation-id
 │   ├── conversations/
 │   ├── diagnostics/
 │   ├── worker/

@@ -35,9 +35,9 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | Java | 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
-| 当前发布版本 | `v1.0.0` |
-| 当前检查分支 | `agent/full-maintenance-checkpoint` |
-| 当前检查 HEAD | `406a205` |
+| 当前发布版本 | `v1.0.0-fix` |
+| 当前检查分支 | `main` |
+| 当前检查 HEAD | 以 `git log -1` 为准 |
 | 主配置目录 | `config/modpedia/` |
 | 知识库 | `config/modpedia/runtime/knowledge/knowledge.db` |
 | 会话目录 | `config/modpedia/runtime/conversations/` |
@@ -123,6 +123,7 @@ docs/WORKER_FIX_GUIDE.md
 config/modpedia/
 ├── runtime/                         # 发布整合包前删除
 │   ├── ai.json
+│   ├── installation-id
 │   ├── conversations/
 │   │   ├── conversation-*.json
 │   │   └── memory.sqlite

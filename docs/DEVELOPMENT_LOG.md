@@ -1,5 +1,21 @@
 # ModPedia 开发日志
 
+## 2026-08-18 · v1.0.0-fix 修复预发布
+
+### 变更
+
+- `ai.json` 改为保存系统标识派生的 AES-GCM API Key 密文；原始 API Key 仅在进程内缓存。
+- Worker 启动时预加载设置，避免首次聊天请求才执行密钥解密。
+- 系统标识变化、密文损坏和旧版明文配置均有对应处理和回归测试。
+- ATM10 测试实例已替换为当前构建 JAR，并完成源文件与目标文件 SHA-256 校验。
+
+### 验证
+
+- `./gradlew test`：通过。
+- `./gradlew build`：通过。
+- `git diff --check`：通过。
+- 发布目标：`v1.0.0-fix`，由 GitHub Release 流水线生成修复预发布资产。
+
 ## 2026-08-18 · 运行时与整合包事实源目录分离
 
 - 将 `config/modpedia/` 拆为 `runtime/` 和 `knowledge/`：前者保存 AI 设置、会话、诊断、Worker、窗口配置以及派生知识库；后者只保存 `custom/`、Wiki 来源、媒体元数据、来源覆盖和同义词配置。

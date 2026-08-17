@@ -137,6 +137,8 @@ public final class WorkerServer {
             }
             conversationStore = new ConversationStore(conversationsRoot);
             settingsStore = new AiSettingsStore(settingsPath);
+            // Worker 启动时完成一次密钥解密；后续聊天、设置读取和错误处理复用内存缓存。
+            settingsStore.load();
             chatService = new WorkerChatService(
                     knowledgeRoot,
                     conversationStore,

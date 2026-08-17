@@ -13,7 +13,7 @@ public final class AiSettingsSelfTest {
         Path root = Files.createTempDirectory("modpedia-ai-settings-");
         try {
             Path file = root.resolve("ai.json");
-            AiSettingsStore store = new AiSettingsStore(file);
+            AiSettingsStore store = new AiSettingsStore(file, "test-machine-a");
             AiSettings settings = new AiSettings(
                     AssistantMode.AI,
                     " https://example.invalid/v1 ",
@@ -27,7 +27,11 @@ public final class AiSettingsSelfTest {
                     1
             );
             check(store.save(settings), "设置保存后应能回读校验");
-            AiSettings restored = store.load();
+            String persistedJson = Files.readString(file);
+            check(persistedJson.contains("api_key_encrypted"), "API Key 应使用密文节点保存");
+            check(!persistedJson.contains("secret-value"), "配置文件不得包含 API Key 明文");
+            check(!persistedJson.contains("\"apiKey\""), "配置文件不得包含 apiKey 明文字段");
+            AiSettings restored = new AiSettingsStore(file, "test-machine-a").load();
             check("https://example.invalid/v1".equals(restored.endpoint()), "API 地址应去除首尾空白");
             check("https://example.invalid/v1".equals(
                             AiSettings.normalizeEndpoint("https://example.invalid/v1/chat/completions")),
@@ -59,11 +63,35 @@ public final class AiSettingsSelfTest {
                     "没有配置 API Key 时不能进入模型请求链路");
             check(restored.mode() == AssistantMode.AI, "旧版默认设置应使用 AI 模式");
 
-            Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\"}");
-            check(store.load().mode() == AssistantMode.AI, "缺少 mode 的旧配置应默认使用 AI 模式");
+            Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\",\"apiKey\":\"legacy-secret\"}");
+            AiSettings migrated = new AiSettingsStore(file, "test-machine-a").load();
+            check("legacy-secret".equals(migrated.apiKey()), "旧版明文 API Key 应能读取一次并迁移");
+            String migratedJson = Files.readString(file);
+            check(migratedJson.contains("api_key_encrypted"), "旧版明文 API Key 应迁移为密文节点");
+            check(!migratedJson.contains("legacy-secret"), "迁移后配置文件不得保留旧版明文 API Key");
 
+            Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\"}");
+            check(new AiSettingsStore(file, "test-machine-a").load().mode() == AssistantMode.AI,
+                    "缺少 mode 的旧配置应默认使用 AI 模式");
+
+            store = new AiSettingsStore(file, "test-machine-a");
             store.save(restored.withMode(AssistantMode.SEARCH_ONLY));
-            check(store.load().mode() == AssistantMode.SEARCH_ONLY, "仅搜索模式应可持久化");
+            check(new AiSettingsStore(file, "test-machine-a").load().mode() == AssistantMode.SEARCH_ONLY,
+                    "仅搜索模式应可持久化");
+
+            AiSettingsStore mismatchSource = new AiSettingsStore(file, "test-machine-a");
+            mismatchSource.save(restored);
+            AiSettings mismatched = new AiSettingsStore(file, "test-machine-b").load();
+            check(mismatched.apiKey().isBlank(), "系统标识变化后 API Key 应从内存设置中清除");
+            String purgedJson = Files.readString(file);
+            check(!purgedJson.contains("api_key_encrypted"), "系统标识变化后应删除密钥密文节点");
+            check(!purgedJson.contains("apiKey"), "系统标识变化后不得留下 apiKey 字段");
+
+            AiSettingsStore cacheStore = new AiSettingsStore(file, "test-machine-b");
+            cacheStore.save(restored.withMode(AssistantMode.SEARCH_ONLY));
+            AiSettings firstLoad = cacheStore.load();
+            Files.writeString(file, "{\"endpoint\":\"https://external.invalid/v1\",\"model\":\"external\"}");
+            check(firstLoad.equals(cacheStore.load()), "同一进程应复用已解密的内存缓存");
 
             AiSettings standard = restored.withIntensity(SearchIntensity.STANDARD);
             check(standard.effectiveMaxRounds() == 3, "标准档位应使用 3 轮预算");
