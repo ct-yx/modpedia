@@ -59,13 +59,13 @@ jobs:
 
       - name: Validate publishing credentials
         env:
-          PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
-          API_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          PROJECT_ID: ${{ vars.MODPEDIA || vars.CURSEFORGE_PROJECT_ID }}
+          API_TOKEN: ${{ secrets.MODPEDIA || secrets.CURSEFORGE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$PROJECT_ID" || { echo '::error::Repository variable CURSEFORGE_PROJECT_ID is not configured'; exit 1; }
-          test -n "$API_TOKEN" || { echo '::error::Repository secret CURSEFORGE_TOKEN is not configured'; exit 1; }
+          test -n "$PROJECT_ID" || { echo '::error::Repository project ID variable is not configured'; exit 1; }
+          test -n "$API_TOKEN" || { echo '::error::Repository publishing secret is not configured'; exit 1; }
 
       - name: Run tests and build
         run: |
@@ -100,8 +100,8 @@ jobs:
       - name: Publish to CurseForge
         uses: Kira-NT/mc-publish@v3.3
         with:
-          curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
-          curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
+          curseforge-id: ${{ vars.MODPEDIA || vars.CURSEFORGE_PROJECT_ID }}
+          curseforge-token: ${{ secrets.MODPEDIA || secrets.CURSEFORGE_TOKEN }}
           files: ${{ steps.package.outputs.file }}
           name: ModPedia · 模组百科 ${{ steps.release-meta.outputs.version }}
           version: ${{ steps.release-meta.outputs.version }}

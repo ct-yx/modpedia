@@ -438,11 +438,16 @@ record is in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md).
 
 The repository includes `.github/workflows/publish-curseforge.yml`. Pushing a
 `v*` version tag runs tests and builds again, extracts only the matching version
-section from `CHANGELOG.md`, and uploads the NeoForge 1.21.1 JAR. Configure these
-values under `Settings → Secrets and variables → Actions`:
+section from `CHANGELOG.md`, and uploads the NeoForge 1.21.1 JAR. The workflow
+first reads the existing `MODPEDIA` variable and secret, and also supports the
+standard names below. Configure them under
+`Settings → Secrets and variables → Actions`:
 
-- Repository variable: `CURSEFORGE_PROJECT_ID`, set to the project ID;
-- Repository secret: `CURSEFORGE_TOKEN`, set to the publishing API token.
+- Repository variable: `MODPEDIA`, set to the project ID;
+- Repository secret: `MODPEDIA`, set to the publishing API token.
+
+The standard names `CURSEFORGE_PROJECT_ID` and `CURSEFORGE_TOKEN` are also
+accepted.
 
 The token is read only from a GitHub Actions Secret and is not written to the
 repository, build artifacts, or logs. To retry a publication, run

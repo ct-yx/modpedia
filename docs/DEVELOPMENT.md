@@ -315,14 +315,15 @@ shasum -a 256 -c SHA256SUMS
 首次启用前，在仓库的 `Settings → Secrets and variables → Actions` 添加：
 
 ```text
-Repository variable: CURSEFORGE_PROJECT_ID=<项目 ID>
-Repository secret:   CURSEFORGE_TOKEN=<发布 API Token>
+Repository variable: MODPEDIA=<项目 ID>
+Repository secret:   MODPEDIA=<发布 API Token>
 ```
 
-Token 只通过 Secret 注入 `mc-publish` Action，不进入源码、JAR、更新日志或普通日志。发布前检查：
+工作流也兼容 `CURSEFORGE_PROJECT_ID` 和 `CURSEFORGE_TOKEN` 这组标准名称。Token 只通过 Secret 注入
+`mc-publish` Action，不进入源码、JAR、更新日志或普通日志。发布前检查：
 
-- [ ] `CURSEFORGE_PROJECT_ID` 与目标项目匹配。
-- [ ] `CURSEFORGE_TOKEN` 具有上传/发布权限且未写入任何文件。
+- [ ] `MODPEDIA` Repository variable 与目标项目匹配。
+- [ ] `MODPEDIA` Repository secret 具有上传/发布权限且未写入任何文件。
 - [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.1.0`。
 - [ ] Action 的 `loaders` 为 `neoforge`、`game-versions` 为 `1.21.1`。
 - [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。
