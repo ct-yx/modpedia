@@ -1,6 +1,6 @@
 # ModPedia 项目入门
 
-本文面向第一次接手项目的维护者，目标是在保留当前工作区改动的前提下，快速理解工程、运行边界和验证方式。
+本文面向第一次接手项目的维护者，目标是在当前发布基线下快速理解工程、运行边界和验证方式。
 
 ## 1. 项目定位
 
@@ -43,13 +43,12 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | 会话目录 | `config/modpedia/runtime/conversations/` |
 | Worker 日志 | `config/modpedia/runtime/worker/worker.log` |
 
-当前工作区存在大量未提交修改。维护者进入项目后的第一项工作是保存当前 diff：
+维护者进入项目后的第一项工作是确认当前分支、版本和工作区状态：
 
 ```bash
 cd /Users/chenhong/Documents/modpedia
 git status --short
-git diff --stat
-git diff > /tmp/modpedia-before-fix.diff
+git log -1 --oneline --decorate
 ```
 
 ## 3. 代码结构
@@ -103,12 +102,9 @@ FMLClientSetupEvent
 
 Worker 启动、知识库重建和物品目录批量写入均在启动异步线程/Worker 中执行；物品
 Tooltip 捕获只允许发生在主菜单且只进行一轮，进入世界后的 `ClientTickEvent` 不会
-再次触发全量扫描。历史问题的原始证据和修复指引仍保留在：
-
-```text
-docs/BUG_REPORT_WORKER_IPC_AND_ITEM_CATALOG.md
-docs/WORKER_FIX_GUIDE.md
-```
+再次触发全量扫描。当前线程、生命周期和数据边界以
+[`ARCHITECTURE.md`](ARCHITECTURE.md)、[`KNOWLEDGE_BASE.md`](KNOWLEDGE_BASE.md)
+和 [`DEVELOPMENT.md`](DEVELOPMENT.md) 为准。
 
 维护者需要重点理解两件事：
 
@@ -222,7 +218,7 @@ git diff --check
 
 ## 9. 维护约定
 
-- 先查看 `git status`，当前工作区改动属于交接内容的一部分。
+- 先查看 `git status`，只暂存当前功能相关文件。
 - 优先修改最小文件集合，先补纯 Java 回归，再启动真实客户端。
 - Worker 代码不得引入 Minecraft、NeoForge、ModernUI 或其他客户端 API。
 - 客户端只读取 UI 所需快照，数据库和网络工作交给 Worker。
@@ -234,11 +230,12 @@ git diff --check
 
 ```text
 1. 阅读本文件
-2. 阅读 docs/BUG_REPORT_WORKER_IPC_AND_ITEM_CATALOG.md
-3. 阅读 docs/WORKER_FIX_GUIDE.md
-4. 运行 workerIpcSelfTest
-5. 检查 ModPediaBridge 与 ItemCatalogSyncService
-6. 修复 IPC 地址族
-7. 增加失败熔断测试
-8. 再启动 runClient 做人工回归
+2. 阅读 docs/ARCHITECTURE.md
+3. 阅读 docs/KNOWLEDGE_BASE.md
+4. 阅读 docs/DEVELOPMENT.md 和 docs/ROADMAP.md
+5. 阅读 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)，了解 AI 上下文、数据库 v8 和外部百科的统一后续路线
+6. 运行 ./gradlew test
+7. 检查 ModPediaBridge、StartupKnowledgeBootstrap 和 ItemCatalogSyncService
+8. 按 docs/DEVELOPMENT.md 与 NEXT_DEVELOPMENT_PLAN.md 的清单补充对应自测
+9. 再启动 runClient 或 runServer 做人工回归
 ```

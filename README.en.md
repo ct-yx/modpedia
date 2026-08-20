@@ -10,6 +10,8 @@ answers while preserving links back to the original manual pages.
 
 简体中文版本: [README.md](README.md)
 
+专题后续计划（中文）: [AI context, database v8, and external encyclopedia](docs/NEXT_DEVELOPMENT_PLAN.md)
+
 ## Current release
 
 | Item | Version / status |
@@ -392,7 +394,6 @@ src/main/java/io/ctyx/modpedia/
 
 docs/
 ├── ARCHITECTURE.md
-├── AI_MEMORY_STORAGE_RESEARCH.md
 ├── DEVELOPMENT.md
 ├── DEVELOPMENT_LOG.md
 ├── KNOWLEDGE_BASE.md
@@ -511,7 +512,6 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Development log](docs/DEVELOPMENT_LOG.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Knowledge-base design](docs/KNOWLEDGE_BASE.md)
-- [AI persistence research](docs/AI_MEMORY_STORAGE_RESEARCH.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)

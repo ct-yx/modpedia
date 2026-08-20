@@ -7,6 +7,8 @@ ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读
 
 English version: [README.en.md](README.en.md)
 
+专项后续计划：[AI 上下文、数据库 v8 与外部百科](docs/NEXT_DEVELOPMENT_PLAN.md)
+
 ## 当前版本
 
 | 项目 | 版本/状态 |
@@ -283,7 +285,6 @@ src/main/java/io/ctyx/modpedia/
 
 docs/
 ├── ARCHITECTURE.md
-├── AI_MEMORY_STORAGE_RESEARCH.md
 ├── DEVELOPMENT.md
 ├── DEVELOPMENT_LOG.md
 ├── KNOWLEDGE_BASE.md
@@ -375,7 +376,6 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - [开发日志](docs/DEVELOPMENT_LOG.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
-- [AI 持久化方案调研](docs/AI_MEMORY_STORAGE_RESEARCH.md)
 - [后续开发路线](docs/ROADMAP.md)
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
