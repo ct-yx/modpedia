@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /** Asynchronous startup gate; long Worker and catalog waits never run on Render thread. */
 public final class StartupKnowledgeBootstrap {
@@ -43,29 +44,35 @@ public final class StartupKnowledgeBootstrap {
                     }
                     Path modsDirectory = resolveModsDirectory();
                     ModPedia.LOGGER.info("Knowledge scan mods directory: {}", modsDirectory);
-                    return CompletableFuture.supplyAsync(() -> shutdown
-                                    ? false
-                                    : ModPediaBridge.get().rebuildKnowledgeBeforeMainMenu(
-                                            modsDirectory,
-                                            false
-                                    ), ASYNC);
+                    // 物品目录与手册扫描是两条独立的数据链：目录只依赖客户端注册表
+                    // 和 Worker IPC，不依赖知识库重建结果。之前把目录放在 rebuild
+                    // 完成之后，导致大型整合包首轮扫描耗时较长时，目录请求要么在
+                    // 主菜单安全门关闭后才发出，要么在 bootstrap 返回 false 后永远
+                    // 错过，最终 item_catalog 保持为空，中文显示名也就无法映射到
+                    // 英文手册中的稳定物品 ID。
+                    return scheduleCatalogBeforeRebuild(
+                            () -> ItemCatalogSyncService.syncBeforeMainMenuAsync(ModPediaBridge.get()),
+                            () -> CompletableFuture.supplyAsync(() -> shutdown
+                                            ? false
+                                            : ModPediaBridge.get().rebuildKnowledgeBeforeMainMenu(
+                                                    modsDirectory,
+                                                    false
+                                            ), ASYNC)
+                    );
                 })
                 .thenCompose(rebuilt -> {
                     if (!rebuilt || shutdown) {
-                        ModPedia.LOGGER.warn("Knowledge Worker rebuild did not complete; item catalog sync skipped");
-                        return CompletableFuture.completedFuture(false);
+                        ModPedia.LOGGER.warn("Knowledge Worker rebuild did not complete");
                     }
-                    // 目录捕获必须发生在客户端线程，且必须在进入世界前完成；
-                    // 这里等待它的 Worker 同步结果，而不是启动后再由 tick 补扫。
-                    return ItemCatalogSyncService.syncBeforeMainMenuAsync(ModPediaBridge.get())
-                            .thenApply(itemsSynced -> {
-                                ModPedia.LOGGER.info(
-                                        "Pre-menu knowledge bootstrap finished in {} ms, item_catalog={}",
-                                        (System.nanoTime() - started) / 1_000_000L,
-                                        itemsSynced
-                                );
-                                return itemsSynced;
-                            });
+                    // 目录请求已经在 Worker ready 后排队。这里仅记录本次手册重建
+                    // 结果；ItemCatalogSyncService 会在主菜单安全门打开时复用同一
+                    // 个 in-flight Future，避免再次扫描注册表。
+                    ModPedia.LOGGER.info(
+                            "Pre-menu knowledge bootstrap finished in {} ms, knowledge_rebuild={}",
+                            (System.nanoTime() - started) / 1_000_000L,
+                            rebuilt
+                    );
+                    return CompletableFuture.completedFuture(rebuilt && !shutdown);
                 })
                 .exceptionally(failure -> {
                     ModPedia.LOGGER.warn("Asynchronous knowledge bootstrap failed", failure);
@@ -82,6 +89,23 @@ public final class StartupKnowledgeBootstrap {
     public static void shutdown() {
         shutdown = true;
         ASYNC.shutdownNow();
+    }
+
+    /**
+     * Worker 握手后的固定顺序：先安排客户端物品目录捕获，再提交耗时的知识库
+     * 重建。独立成纯调度函数，避免以后为节省 Token 或合并异步链时把目录重新
+     * 放回 rebuild 完成之后。
+     */
+    static CompletableFuture<Boolean> scheduleCatalogBeforeRebuild(
+            Runnable catalogSchedule,
+            Supplier<CompletableFuture<Boolean>> rebuildSchedule
+    ) {
+        if (catalogSchedule != null) {
+            catalogSchedule.run();
+        }
+        return rebuildSchedule == null
+                ? CompletableFuture.completedFuture(false)
+                : rebuildSchedule.get();
     }
 
     /**

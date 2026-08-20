@@ -101,6 +101,8 @@ public final class AiSettingsStore {
             // Gson 的 record 字段名是 apiKey；同时清理可能来自旧版本的 snake_case 字段。
             stored.remove("apiKey");
             stored.remove("api_key");
+            stored.remove("apiFormat");
+            stored.addProperty("api_format", actual.apiFormat().name());
             if (!actual.apiKey().isBlank()) {
                 stored.add("api_key_encrypted", protector.encrypt(actual.apiKey()));
             } else {
@@ -133,6 +135,9 @@ public final class AiSettingsStore {
 
     private Decoded decode(JsonObject stored) {
         AiSettings base = GSON.fromJson(stored, AiSettings.class);
+        AiApiFormat apiFormat = stored.has("api_format")
+                ? AiApiFormat.parse(firstString(stored, "api_format"))
+                : base.apiFormat();
         String plaintext = firstString(stored, "apiKey", "api_key");
         String apiKey = plaintext;
         boolean migrate = !plaintext.isBlank();
@@ -151,12 +156,13 @@ public final class AiSettingsStore {
                 removeStoredKey = true;
             }
         }
-        return new Decoded(copyWithApiKey(base, apiKey), migrate, removeStoredKey);
+        return new Decoded(copyWithApiKey(base, apiFormat, apiKey), migrate, removeStoredKey);
     }
 
-    private static AiSettings copyWithApiKey(AiSettings base, String apiKey) {
+    private static AiSettings copyWithApiKey(AiSettings base, AiApiFormat apiFormat, String apiKey) {
         return new AiSettings(
                 base.mode(),
+                apiFormat,
                 base.endpoint(),
                 base.model(),
                 apiKey,

@@ -3,6 +3,7 @@ package io.ctyx.modpedia.client;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiClient;
+import io.ctyx.modpedia.ai.AiApiFormat;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ai.AssistantMode;
 import io.ctyx.modpedia.ai.SearchIntensity;
@@ -68,6 +69,7 @@ final class AiSettingsPanel {
     private EditBox maxContextChars;
     private EditBox timeoutSeconds;
     private AssistantChoiceButton<AssistantMode> mode;
+    private AssistantChoiceButton<AiApiFormat> apiFormat;
     private AssistantChoiceButton<SearchIntensity> intensity;
     private AssistantChoiceButton<Boolean> streaming;
     private AssistantPanelButton saveButton;
@@ -170,9 +172,28 @@ final class AiSettingsPanel {
                 }
         );
 
-        endpoint = textField(fieldLeft, y(content.top(), mainControlOffset(1)), fieldWidth, values.endpoint(),
+        apiFormat = new AssistantChoiceButton<>(
+                font,
+                buttonStyle,
+                fieldLeft,
+                y(content.top(), mainLabelOffset(1)),
+                fieldWidth,
+                controlHeight,
+                Component.translatable("screen.modpedia.ai_api_format"),
+                Arrays.asList(AiApiFormat.values()),
+                values.apiFormat(),
+                this::apiFormatLabel,
+                selected -> {
+                    endpoint.setHint(Component.translatable(endpointHintKey(selected)));
+                    setStatus("已选择 " + apiFormatLabel(selected).getString() + "。", false);
+                    owner.rebuildAssistantWidgets();
+                }
+        );
+
+        endpoint = textField(fieldLeft, y(content.top(), mainControlOffset(2)), fieldWidth, values.endpoint(),
                 "screen.modpedia.ai_endpoint_hint", false);
-        int modelY = y(content.top(), mainControlOffset(2));
+        endpoint.setHint(Component.translatable(endpointHintKey(values.apiFormat())));
+        int modelY = y(content.top(), mainControlOffset(3));
         int modelButtonGap = scaled(5, 4);
         int modelButtonWidth = modelButtonWidth(fieldWidth);
         int modelFieldWidth = Math.max(1, fieldWidth - modelButtonGap - modelButtonWidth);
@@ -188,7 +209,7 @@ final class AiSettingsPanel {
                 this::modelListLabel,
                 this::fetchOrSelectModel
         );
-        apiKey = textField(fieldLeft, y(content.top(), mainControlOffset(3)), fieldWidth, values.apiKey(),
+        apiKey = textField(fieldLeft, y(content.top(), mainControlOffset(4)), fieldWidth, values.apiKey(),
                 "screen.modpedia.ai_api_key_hint", true);
         apiKey.setFormatter((value, cursor) -> FormattedCharSequence.forward(
                 "•".repeat(value.codePointCount(0, value.length())), Style.EMPTY
@@ -198,7 +219,7 @@ final class AiSettingsPanel {
                 font,
                 buttonStyle,
                 fieldLeft,
-                y(content.top(), mainLabelOffset(4)),
+                y(content.top(), mainLabelOffset(5)),
                 fieldWidth,
                 controlHeight,
                 Component.translatable("screen.modpedia.ai_search_intensity"),
@@ -211,7 +232,7 @@ final class AiSettingsPanel {
                 font,
                 buttonStyle,
                 fieldLeft,
-                y(content.top(), mainLabelOffset(5)),
+                y(content.top(), mainLabelOffset(6)),
                 fieldWidth,
                 controlHeight,
                 Component.translatable("screen.modpedia.ai_sse"),
@@ -220,8 +241,7 @@ final class AiSettingsPanel {
                 enabled -> Component.translatable(enabled
                         ? "screen.modpedia.enabled"
                         : "screen.modpedia.disabled"),
-                ignored -> {
-                }
+                this::saveStreamingChoice
         );
 
         int smallGap = scaled(6, 4);
@@ -236,6 +256,7 @@ final class AiSettingsPanel {
                 "screen.modpedia.ai_timeout_hint");
 
         owner.addSettingsContentWidget(mode);
+        owner.addSettingsContentWidget(apiFormat);
         owner.addSettingsContentWidget(endpoint);
         owner.addSettingsContentWidget(model);
         owner.addSettingsContentWidget(modelListButton);
@@ -282,17 +303,17 @@ final class AiSettingsPanel {
         graphics.enableScissor(content.left(), content.top(), content.right(), content.bottom());
         int fieldLeft = content.left();
         int fieldWidth = content.width();
-        if (labelAndControlFullyVisible(mainLabelOffset(1), mainControlOffset(1))) {
-            drawLabel(graphics, "screen.modpedia.ai_endpoint", fieldLeft,
-                    y(content.top(), mainLabelOffset(1)), fieldColor(), false);
-        }
         if (labelAndControlFullyVisible(mainLabelOffset(2), mainControlOffset(2))) {
-            drawLabel(graphics, "screen.modpedia.ai_model", fieldLeft,
+            drawLabel(graphics, "screen.modpedia.ai_endpoint", fieldLeft,
                     y(content.top(), mainLabelOffset(2)), fieldColor(), false);
         }
         if (labelAndControlFullyVisible(mainLabelOffset(3), mainControlOffset(3))) {
-            drawLabel(graphics, "screen.modpedia.ai_api_key", fieldLeft,
+            drawLabel(graphics, "screen.modpedia.ai_model", fieldLeft,
                     y(content.top(), mainLabelOffset(3)), fieldColor(), false);
+        }
+        if (labelAndControlFullyVisible(mainLabelOffset(4), mainControlOffset(4))) {
+            drawLabel(graphics, "screen.modpedia.ai_api_key", fieldLeft,
+                    y(content.top(), mainLabelOffset(4)), fieldColor(), false);
         }
         String[] advancedLabels = {
                 "screen.modpedia.ai_max_rounds",
@@ -494,10 +515,12 @@ final class AiSettingsPanel {
 
     private AiSettings readSettings() {
         AssistantMode selectedMode = mode == null ? AssistantMode.AI : mode.getValue();
+        AiApiFormat selectedFormat = apiFormat == null ? AiApiFormat.CHAT_COMPLETIONS : apiFormat.getValue();
         SearchIntensity selectedIntensity = intensity == null ? SearchIntensity.STANDARD : intensity.getValue();
         return new AiSettings(
                 selectedMode,
-                AiClient.normalizedEndpoint(value(endpoint)),
+                selectedFormat,
+                AiClient.normalizedEndpoint(value(endpoint), selectedFormat),
                 value(model),
                 value(apiKey),
                 streaming == null || streaming.getValue(),
@@ -516,9 +539,13 @@ final class AiSettingsPanel {
         if (endpoint != null) endpoint.active = ai && ready;
         if (model != null) model.active = ai && ready;
         if (apiKey != null) apiKey.active = ai && ready;
+        if (apiFormat != null) apiFormat.active = ai && ready;
         if (streaming != null) streaming.active = ai && ready;
         if (testButton != null) testButton.active = ai && ready;
-        if (testAllModelsButton != null) testAllModelsButton.active = ai && ready;
+        if (testAllModelsButton != null) {
+            testAllModelsButton.active = ai && ready
+                    && (apiFormat == null || apiFormat.getValue() == AiApiFormat.CHAT_COMPLETIONS);
+        }
         if (modelListButton != null) modelListButton.active = ai && ready;
         if (saveButton != null) saveButton.active = ready;
         if (restoreButton != null) restoreButton.active = ready;
@@ -620,6 +647,24 @@ final class AiSettingsPanel {
         }
         AiSettings values = readSettings();
         persistSettings(values, "正在保存设置……", ignored -> setStatus("已保存并验证。", false));
+    }
+
+    /**
+     * 流式开关是即时行为设置。点击后立即写入 Worker，避免界面已经显示“关闭”但
+     * Worker 仍从旧配置读取 true，下一次请求继续进入 SSE 分支。
+     */
+    private void saveStreamingChoice(boolean enabled) {
+        if (savingSettings || testing || testingModels || settingsLoadRequested) {
+            return;
+        }
+        persistSettings(
+                readSettings(),
+                enabled ? "正在开启流式响应……" : "正在关闭流式响应……",
+                persisted -> setStatus(
+                        persisted.streaming() ? "流式响应已开启。" : "流式响应已关闭。",
+                        false
+                )
+        );
     }
 
     private void testConnection() {
@@ -825,6 +870,10 @@ final class AiSettingsPanel {
         if (maxContextChars != null) maxContextChars.setValue(Integer.toString(actual.maxContextChars()));
         if (timeoutSeconds != null) timeoutSeconds.setValue(Integer.toString(actual.timeoutSeconds()));
         if (mode != null) mode.setValue(actual.mode());
+        if (apiFormat != null) {
+            apiFormat.setValue(actual.apiFormat());
+            if (endpoint != null) endpoint.setHint(Component.translatable(endpointHintKey(actual.apiFormat())));
+        }
         if (intensity != null) intensity.setValue(actual.intensity());
         if (streaming != null) streaming.setValue(actual.streaming());
         applyModeEnabled(actual.mode());
@@ -852,7 +901,8 @@ final class AiSettingsPanel {
     }
 
     private String normalizeEndpoint(String endpoint) {
-        return AiClient.normalizedEndpoint(endpoint);
+        AiApiFormat selected = apiFormat == null ? AiApiFormat.CHAT_COMPLETIONS : apiFormat.getValue();
+        return AiClient.normalizedEndpoint(endpoint, selected);
     }
 
     private void setStatus(String value, boolean error) {
@@ -914,7 +964,7 @@ final class AiSettingsPanel {
     }
 
     private int advancedHeadingOffset() {
-        return mainLabelOffset(6);
+        return mainLabelOffset(7);
     }
 
     private int advancedFieldX(int fieldLeft, int smallWidth, int index) {
@@ -984,6 +1034,25 @@ final class AiSettingsPanel {
         return Component.translatable(value == AssistantMode.SEARCH_ONLY
                 ? "screen.modpedia.assistant_mode_search_only"
                 : "screen.modpedia.assistant_mode_ai");
+    }
+
+    private Component apiFormatLabel(AiApiFormat value) {
+        String key = switch (value == null ? AiApiFormat.CHAT_COMPLETIONS : value) {
+            case CHAT_COMPLETIONS -> "screen.modpedia.ai_api_format_chat";
+            case NATIVE_MESSAGES -> "screen.modpedia.ai_api_format_native";
+            case RESPONSES -> "screen.modpedia.ai_api_format_responses";
+            case GENERATE_CONTENT -> "screen.modpedia.ai_api_format_generate_content";
+        };
+        return Component.translatable(key);
+    }
+
+    private String endpointHintKey(AiApiFormat value) {
+        return switch (value == null ? AiApiFormat.CHAT_COMPLETIONS : value) {
+            case NATIVE_MESSAGES -> "screen.modpedia.ai_endpoint_hint_native";
+            case RESPONSES -> "screen.modpedia.ai_endpoint_hint_responses";
+            case GENERATE_CONTENT -> "screen.modpedia.ai_endpoint_hint_generate_content";
+            case CHAT_COMPLETIONS -> "screen.modpedia.ai_endpoint_hint";
+        };
     }
 
     private Component intensityLabel(SearchIntensity value) {

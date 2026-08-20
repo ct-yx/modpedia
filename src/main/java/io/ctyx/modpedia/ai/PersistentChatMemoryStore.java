@@ -1,5 +1,11 @@
 package io.ctyx.modpedia.ai;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.langchain4j.community.store.memory.chat.sql.SQLChatMemoryStore;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -15,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.logging.Logger;
 
@@ -30,6 +37,13 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
     private static final String TABLE_NAME = "chat_memory";
     private static final String MEMORY_ID_COLUMN = "memory_id";
     private static final String CONTENT_COLUMN = "messages_json";
+    private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
+    /** 最近两次工具检索仍保留完整结果；更早结果只压缩重复正文，不删除证据身份。 */
+    private static final int FULL_TOOL_TURNS = 2;
+    private static final int HISTORICAL_SEGMENT_CHARS = 2_400;
+    private static final int HISTORICAL_DESCRIPTION_CHARS = 900;
+    private static final int HISTORICAL_STRING_CHARS = 800;
+    private static final String COMPACTED_MARKER = "history_compacted";
 
     private final ConversationStore conversations;
     private final SQLChatMemoryStore delegate;
@@ -83,8 +97,9 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
     public synchronized void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String id = String.valueOf(memoryId);
         List<ChatMessage> safeMessages = messages == null ? List.of() : List.copyOf(messages);
+        List<ChatMessage> compacted = compactToolHistory(safeMessages);
         // 社区实现使用官方 ChatMessageSerializer，能够保留工具调用 ID 和消息顺序。
-        delegate.updateMessages(id, safeMessages);
+        delegate.updateMessages(id, compacted);
         clearLegacyMessages(id);
     }
 
@@ -111,7 +126,10 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             }
             List<ChatMessage> sanitized = removeIncompleteToolTurn(messages);
             if (sanitized.size() != messages.size()) {
-                updateMessages(memoryId, sanitized);
+                // 修复失败尾部时保留此前完整工具证据，供 prepareForRetry 精确移除
+                // 当前用户消息；下一次正常上下文更新再执行成本压缩。
+                delegate.updateMessages(memoryId, sanitized);
+                clearLegacyMessages(memoryId);
             }
             return messages.size() - sanitized.size();
         } catch (RuntimeException exception) {
@@ -274,5 +292,195 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             return List.copyOf(messages.subList(0, toolTurnStart));
         }
         return List.copyOf(complete);
+    }
+
+    /**
+     * 对历史工具证据做温和压缩，而不是删除整个工具回合。
+     *
+     * <p>最近两次工具回合保持完整；更早回合保留工具调用、查询条件、来源 ID、标题、
+     * 标题路径、来源路径和正文首尾片段。这样上下文仍然有界，但模型在多轮追问时
+     * 可以知道此前查过什么、证据来自哪里，以及旧答案依赖的关键步骤。</p>
+     */
+    static List<ChatMessage> compactToolHistory(List<ChatMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        int latestUser = -1;
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            if (messages.get(index) instanceof UserMessage) {
+                latestUser = index;
+                break;
+            }
+        }
+        if (latestUser < 0) {
+            return List.copyOf(messages);
+        }
+
+        List<ToolTurn> turns = new ArrayList<>();
+        for (int index = 0; index < latestUser; index++) {
+            ChatMessage message = messages.get(index);
+            if (!(message instanceof AiMessage aiMessage) || !aiMessage.hasToolExecutionRequests()) {
+                continue;
+            }
+            int endExclusive = completeToolTurnEnd(messages, index);
+            if (endExclusive > index && endExclusive <= latestUser) {
+                turns.add(new ToolTurn(index, endExclusive));
+                index = endExclusive - 1;
+            }
+        }
+        if (turns.size() <= FULL_TOOL_TURNS) {
+            return List.copyOf(messages);
+        }
+
+        int fullStart = turns.size() - FULL_TOOL_TURNS;
+        List<ChatMessage> compacted = new ArrayList<>(messages);
+        for (int turnIndex = 0; turnIndex < fullStart; turnIndex++) {
+            ToolTurn turn = turns.get(turnIndex);
+            for (int index = turn.startInclusive(); index < turn.endExclusive(); index++) {
+                ChatMessage message = compacted.get(index);
+                if (message instanceof ToolExecutionResultMessage result) {
+                    if (!result.hasSingleText()) {
+                        continue;
+                    }
+                    var replacement = ToolExecutionResultMessage.builder()
+                            .id(result.id())
+                            .toolName(result.toolName())
+                            .text(compactToolResult(result.text()));
+                    if (result.isError() != null) {
+                        replacement.isError(result.isError());
+                    }
+                    if (!result.attributes().isEmpty()) {
+                        replacement.attributes(result.attributes());
+                    }
+                    compacted.set(index, replacement.build());
+                }
+            }
+        }
+        return List.copyOf(compacted);
+    }
+
+    private record ToolTurn(int startInclusive, int endExclusive) {
+    }
+
+    /** 保留旧工具结果的结构化事实；无法解析的第三方工具结果保留首尾文本。 */
+    static String compactToolResult(String text) {
+        if (text == null || text.isBlank() || text.contains("\"" + COMPACTED_MARKER + "\"")) {
+            return text == null ? "" : text;
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(text);
+            if (parsed.isJsonObject()) {
+                return JSON.toJson(compactJsonObject(parsed.getAsJsonObject()));
+            }
+        } catch (RuntimeException ignored) {
+            // 工具可能返回普通文本；继续使用首尾压缩，不让一次格式异常丢掉整个历史。
+        }
+        return compactText(text, HISTORICAL_SEGMENT_CHARS);
+    }
+
+    private static JsonObject compactJsonObject(JsonObject source) {
+        JsonObject target = new JsonObject();
+        source.entrySet().forEach(entry -> {
+            String key = entry.getKey();
+            JsonElement value = entry.getValue();
+            if (COMPACTED_MARKER.equals(key)) {
+                return;
+            }
+            if ("results".equals(key) || "item_context".equals(key)
+                    || "timeline".equals(key) || "requirements".equals(key)
+                    || "rewards".equals(key) || "candidates".equals(key)
+                    || "unmet_dependencies".equals(key)) {
+                target.add(key, compactJsonValue(value, key));
+            } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+                target.addProperty(key, compactText(value.getAsString(), HISTORICAL_STRING_CHARS));
+            } else {
+                target.add(key, value.deepCopy());
+            }
+        });
+        target.addProperty(COMPACTED_MARKER, true);
+        target.addProperty("history_note", "较早工具证据已压缩；保留来源、标题和正文首尾片段，当前轮结果保持完整");
+        return target;
+    }
+
+    private static JsonElement compactJsonValue(JsonElement value, String key) {
+        if (value == null || value.isJsonNull()) {
+            return value;
+        }
+        if (value.isJsonArray()) {
+            JsonArray array = new JsonArray();
+            for (JsonElement item : value.getAsJsonArray()) {
+                array.add(compactJsonValue(item, key));
+            }
+            return array;
+        }
+        if (!value.isJsonObject()) {
+            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+                return JSON.toJsonTree(compactText(value.getAsString(), stringLimit(key)));
+            }
+            return value.deepCopy();
+        }
+        JsonObject source = value.getAsJsonObject();
+        JsonObject target = new JsonObject();
+        source.entrySet().forEach(entry -> {
+            String field = entry.getKey();
+            JsonElement fieldValue = entry.getValue();
+            if (fieldValue.isJsonPrimitive() && fieldValue.getAsJsonPrimitive().isString()) {
+                target.addProperty(field, compactText(fieldValue.getAsString(), stringLimit(field)));
+            } else if (fieldValue.isJsonArray() || fieldValue.isJsonObject()) {
+                target.add(field, compactJsonValue(fieldValue, field));
+            } else {
+                target.add(field, fieldValue.deepCopy());
+            }
+        });
+        return target;
+    }
+
+    private static int stringLimit(String field) {
+        String normalized = field == null ? "" : field.toLowerCase(Locale.ROOT);
+        if (normalized.contains("segment") || normalized.contains("description")
+                || normalized.equals("markdown") || normalized.equals("body")) {
+            return normalized.contains("description")
+                    ? HISTORICAL_DESCRIPTION_CHARS
+                    : HISTORICAL_SEGMENT_CHARS;
+        }
+        if (normalized.contains("path") || normalized.endsWith("_id")
+                || normalized.equals("title") || normalized.equals("heading_path")) {
+            return 1_200;
+        }
+        return HISTORICAL_STRING_CHARS;
+    }
+
+    private static String compactText(String text, int maximum) {
+        String value = text == null ? "" : text;
+        if (maximum <= 0 || value.length() <= maximum) {
+            return value;
+        }
+        int head = Math.max(1, maximum * 2 / 3);
+        int tail = Math.max(1, maximum - head);
+        return value.substring(0, head)
+                + "\n…[ModPedia 历史证据中段已压缩，来源和关键首尾内容保留]…\n"
+                + value.substring(value.length() - tail);
+    }
+
+    private static int completeToolTurnEnd(List<ChatMessage> messages, int start) {
+        AiMessage aiMessage = (AiMessage) messages.get(start);
+        Set<String> pending = new LinkedHashSet<>();
+        for (var request : aiMessage.toolExecutionRequests()) {
+            if (request == null || request.id() == null || request.id().isBlank()
+                    || !pending.add(request.id())) {
+                return -1;
+            }
+        }
+        int end = start + 1;
+        while (end < messages.size() && !pending.isEmpty()) {
+            ChatMessage message = messages.get(end);
+            if (!(message instanceof ToolExecutionResultMessage result)
+                    || result.id() == null
+                    || !pending.remove(result.id())) {
+                return -1;
+            }
+            end++;
+        }
+        return pending.isEmpty() ? end : -1;
     }
 }

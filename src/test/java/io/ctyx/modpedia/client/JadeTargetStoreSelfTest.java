@@ -19,6 +19,27 @@ public final class JadeTargetStoreSelfTest {
         check(block != null && "minecraft:stone".equals(block.itemId()),
                 "没有拾取物时应回退到识别目标方块的物品 ID");
 
+        JadeTargetStore.freezeCurrentTargetForTest();
+        JadeTargetStore.updateFromIdentifier("minecraft:diamond", "钻石");
+        JadeTargetStore.Target frozen = JadeTargetStore.current();
+        check(frozen != null && "minecraft:stone".equals(frozen.itemId()),
+                "助手打开后应保持按 K 瞬间捕获的目标");
+        JadeTargetStore.clear();
+        check(JadeTargetStore.current() == frozen,
+                "助手打开后底层 Tooltip 清理不能清除冻结目标");
+        JadeTargetStore.releaseAssistantTarget();
+        JadeTargetStore.updateFromIdentifier("minecraft:diamond", "钻石");
+        check(JadeTargetStore.current() != null
+                        && "minecraft:diamond".equals(JadeTargetStore.current().itemId()),
+                "关闭助手后应恢复接收新的识别目标");
+
+        JadeTargetStore.clear();
+        JadeTargetStore.freezeCurrentTargetForTest();
+        JadeTargetStore.updateFromIdentifier("minecraft:gold_ingot", "金锭");
+        check(JadeTargetStore.current() == null,
+                "空目标冻结后不能被底层 Tooltip 偷偷填充");
+        JadeTargetStore.releaseAssistantTarget();
+
         JadeTargetStore.updateFromIdentifier("", "");
         check(JadeTargetStore.current() == null, "空目标标识应清理旧目标");
 

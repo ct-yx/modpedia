@@ -11,6 +11,8 @@ import io.ctyx.modpedia.task.TaskQuery;
 import io.ctyx.modpedia.task.TaskRuntimeReadResult;
 import io.ctyx.modpedia.task.TaskRuntimeFileDescriptor;
 import io.ctyx.modpedia.task.TaskRuntimeSnapshot;
+import io.ctyx.modpedia.recipe.RecipeQuery;
+import io.ctyx.modpedia.recipe.RecipeResponse;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -107,6 +109,7 @@ public final class ModPediaBridge {
     private volatile ScheduledFuture<?> reconnectFuture;
     private volatile ScheduledFuture<?> heartbeatFuture;
     private volatile RuntimeContextHandler runtimeContextHandler;
+    private volatile RecipeQueryHandler recipeQueryHandler;
     private volatile KnowledgeStatus knowledgeStatus = KnowledgeStatus.initial();
     private volatile Object observedLevel;
     private volatile Object observedPlayer;
@@ -360,6 +363,11 @@ public final class ModPediaBridge {
 
     public void setRuntimeContextHandler(RuntimeContextHandler handler) {
         runtimeContextHandler = handler;
+    }
+
+    /** 注册客户端配方查询器；实现位于可选 JEI 适配器，Worker 不加载它。 */
+    public void setRecipeQueryHandler(RecipeQueryHandler handler) {
+        recipeQueryHandler = handler;
     }
 
     /**
@@ -1200,6 +1208,8 @@ public final class ModPediaBridge {
         updateKnowledgeStatus(type, requestId, event);
         if (WorkerProtocol.RUNTIME_CONTEXT_REQUEST.equals(type)) {
             handleRuntimeContextRequest(event);
+        } else if (WorkerProtocol.RECIPE_QUERY_REQUEST.equals(type)) {
+            handleRecipeQueryRequest(event);
         }
         CompletableFuture<JsonObject> response = responses.get(requestId);
         if (response != null && (WorkerProtocol.COMPLETED.equals(type)
@@ -1328,6 +1338,71 @@ public final class ModPediaBridge {
         } catch (Throwable failure) {
             sendRuntimeContext(event, null, TaskRuntimeReadResult.unavailable(messageOf(failure)));
         }
+    }
+
+    /**
+     * JEI 只能在客户端主线程访问。IPC reader 线程收到请求后只负责排队，避免
+     * 模型请求因为读配方而直接触碰 Minecraft 状态；返回值仍通过同一 JSONL
+     * 连接回到 Worker。
+     */
+    private void handleRecipeQueryRequest(JsonObject event) {
+        RecipeQueryHandler handler = recipeQueryHandler;
+        RecipeQuery query;
+        try {
+            query = WorkerPayloadCodec.recipeQuery(event.getAsJsonObject("query"));
+        } catch (Throwable failure) {
+            sendRecipeResponse(
+                    WorkerProtocol.string(event, "request_id"),
+                    RecipeResponse.unavailable(null, "配方请求格式错误")
+            );
+            return;
+        }
+        if (handler == null) {
+            sendRecipeResponse(
+                    WorkerProtocol.string(event, "request_id"),
+                    RecipeResponse.unavailable(query, "客户端没有注册配方查询器")
+            );
+            return;
+        }
+        Runnable action = () -> {
+            RecipeResponse response;
+            try {
+                response = handler.query(query);
+                if (response == null) {
+                    response = RecipeResponse.unavailable(query, "配方查询器没有返回结果");
+                }
+            } catch (Throwable failure) {
+                response = RecipeResponse.unavailable(query, "客户端配方查询失败：" + messageOf(failure));
+            }
+            sendRecipeResponse(WorkerProtocol.string(event, "request_id"), response);
+        };
+        try {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft == null) {
+                sendRecipeResponse(
+                        WorkerProtocol.string(event, "request_id"),
+                        RecipeResponse.unavailable(query, "Minecraft 客户端尚未就绪")
+                );
+            } else if (minecraft.isSameThread()) {
+                action.run();
+            } else {
+                minecraft.execute(action);
+            }
+        } catch (Throwable failure) {
+            sendRecipeResponse(
+                    WorkerProtocol.string(event, "request_id"),
+                    RecipeResponse.unavailable(query, "无法切回 Minecraft 客户端线程")
+            );
+        }
+    }
+
+    private void sendRecipeResponse(String requestId, RecipeResponse response) {
+        JsonObject event = WorkerProtocol.message(
+                WorkerProtocol.RECIPE_QUERY_RESPONSE,
+                requestId
+        );
+        event.add("recipe_response", WorkerPayloadCodec.recipeResponse(response));
+        sendIfReady(event);
     }
 
     private void deliverRuntimeContext(RuntimeContextCoordinator.Delivery<RuntimeContextResult> delivery) {
@@ -1475,6 +1550,11 @@ public final class ModPediaBridge {
     @FunctionalInterface
     public interface RuntimeContextHandler {
         RuntimeContextResult read(RuntimeContextRequest request);
+    }
+
+    @FunctionalInterface
+    public interface RecipeQueryHandler {
+        RecipeResponse query(RecipeQuery query);
     }
 
     /** 游戏侧一次运行时读取的不可变结果；不会写入 knowledge.db。 */

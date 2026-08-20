@@ -509,6 +509,12 @@ def aiRequestLifecycleSelfTest = tasks.register('aiRequestLifecycleSelfTest', Ja
     mainClass = 'io.ctyx.modpedia.ai.AiRequestLifecycleSelfTest'
 }
 
+def aiCostOptimizationSelfTest = tasks.register('aiCostOptimizationSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiCostOptimizationSelfTest'
+}
+
 def localSearchMessageFormatterSelfTest = tasks.register('localSearchMessageFormatterSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -549,6 +555,30 @@ def aiLangChainSelfTest = tasks.register('aiLangChainSelfTest', JavaExec) {
     mainClass = 'io.ctyx.modpedia.ai.AiLangChainSelfTest'
 }
 
+def aiProtocolSelfTest = tasks.register('aiProtocolSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.AiProtocolSelfTest'
+}
+
+def calculationToolSelfTest = tasks.register('calculationToolSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.CalculationToolSelfTest'
+}
+
+def recipeQueryToolSelfTest = tasks.register('recipeQueryToolSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.RecipeQueryToolSelfTest'
+}
+
+def recipeMachineNormalizerSelfTest = tasks.register('recipeMachineNormalizerSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.recipe.RecipeMachineNormalizerSelfTest'
+}
+
 def aiLiveModelProbe = tasks.register('aiLiveModelProbe', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -571,6 +601,12 @@ def markdownRendererSelfTest = tasks.register('markdownRendererSelfTest', JavaEx
     mainClass = 'io.ctyx.modpedia.client.MarkdownRendererSelfTest'
 }
 
+def assistantInputPolicySelfTest = tasks.register('assistantInputPolicySelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.AssistantInputPolicySelfTest'
+}
+
 tasks.named('test', Test) {
     dependsOn searchSelfTest
     dependsOn manualSourceNavigatorSelfTest
@@ -582,6 +618,7 @@ tasks.named('test', Test) {
     dependsOn knowledgeStatusSelfTest
     dependsOn aiResponseSanitizerSelfTest
     dependsOn assistantSecondaryLayoutSelfTest
+    dependsOn assistantInputPolicySelfTest
     dependsOn appGuideAdapterSelfTest
     dependsOn localizedSearchSelfTest
     dependsOn assistantUsageSelfTest
@@ -607,10 +644,15 @@ tasks.named('test', Test) {
     dependsOn sourceCitationParserSelfTest
     dependsOn followUpQuestionParserSelfTest
     dependsOn aiRequestLifecycleSelfTest
+    dependsOn aiCostOptimizationSelfTest
     dependsOn localSearchMessageFormatterSelfTest
     dependsOn aiContextWindowSelfTest
     dependsOn aiModelCompatibilitySelfTest
     dependsOn aiLangChainSelfTest
+    dependsOn aiProtocolSelfTest
+    dependsOn calculationToolSelfTest
+    dependsOn recipeQueryToolSelfTest
+    dependsOn recipeMachineNormalizerSelfTest
     dependsOn markdownRendererSelfTest
     failOnNoDiscoveredTests = false
 }

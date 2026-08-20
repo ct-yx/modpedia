@@ -20,6 +20,8 @@ import io.ctyx.modpedia.task.TaskRuntimeFileDescriptor;
 import io.ctyx.modpedia.task.TaskRuntimeSnapshot;
 import io.ctyx.modpedia.task.TaskTimelineEntry;
 import io.ctyx.modpedia.task.TaskTimelineTracker;
+import io.ctyx.modpedia.recipe.RecipeQuery;
+import io.ctyx.modpedia.recipe.RecipeResponse;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -59,6 +61,7 @@ public final class WorkerServer {
     private static final Logger LOG = Logger.getLogger("ModPediaWorker");
     private static final Gson JSON = new Gson();
     private static final long RUNTIME_CONTEXT_TIMEOUT_SECONDS = 15L;
+    private static final long RECIPE_QUERY_TIMEOUT_SECONDS = 15L;
     private static final int MAX_ITEM_CATALOG_ENTRIES = 250_000;
 
     private final Socket socket;
@@ -96,6 +99,7 @@ public final class WorkerServer {
     private final Map<String, Future<?>> activeRequests = new ConcurrentHashMap<>();
     private final Map<String, ChatRequestHandle> activeChatRequests = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<JsonObject>> runtimeWaiters = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<JsonObject>> recipeWaiters = new ConcurrentHashMap<>();
     /** 只保留当前存档的上一次进度，用于给无历史日志的 task_progress 补时间线。 */
     private final TaskTimelineTracker runtimeTimelineTracker = new TaskTimelineTracker();
     private final WorkerRequestCancellation requestCancellation = new WorkerRequestCancellation();
@@ -145,6 +149,7 @@ public final class WorkerServer {
                     settingsStore,
                     this::send,
                     this::requestRuntimeContext,
+                    this::requestRecipe,
                     this::isCancelled
             );
             sendConversationState("startup", "");
@@ -163,6 +168,10 @@ public final class WorkerServer {
                     new IOException("Worker 连接已关闭")
             ));
             runtimeWaiters.clear();
+            recipeWaiters.values().forEach(future -> future.completeExceptionally(
+                    new IOException("Worker 连接已关闭")
+            ));
+            recipeWaiters.clear();
             requestCancellation.clear();
             knowledgeOperations.shutdownNow();
             operations.shutdownNow();
@@ -198,6 +207,8 @@ public final class WorkerServer {
             if (WorkerProtocol.RUNTIME_CONTEXT_RESPONSE.equals(type)) {
                 // 让等待中的任务查询尽快结束；不能把版本错误的快照当作当前进度。
                 completeRuntimeContext(message, requestId);
+            } else if (WorkerProtocol.RECIPE_QUERY_RESPONSE.equals(type)) {
+                completeRecipeQuery(message, requestId);
             } else {
                 sendProtocolError(requestId, "Worker 协议版本不匹配");
             }
@@ -213,6 +224,7 @@ public final class WorkerServer {
             case WorkerProtocol.CHAT_START -> submitChat(message, requestId);
             case WorkerProtocol.CHAT_CANCEL -> cancel(requestId);
             case WorkerProtocol.RUNTIME_CONTEXT_RESPONSE -> completeRuntimeContext(message, requestId);
+            case WorkerProtocol.RECIPE_QUERY_RESPONSE -> completeRecipeQuery(message, requestId);
             case WorkerProtocol.KNOWLEDGE_REBUILD -> submitKnowledgeOperation(
                     requestId,
                     "rebuild",
@@ -353,6 +365,57 @@ public final class WorkerServer {
         CompletableFuture<JsonObject> waiter = runtimeWaiters.remove(requestId);
         if (waiter != null) {
             waiter.complete(message);
+        }
+    }
+
+    private void completeRecipeQuery(JsonObject message, String requestId) {
+        CompletableFuture<JsonObject> waiter = recipeWaiters.remove(requestId);
+        if (waiter != null) {
+            waiter.complete(message);
+        }
+    }
+
+    /**
+     * AI 请求配方时只在 Worker 等待一个短时 IPC 回应；JEI 查询本身由客户端主
+     * 线程执行，配方数据不会写入 knowledge.db，也不会把可选 JEI 类带入 Worker。
+     */
+    private RecipeResponse requestRecipe(
+            String requestId,
+            String conversationId,
+            RecipeQuery query
+    ) {
+        if (query == null) {
+            return RecipeResponse.invalid(null, "配方查询请求为空");
+        }
+        if (isCancelled(requestId)) {
+            return RecipeResponse.unavailable(query, "配方查询已取消");
+        }
+        String recipeRequestId = requestId + ":recipe:" + UUID.randomUUID();
+        CompletableFuture<JsonObject> waiter = new CompletableFuture<>();
+        recipeWaiters.put(recipeRequestId, waiter);
+        JsonObject request = WorkerProtocol.message(
+                WorkerProtocol.RECIPE_QUERY_REQUEST,
+                recipeRequestId
+        );
+        request.addProperty("chat_request_id", requestId == null ? "" : requestId);
+        request.addProperty("conversation_id", conversationId == null ? "" : conversationId);
+        request.add("query", WorkerPayloadCodec.recipeQuery(query));
+        try {
+            send(request);
+            JsonObject response = waiter.get(RECIPE_QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            JsonObject payload = response != null
+                    && response.has("recipe_response")
+                    && response.get("recipe_response").isJsonObject()
+                    ? response.getAsJsonObject("recipe_response")
+                    : response;
+            return WorkerPayloadCodec.recipeResponse(payload);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return RecipeResponse.unavailable(query, "配方查询被中断");
+        } catch (Exception exception) {
+            return RecipeResponse.unavailable(query, "客户端配方查询超时或失败");
+        } finally {
+            recipeWaiters.remove(recipeRequestId);
         }
     }
 

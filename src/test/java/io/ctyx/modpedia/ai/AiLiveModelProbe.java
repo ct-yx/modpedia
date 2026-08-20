@@ -3,7 +3,7 @@ package io.ctyx.modpedia.ai;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.model.TokenCountEstimator;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.UserMessage;
@@ -53,7 +53,7 @@ public final class AiLiveModelProbe {
                     1,
                     traces::add
             );
-            OpenAiChatModel model = AiClient.blockingModel(settings);
+            ChatModel model = AiClient.chatModel(settings);
             AtomicBoolean firstRequest = new AtomicBoolean(true);
             ProbeService service = AiServices.builder(ProbeService.class)
                     .chatModel(model)
@@ -72,7 +72,12 @@ public final class AiLiveModelProbe {
                             .build())
                     .tools(tool)
                     .chatRequestTransformer(request -> AiAssistantSession.requireSearchOnFirstRequest(
-                            request, firstRequest
+                            request,
+                            firstRequest,
+                            false,
+                            AiTokenBudget.answerTokens(settings.intensity()),
+                            settings.apiFormat().isChatCompletions()
+                                    && AiClient.usesCompletionTokenParameter(settings.model())
                     ))
                     .maxToolCallingRoundTrips(AiAssistantSession.toolCallingRoundTrips(1))
                     .build();
@@ -98,7 +103,10 @@ public final class AiLiveModelProbe {
             System.out.println("ModPedia live AI probe passed: model="
                     + settings.model()
                     + ", searchCalls=" + traces.size()
-                    + ", answerChars=" + answer.length());
+                    + ", searchStatuses=" + traces.stream().map(SearchTrace::status).toList()
+                    + ", sourceCounts=" + traces.stream().map(trace -> trace.sources().size()).toList()
+                    + ", answerChars=" + answer.length()
+                    + ", answer=" + answer.replaceAll("\\s+", " ").strip());
         } finally {
             try (var paths = Files.walk(conversationRoot)) {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {

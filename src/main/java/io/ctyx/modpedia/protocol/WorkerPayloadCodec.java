@@ -8,6 +8,7 @@ import io.ctyx.modpedia.client.ConversationSummary;
 import io.ctyx.modpedia.client.MessageRole;
 import io.ctyx.modpedia.client.SourceReference;
 import io.ctyx.modpedia.ai.AiSettings;
+import io.ctyx.modpedia.ai.AiApiFormat;
 import io.ctyx.modpedia.ai.AssistantMode;
 import io.ctyx.modpedia.ai.SearchIntensity;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
@@ -18,10 +19,17 @@ import io.ctyx.modpedia.task.TaskRuntimeSnapshot;
 import io.ctyx.modpedia.task.TaskSearchSummary;
 import io.ctyx.modpedia.task.TaskTimelineEntry;
 import io.ctyx.modpedia.task.TaskTimelineEventType;
+import io.ctyx.modpedia.recipe.RecipeEntry;
+import io.ctyx.modpedia.recipe.RecipeIngredient;
+import io.ctyx.modpedia.recipe.RecipeMethod;
+import io.ctyx.modpedia.recipe.RecipeQuery;
+import io.ctyx.modpedia.recipe.RecipeQueryMode;
+import io.ctyx.modpedia.recipe.RecipeResponse;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Worker JSONL 边界上的稳定数据转换，不在协议中传输业务对象实例。 */
@@ -182,6 +190,7 @@ public final class WorkerPayloadCodec {
         AiSettings actual = settings == null ? AiSettings.defaults() : settings;
         JsonObject value = new JsonObject();
         value.addProperty("mode", actual.mode().name());
+        value.addProperty("api_format", actual.apiFormat().name());
         value.addProperty("endpoint", actual.endpoint());
         value.addProperty("model", actual.model());
         value.addProperty("api_key", actual.apiKey());
@@ -196,6 +205,7 @@ public final class WorkerPayloadCodec {
 
     public static AiSettings aiSettings(JsonObject value) {
         AssistantMode mode;
+        AiApiFormat apiFormat = AiApiFormat.parse(WorkerProtocol.string(value, "api_format"));
         SearchIntensity intensity;
         try {
             mode = AssistantMode.valueOf(WorkerProtocol.string(value, "mode").toUpperCase());
@@ -209,6 +219,7 @@ public final class WorkerPayloadCodec {
         }
         return new AiSettings(
                 mode,
+                apiFormat,
                 WorkerProtocol.string(value, "endpoint"),
                 WorkerProtocol.string(value, "model"),
                 WorkerProtocol.string(value, "api_key"),
@@ -406,6 +417,214 @@ public final class WorkerPayloadCodec {
                 WorkerProtocol.string(value, "version")
         );
         return descriptor.usable() ? descriptor : null;
+    }
+
+    public static JsonObject recipeQuery(RecipeQuery query) {
+        JsonObject value = new JsonObject();
+        if (query == null) {
+            return value;
+        }
+        value.addProperty("item_id", query.itemId());
+        value.addProperty("mode", query.mode().name());
+        value.addProperty("method_id", query.methodId());
+        value.addProperty("limit", query.limit());
+        return value;
+    }
+
+    public static RecipeQuery recipeQuery(JsonObject value) {
+        RecipeQueryMode mode;
+        try {
+            mode = RecipeQueryMode.valueOf(WorkerProtocol.string(value, "mode").toUpperCase());
+        } catch (RuntimeException exception) {
+            mode = RecipeQueryMode.OTHER;
+        }
+        return new RecipeQuery(
+                WorkerProtocol.string(value, "item_id"),
+                mode,
+                WorkerProtocol.string(value, "method_id"),
+                WorkerProtocol.integer(value, "limit", RecipeQuery.DEFAULT_LIMIT)
+        );
+    }
+
+    public static JsonObject recipeResponse(RecipeResponse response) {
+        JsonObject value = new JsonObject();
+        if (response == null) {
+            value.addProperty("status", "unavailable");
+            value.addProperty("message", "配方查询没有返回结果");
+            return value;
+        }
+        value.addProperty("status", response.status());
+        value.addProperty("item_id", response.itemId());
+        value.addProperty("item_name", response.itemName());
+        value.addProperty("mode", response.mode().name());
+        value.add("methods", recipeMethods(response.methods()));
+        value.add("recipes", recipeEntries(response.recipes()));
+        value.add("machines", array(response.machines()));
+        value.addProperty("has_more", response.hasMore());
+        if (response.message() != null && !response.message().isBlank()) {
+            value.addProperty("message", response.message());
+        }
+        return value;
+    }
+
+    public static RecipeResponse recipeResponse(JsonObject value) {
+        if (value == null) {
+            return RecipeResponse.unavailable(null, "配方查询响应为空");
+        }
+        RecipeQueryMode mode;
+        try {
+            mode = RecipeQueryMode.valueOf(WorkerProtocol.string(value, "mode").toUpperCase());
+        } catch (RuntimeException exception) {
+            mode = RecipeQueryMode.OTHER;
+        }
+        List<RecipeMethod> methods = new ArrayList<>();
+        for (JsonElement element : array(value, "methods")) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject method = element.getAsJsonObject();
+            methods.add(new RecipeMethod(
+                    WorkerProtocol.string(method, "method_id"),
+                    WorkerProtocol.string(method, "name"),
+                    WorkerProtocol.integer(method, "recipe_count", 0),
+                    strings(array(method, "machines"))
+            ));
+        }
+        List<RecipeEntry> recipes = new ArrayList<>();
+        for (JsonElement element : array(value, "recipes")) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject recipe = element.getAsJsonObject();
+            recipes.add(new RecipeEntry(
+                    WorkerProtocol.string(recipe, "recipe_id"),
+                    WorkerProtocol.string(recipe, "method_id"),
+                    WorkerProtocol.string(recipe, "method_name"),
+                    ingredients(array(recipe, "inputs")),
+                    ingredients(array(recipe, "outputs")),
+                    stringsMap(recipe, "metadata"),
+                    optionalInteger(recipe, "processing_time_ticks")
+            ));
+        }
+        return new RecipeResponse(
+                WorkerProtocol.string(value, "status"),
+                WorkerProtocol.string(value, "item_id"),
+                WorkerProtocol.string(value, "item_name"),
+                mode,
+                methods,
+                recipes,
+                strings(array(value, "machines")),
+                WorkerProtocol.bool(value, "has_more", false),
+                WorkerProtocol.string(value, "message")
+        );
+    }
+
+    private static JsonArray recipeMethods(Collection<RecipeMethod> methods) {
+        JsonArray values = new JsonArray();
+        if (methods == null) {
+            return values;
+        }
+        for (RecipeMethod method : methods) {
+            if (method == null) {
+                continue;
+            }
+            JsonObject value = new JsonObject();
+            value.addProperty("method_id", method.methodId());
+            value.addProperty("name", method.name());
+            value.addProperty("recipe_count", method.recipeCount());
+            value.add("machines", array(method.machines()));
+            values.add(value);
+        }
+        return values;
+    }
+
+    private static JsonArray recipeEntries(Collection<RecipeEntry> recipes) {
+        JsonArray values = new JsonArray();
+        if (recipes == null) {
+            return values;
+        }
+        for (RecipeEntry recipe : recipes) {
+            if (recipe == null) {
+                continue;
+            }
+            JsonObject value = new JsonObject();
+            value.addProperty("recipe_id", recipe.recipeId());
+            value.addProperty("method_id", recipe.methodId());
+            value.addProperty("method_name", recipe.methodName());
+            value.add("inputs", ingredients(recipe.inputs()));
+            value.add("outputs", ingredients(recipe.outputs()));
+            JsonObject metadata = new JsonObject();
+            recipe.metadata().forEach(metadata::addProperty);
+            value.add("metadata", metadata);
+            if (recipe.processingTimeTicks() != null) {
+                value.addProperty("processing_time_ticks", recipe.processingTimeTicks());
+                value.addProperty("processing_time_seconds", recipe.processingTimeTicks() / 20.0D);
+            }
+            values.add(value);
+        }
+        return values;
+    }
+
+    private static JsonArray ingredients(Collection<RecipeIngredient> ingredients) {
+        JsonArray values = new JsonArray();
+        if (ingredients == null) {
+            return values;
+        }
+        for (RecipeIngredient ingredient : ingredients) {
+            if (ingredient == null) {
+                continue;
+            }
+            JsonObject value = new JsonObject();
+            value.addProperty("kind", ingredient.kind());
+            value.addProperty("id", ingredient.id());
+            value.addProperty("display_name", ingredient.displayName());
+            value.addProperty("amount", ingredient.amount());
+            values.add(value);
+        }
+        return values;
+    }
+
+    private static List<RecipeIngredient> ingredients(JsonArray values) {
+        List<RecipeIngredient> result = new ArrayList<>();
+        for (JsonElement element : values) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject value = element.getAsJsonObject();
+            result.add(new RecipeIngredient(
+                    WorkerProtocol.string(value, "kind"),
+                    WorkerProtocol.string(value, "id"),
+                    WorkerProtocol.string(value, "display_name"),
+                    WorkerProtocol.integer(value, "amount", 1)
+            ));
+        }
+        return List.copyOf(result);
+    }
+
+    private static Map<String, String> stringsMap(JsonObject value, String name) {
+        JsonElement element = value == null ? null : value.get(name);
+        if (element == null || !element.isJsonObject()) {
+            return Map.of();
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            if (entry.getValue() != null && entry.getValue().isJsonPrimitive()) {
+                result.put(entry.getKey(), entry.getValue().getAsString());
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private static Integer optionalInteger(JsonObject value, String name) {
+        JsonElement element = value == null ? null : value.get(name);
+        if (element == null || !element.isJsonPrimitive()) {
+            return null;
+        }
+        try {
+            return element.getAsInt();
+        } catch (RuntimeException exception) {
+            return null;
+        }
     }
 
     public static JsonArray array(Collection<?> values) {

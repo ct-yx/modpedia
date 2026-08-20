@@ -34,6 +34,19 @@ public final class AiClientSelfTest {
         check("https://example.invalid/v1".equals(
                         AiClient.normalizedEndpoint("https://example.invalid/v1/models")),
                 "误填模型列表地址时应回退到 API 根地址");
+        check("https://example.invalid/v1".equals(
+                        AiClient.normalizedEndpoint(
+                                "https://example.invalid/v1/messages", AiApiFormat.NATIVE_MESSAGES)),
+                "Messages 完整地址应归一化为 API 根地址");
+        check("https://example.invalid/v1".equals(
+                        AiClient.normalizedEndpoint(
+                                "https://example.invalid/v1/responses", AiApiFormat.RESPONSES)),
+                "Responses 完整地址应归一化为 API 根地址");
+        check("https://example.invalid/v1beta".equals(
+                        AiClient.normalizedEndpoint(
+                                "https://example.invalid/v1beta/models/gemini-2.5-flash:generateContent?alt=sse",
+                                AiApiFormat.GENERATE_CONTENT)),
+                "Gemini 完整 generateContent 地址应归一化为 API 根地址");
 
         AiClient.ModelListResult parsed = AiClient.parseModelListResponse(
                 200,
@@ -63,7 +76,7 @@ public final class AiClientSelfTest {
                 "<!doctype html><html><body>login</body></html>"
         );
         check(html.failed(), "HTML 响应应标记为失败");
-        check(html.message().contains("/v1"), "HTML 响应应提示 API 地址通常需要 /v1");
+        check(html.message().contains("当前 API 格式"), "HTML 响应应提示检查当前 API 格式地址");
 
         String friendlyHtml = AiClient.friendlyError(
                 new IllegalStateException("JsonParseException: Unexpected character '<' (code 60)")

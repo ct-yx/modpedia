@@ -1,6 +1,7 @@
 # ModPedia 数据库 v8 研究与结构冻结方案
 
-状态：研究稿，待数据库实现完成后随代码一起评审
+状态：研究稿；已纳入 LZ4 Fast 大字段压缩设计，待数据库实现和大型整合包
+基准完成后随代码一起评审
 
 ## 1. 研究结论
 
@@ -15,6 +16,7 @@ v8 的目标是：
 + 当前安装模组版本的知识快照
 + 可重复的来源指纹和解析器指纹
 + 稳定的文档/物品引用
++ LZ4 Fast 压缩大文本载荷，但不压缩 FTS 可检索字段
 + 原子更新和失败保留旧库
 + 为合成配方和其他来源预留内容类型
 ```
@@ -318,6 +320,96 @@ item_aliases(
 )
 ```
 
+### 4.6 大文本载荷压缩：统一使用 LZ4 Fast
+
+v8 只引入一种压缩编码：LZ4 Fast。它压缩速度快、解压开销低，适合在 Worker
+批量构建和查询结果读取之间减少磁盘占用。实现使用纯 Java 的
+`org.lz4:lz4-java`，通过 `LZ4Factory.fastestJavaInstance()` 获取实现，不依赖
+本机动态库。
+
+这里的“压缩数据库”指压缩 SQLite 中的事实正文载荷，不是把整个 SQLite 文件
+套在一个 `.lz4` 容器中。SQLite 页面、普通索引和 FTS5 索引继续保持原生格式，
+这样搜索仍然可以直接使用索引。
+
+#### 压缩字段
+
+以下字段在 v8 中从 `TEXT` 改为 `BLOB`，并为每个载荷增加编码和解压后的字节数：
+
+```sql
+markdown              BLOB NOT NULL
+markdown_codec        TEXT NOT NULL
+markdown_raw_bytes    INTEGER NOT NULL
+```
+
+适用表和字段为：
+
+```text
+documents.markdown
+segments.markdown
+task_snapshots.raw_json
+task_quests.raw_json
+task_tasks.raw_json
+task_rewards.raw_json
+item_catalog.description_markdown
+```
+
+对应字段使用同样的命名规则，例如 `raw_json_codec`、`raw_json_raw_bytes` 和
+`description_markdown_codec`、`description_markdown_raw_bytes`。v8 的所有上述
+载荷统一写入 `lz4` 编码，不按行混用 LZ4HC、Zstd 或未压缩格式；保留 codec 字段
+是为了让读取器能明确拒绝未知编码，并为未来升级保留扩展点。
+
+#### 不压缩的字段
+
+以下字段必须继续保存为普通文本，否则会破坏 FTS5 和排序/过滤路径：
+
+```text
+segments.title
+segments.keywords
+segments.heading_path
+segments.normalized_text
+segments_fts 的可检索列和索引数据
+```
+
+当前 FTS5 继续采用 external-content 形态。它不保存 Markdown 正文副本，只索引
+标题、关键词、标题路径和规范化文本；完整 Markdown 在命中后从 `documents` 或
+`segments` 读取并通过 LZ4 解压。因此压缩不会改变中文召回、BM25、短语匹配、
+语言过滤或来源跳转。
+
+#### 读写协议
+
+```text
+原始 UTF-8 文本
+  ↓ LZ4 Fast 压缩
+BLOB + codec + raw_bytes 写入事务
+  ↓ 查询命中
+校验解压长度
+  ↓
+恢复完整 Markdown/JSON，交给搜索、模型和 UI
+```
+
+- 压缩、解压和 BLOB 绑定只在 Worker 的知识库线程执行，Minecraft 主线程不接触
+  SQLite 或压缩载荷；
+- 大批量导入使用单个事务和预编译语句，不能逐行提交；
+- 构建完成后执行一次 `PRAGMA optimize;`，并在 FTS 大批量重建后执行一次
+  `INSERT INTO segments_fts(segments_fts) VALUES('optimize');`；
+- 普通小规模增量更新不重复执行完整 FTS optimize，只在批量阈值或完整构建时执行；
+- 解压失败、长度不匹配或出现未知 codec 时，当前 staged 构建整体失败，继续使用
+  上一份有效库；不在正式库中做半成功修复。
+
+#### 体积和性能基线
+
+ATM10 当前 v7 数据库约 `99.35 MB`。已完成的混合字段基准为：
+
+```text
+LZ4 Fast：压缩后约 61.3%，压缩 97 ms，解压 36 ms
+LZ4HC-9 ：压缩后约 58.4%，压缩 252 ms，解压 36 ms
+Zstd-3  ：压缩后约 51.4%，压缩 175 ms，解压 85 ms
+```
+
+因此 v8 选择 LZ4 Fast，目标是把实际数据库压到约 `88–92 MB`，同时保持冷查询、
+热查询和来源跳转无明显回归。最终数值以相同 ATM10 数据集的 v7/v8 对照报告为准，
+不能用合成文本基准替代真实整合包结果。
+
 ## 5. 预留内容类型
 
 v8 的 `content_kind` 固定预留以下两个值：
@@ -474,6 +566,8 @@ mod_version 相同
 - 同一时间只允许一个数据库写事务；
 - 读连接使用 `query_only`；
 - FTS 写入与 `segments` 写入必须在同一事务中完成；
+- 压缩载荷与解压逻辑只存在于 Worker/数据库线程，客户端只接收已恢复的文本；
+- LZ4 Fast 只用于事实载荷，不能压缩 FTS 可检索列、FTS 索引或 SQLite 整个文件；
 - 构建失败回滚整个批次；
 - 数据库替换使用临时文件和原子 rename；
 - 数据库损坏时从 JAR、Wiki 源文件和 `custom/` 全量重建；
@@ -490,6 +584,9 @@ mod_version 相同
 - [ ] 构建批次可以区分完整扫描和中断扫描；
 - [ ] `recipe` 和 `external` 内容类型已预留；
 - [ ] `metadata_json` 可以保存未知扩展字段；
+- [ ] `documents`、`segments`、任务 raw JSON 和物品 Tooltip 载荷使用 LZ4 Fast BLOB；
+- [ ] 每个压缩载荷都能通过 codec 和 raw byte 数完成解压校验；
+- [ ] FTS 可检索字段保持普通文本，FTS external-content 不引入正文副本；
 - [ ] 现有手册、Wiki、任务和物品查询接口保持稳定。
 
 ### 模组更新
@@ -510,6 +607,18 @@ mod_version 相同
 - [ ] 配方未接入前，JEI 缺失不会影响启动；
 - [ ] 外部来源失败时不会影响手册和任务数据库。
 
+### 压缩与性能
+
+- [ ] LZ4 往返测试覆盖空文本、中文、英文、ID、长 Markdown 和 JSON；
+- [ ] 损坏 BLOB、未知 codec 和长度不匹配会使 staged 构建失败，并保留旧库；
+- [ ] v7/v8 在相同 ATM10 数据集上对比数据库总大小、正文表大小、FTS 大小、构建
+      耗时以及冷/热查询 p50、p95、p99；
+- [ ] 搜索结果、BM25 顺序、短语匹配、删除、增量更新和事务回滚与 v7 一致；
+- [ ] v8 搜索 p95 相对 v7 无明显回归，目标增幅不超过 5%；
+- [ ] 完整构建执行 `PRAGMA optimize` 和 FTS optimize，小规模增量更新不重复执行
+      完整合并；
+- [ ] 真实 ATM10 数据库达到约 88–92 MB 的预期区间，或在报告中记录偏差原因。
+
 ## 9. 实施顺序
 
 ```text
@@ -518,11 +627,13 @@ mod_version 相同
 3. 增加 source_revisions 和 knowledge_builds
 4. 将有效指纹改为“原始资源 + 解析器版本”
 5. 增加 document_aliases / item_aliases
-6. 调整来源更新、删除和失败回滚流程
-7. 增加 recipe / external 的 schema 预留和测试夹具
-8. 运行大型整合包更新前后回归
-9. 更新 README、架构文档、知识库文档和开发清单
-10. 完成 v8 数据库后再提交和推送
+6. 增加 LZ4 Fast codec，把大字段改为 BLOB 并记录 codec/raw byte 数
+7. 调整来源更新、删除、解压校验和失败回滚流程
+8. 增加 `PRAGMA optimize`、FTS optimize 和 v7/v8 性能基准报告
+9. 增加 recipe / external 的 schema 预留和测试夹具
+10. 运行大型整合包更新前后回归
+11. 更新 README、架构文档、知识库文档和开发清单
+12. 完成 v8 数据库后再提交和推送
 ```
 
 ## 10. 明确暂缓项
@@ -532,6 +643,7 @@ mod_version 相同
 - 同一个数据库同时承载多个整合包实例；
 - 多实例共享文档身份；
 - JEI 全量配方导入；
+- LZ4HC、Zstd、多算法混用和 SQLite 整库压缩；
 - 默认保留所有历史 Markdown 正文；
 - 向量数据库；
 - 为每一种外部来源增加专用表；
@@ -549,8 +661,9 @@ v8 的核心不是增加大量业务表，而是把以下信息一次性固定�
 当前文档是否仍然有效
 旧 ID 如何迁移
 未来内容属于手册、Wiki、任务、配方还是其他来源
+事实正文使用哪种载荷编码，以及解压后的原始长度
 ```
 
-完成这些字段后，模组版本更新可以保持局部、可回滚、可追踪；数据库业务结构也能
-长期稳定。合成配方和其他来源先作为 v8 的正式预留类型，后续接入时复用统一 Markdown
-和 FTS 链路。
+完成这些字段后，模组版本更新可以保持局部、可回滚、可追踪；事实正文通过 LZ4
+Fast 降低磁盘占用，FTS 继续保持可检索，数据库业务结构也能长期稳定。合成配方和
+其他来源先作为 v8 的正式预留类型，后续接入时复用统一 Markdown 和 FTS 链路。

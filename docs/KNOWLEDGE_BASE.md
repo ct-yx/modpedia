@@ -290,7 +290,32 @@ Schema/索引创建后和同步提交前执行 `PRAGMA optimize`；全量或大�
 search_knowledge  → content_kind=mod_manual
 search_wiki       → content_kind=wiki
 search_tasks      → task_* 表，并区分静态定义与实时进度
+calculate         → 本地 BigDecimal 计算，不读取知识库
 ```
+
+### 本地计算工具
+
+AI 遇到多步配方总量、比例、资源汇总、单位换算或取整时调用 `calculate`。工具只接受
+受限数学表达式，支持 `+ - * / % ^`、括号以及 `ceil`、`floor`、`round`、`min`、
+`max`、`abs`、`pow`、`sum`，使用 `BigDecimal` 在本地计算并返回结构化结果。表达式最多
+512 个字符、256 个运算步骤，结果不会伪装成手册来源，也不会写入 `knowledge.db`。
+
+### API 格式
+
+`AiSettings.apiFormat` 支持四个值：
+
+```text
+CHAT_COMPLETIONS   → /v1/chat/completions，LangChain4j 原生模型
+NATIVE_MESSAGES    → /v1/messages，Anthropic Messages 结构
+RESPONSES          → /v1/responses，Responses 结构
+GENERATE_CONTENT   → /v1beta/models/<model>:generateContent，Gemini 结构
+```
+
+后三种格式由 `ProtocolAiModel` 转换为 LangChain4j 的统一 `ChatModel` 和
+`StreamingChatModel` 接口，保持工具调用、工具结果续接、上下文记忆、重试和流式文本链路不变。
+认证分别使用 `Authorization: Bearer`、`x-api-key` + `anthropic-version` 和
+`x-goog-api-key`。模型列表按钮会请求对应根地址的 `/models`；服务不提供该接口时，玩家直接填写模型名称即可。
+全部模型批量兼容性探测暂时只对 Chat Completions 开放，其他格式通过连接测试和本地 Mock 协议测试验证。
 
 `search_tasks` 不由客户端 Tick 触发。一次玩家问题开始时，先取得当前玩家运行时上下文。
 单机由游戏 JVM 只发送当前存档根目录、玩家 UUID 和作用域元数据，Worker 直接读取
@@ -325,7 +350,8 @@ Markdown → 分块 → 嵌入 → 向量索引 → 可选重排
 `search_knowledge` 只从 SQLite 返回当前查询命中的完整 Markdown 段落，不把整本手册加载进模型上下文。每轮结果同时带上：
 
 ```text
-document_id / title / source_mod / source_path
+document_id / title / source_mod / source_type / content_kind
+source_id / collection_id / source_path / category / source_version
 heading_path / segment_markdown / score / matched_terms
 returned_count / has_more
 ```
@@ -336,7 +362,7 @@ returned_count / has_more
 
 设置中的 `mode=SEARCH_ONLY` 会跳过模型请求，直接把同一份 SQLite 检索结果格式化为完整 Markdown 消息和正文来源标注；该模式仍保存用户消息、查询语言、轮次和命中文档 ID，切换回 `AI` 时不会覆盖原 API 配置。
 
-通用上下文管理由 LangChain4j `TokenWindowChatMemory` 完成；持久化读写使用 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore`，消息序列化仍使用 LangChain4j 官方 `ChatMessageSerializer`。ModPedia 只装配 SQLite DataSource 和本地方言，不再自研完整的 ChatMemoryStore。运行时数据保存到：
+通用上下文管理由 LangChain4j `TokenWindowChatMemory` 完成；持久化读写使用 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore`，消息序列化仍使用 LangChain4j 官方 `ChatMessageSerializer`。ModPedia 只装配 SQLite DataSource 和本地方言，不再自研完整的 ChatMemoryStore。每个会话保留最近两次工具回合的完整结果；更早回合保留查询、来源标识、标题路径和正文首尾片段后再进入 `TokenWindowChatMemory`，避免一次新问题把旧检索事实全部删除。运行时数据保存到：
 
 ```text
 config/modpedia/runtime/conversations/

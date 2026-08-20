@@ -111,6 +111,8 @@ service.reload();
 ```text
 AiServices
   ├── @Tool search_knowledge
+  ├── @Tool search_wiki / search_tasks
+  ├── @Tool calculate → 本地 BigDecimal 确定性计算
   ├── maxToolCallingRoundTrips → 搜索轮数预算
   ├── TokenStream              → 流式文本、工具调用和取消
   └── TokenWindowChatMemory    → token 窗口裁剪
@@ -122,7 +124,12 @@ PersistentChatMemoryStore
 ConversationStore → runtime/conversations/conversation-*.json
 ```
 
-`AiClient` 负责构造 OpenAI Chat Completions 兼容模型、设置页的异步连通性测试、`/models` 模型列表请求和全部模型批量兼容性测试。域名根地址在请求层自动补全 `/v1`，已经填写的自定义路径保持不变；HTML 响应和 401 响应转换为不含密钥的用户提示。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，避免上游返回 `No tool output found for function call`。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
+`CalculationTool` 只解析受限数学表达式，不执行脚本或任意 Java 代码。它支持
+四则运算、取余、整数幂、括号以及 `ceil`、`floor`、`round`、`min`、`max`、
+`abs`、`pow`、`sum`，使用 `BigDecimal` 返回结构化结果。模型负责把问题转换为表达式，
+本地工具负责数字计算；计算结果本身不生成手册来源引用。
+
+`AiClient` 负责统一构造四种 API 格式：Chat Completions 继续使用 LangChain4j 原生模型，原生 Messages、Responses 和 Gemini `generateContent` 使用 `ProtocolAiModel` 做协议转换。`AiSettings.apiFormat` 会随 Worker IPC 和 `ai.json` 的 `api_format` 字段往返；请求体、认证头、工具调用续接和 SSE 解析均按该字段选择。设置页连接测试和模型列表请求复用同一套端点归一化逻辑，Chat/原生 Messages/Responses 默认使用 `/v1`，Gemini 默认使用 `/v1beta`；没有 `/models` 的服务可以直接填写模型名称。全部模型批量兼容性测试仍只对 Chat Completions 开放，因为它的探测器使用该协议的四种工具链夹具。HTML 响应和 401 响应转换为不含密钥的用户提示。`AiTokenBudget` 将首轮工具参数限制为 384 tokens，并按搜索档位将最终回答限制为 1,024/2,048/3,072 tokens；GPT-5/o 系列额外改用 `max_completion_tokens`，避免 LangChain4j 的通用 `max_tokens` 字段被新模型网关拒绝。`PromptBuilder` 明确要求检索阶段静默，不发送过程性长文本。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，并在新问题进入时移除旧轮次的完整工具 JSON，只保留旧的用户/助手文本，避免上游返回 `No tool output found for function call` 和重复计费。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 或 `ProtocolAiModel` 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
 
 NeoForge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识构建、网络和 AI 工作由独立 Worker JVM 执行，双方通过带随机令牌的 localhost JSONL IPC 通信。Minecraft 的 UI、注册表/Tooltip 和可选运行时 API仍由客户端线程负责。任务问题的查询顺序固定为：`search_tasks` → 取得当前玩家运行时上下文 → Worker 得到临时快照 → Worker 查询 `knowledge.db` 中的静态任务定义 → 在内存中覆盖当前状态。单机优先只发送当前存档路径描述，由 Worker 直接读取很小的 `ftbquests/<team-uuid>.snbt`；多人服务器或本地文件不可用时，游戏 JVM 才读取已同步的 TeamData 并通过 IPC 返回。无论哪条路径，实时进度只在当前请求内存中存在，不写入数据库。
 
@@ -130,7 +137,7 @@ NeoForge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识
 
 `AiModelCompatibilityTester` 不参与正常回答链路，使用当前 API Key 读取 `/models` 后对每个模型验证四个能力：普通非流式、非流式工具结果续接、普通 SSE、流式工具结果续接。报告同时标记普通+工具可用和流式+工具可用，写入 `config/modpedia/runtime/diagnostics/ai-model-compatibility.{json,md}`；报告只保留接口主机、模型 ID、状态、耗时和脱敏错误，不保存 API Key。设置页批量按钮和 Gradle `aiModelCompatibility` 任务共用这套探测器。
 
-`SearchKnowledgeTool` 每轮返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`。`language=auto` 会同时查询当前语言和另一语言，再按文档 ID 去重合并；自然语言 `focus` 会归一化为标准值并参与段落排序。工具会优先保留查询实体锚点，避免“设置/前置条件/步骤”等通用词把示例页面抬到目标手册之前。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、物品显示协议、资料缺口和来源格式规则。回答完成后只接受模型明确引用的来源，最多保留 5 个，并从 `[来源: document_id | 标注: ...]` 提取正文对应行的来源标注按钮；按钮点击优先跳转原手册，目标不可用时回退来源预览，没有明确引用时不自动展示全部候选。客户端还会对普通文本中的已注册 `namespace:path` 物品 ID 做本地化渲染，按住 Ctrl 才显示原始 ID；模型和会话始终保留原始 ID。模型回答末尾的 `<modpedia_follow_up_questions>` 协议会被提取为三个后续问题按钮，不显示原始标签。
+`SearchKnowledgeTool` 每轮向模型返回完整 Markdown 段落、标题路径、文档 ID、匹配分和 `has_more`；跳转路径、来源类型、匹配词等诊断元数据留在 Java 侧的 `SearchTrace`，不重复发送。`language=auto` 会同时查询当前语言和另一语言，再按文档 ID 去重合并；自然语言 `focus` 会归一化为标准值并参与段落排序。工具会优先保留查询实体锚点，避免“设置/前置条件/步骤”等通用词把示例页面抬到目标手册之前。它只把本轮实际选中的文档加入已读集合，避免把“候选但未返回”的文档提前排除；模型可针对实体、步骤、配方、前置条件或故障排查改写查询继续搜索。`PromptBuilder` 同时声明中文/英文交叉检索、物品显示协议、资料缺口和来源格式规则。回答完成后只接受模型明确引用的来源，最多保留 5 个，并从 `[来源: document_id | 标注: ...]` 提取正文对应行的来源标注按钮；按钮点击优先跳转原手册，目标不可用时回退来源预览，没有明确引用时不自动展示全部候选。客户端还会对普通文本中的已注册 `namespace:path` 物品 ID 做本地化渲染，按住 Ctrl 才显示原始 ID；模型和会话始终保留原始 ID。模型回答末尾的 `<modpedia_follow_up_questions>` 协议会被提取为三个后续问题按钮，不显示原始标签。
 
 历史会话的 UI 消息、正文来源标注、后续问题和 `SearchTrace` 保存到 `config/modpedia/runtime/conversations/conversation-*.json`；模型上下文单独保存到同目录的 `memory.sqlite`，知识正文不复制到会话文件。API Key 优先从设置读取，设置为空时回退到 `MODPEDIA_API_KEY`，不进入搜索轨迹和错误日志。`~/.modpedia/ai.json` 只保存 API Key 的 AES-GCM 密文，不保存明文；密钥由系统 UUID 派生，进程首次读取时解密并缓存。系统 UUID 变化或密文损坏时删除密钥字段，保留其他设置；系统没有可读 UUID 时使用 `~/.modpedia/installation-id`。设置保存后会原子替换并回读校验，支持 POSIX 的系统将用户目录限制为 `0700`、配置文件限制为 `0600`。
 
@@ -192,7 +199,7 @@ TeamData 没有历史的进度变化使用 ModPedia 检测时间；工具会按�
 `sources/ftbquests-wiki/` 的 `wiki_markdown` 文档。网络失败时沿用本地副本，不阻塞客户端。
 `search_wiki` 只检索 `content_kind=wiki`，不会把任务 Wiki 混入 `search_knowledge` 的模组手册结果。
 
-- **JEI**：不导入配方；只将物品 ID 解析为显示名称，并在 Shift+左键时请求 JEI 输出配方界面。
+- **JEI**：不导入配方；只在客户端运行时通过反射访问当前 JEI `IRecipeManager`。`WORKBENCH` 和 `FURNACE` 直接按输出物品焦点查询对应类别，熔炉配方同时返回处理 tick/秒数且不返回机器；`OTHER` 只返回有配方的类别、`method_id` 和合并等级后的催化机器名，模型选择后用 `DETAIL` 查询具体输入、输出和附加元数据。配方查询结果通过 `RECIPE_QUERY_REQUEST/RESPONSE` 在 Worker 与客户端之间传递，不进入 `knowledge.db`。回答中的物品仍可按 Shift+左键请求 JEI 输出配方界面。
 - **Jade**：检测到 Jade 时记录当前视线目标，K 打开助手后可插入目标物品令牌；目标过期或离开世界时清理。
 - 三个联动缺失、API 变化或目标不存在时，适配器返回不可用状态，不影响核心搜索和服务端隔离。
 

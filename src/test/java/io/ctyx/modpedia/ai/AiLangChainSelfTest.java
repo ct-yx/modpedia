@@ -58,7 +58,9 @@ public final class AiLangChainSelfTest {
                     .tools(new ProbeTool())
                     .chatRequestTransformer(request -> AiAssistantSession.requireSearchOnFirstRequest(
                             request,
-                            firstToolRequest
+                            firstToolRequest,
+                            false,
+                            AiTokenBudget.STANDARD_ANSWER
                     ))
                     .maxToolCallingRoundTrips(2)
                     .build();
@@ -71,11 +73,54 @@ public final class AiLangChainSelfTest {
             String compactFollowUpRequest = followUpRequest.replaceAll("\\s+", "");
             check(compactFirstRequest.contains("\"tool_choice\":\"required\""),
                     "实际 OpenAI 请求的首轮必须发送 tool_choice=required：" + firstRequest);
+            check(compactFirstRequest.contains("\"max_tokens\":" + AiTokenBudget.FIRST_TOOL_CALL),
+                    "实际 OpenAI 请求的首轮工具参数必须使用短输出预算：" + firstRequest);
             check(compactFirstRequest.contains("\"name\":\"probe_tool\""),
                     "首轮请求必须声明可用工具名称");
             check(compactFollowUpRequest.contains("\"tool_call_id\"")
                             && !compactFollowUpRequest.contains("\"tool_choice\":\"required\""),
                     "工具结果后的实际请求必须恢复自动选择，不能再次强制工具调用");
+            check(compactFollowUpRequest.contains("\"max_tokens\":" + AiTokenBudget.STANDARD_ANSWER),
+                    "实际 OpenAI 请求的最终回答必须使用标准输出预算：" + followUpRequest);
+
+            requests.clear();
+            AiSettings gptSettings = new AiSettings(
+                    AssistantMode.AI,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                    "gpt-5.6-luna",
+                    "fixture-key",
+                    false,
+                    SearchIntensity.FAST,
+                    1,
+                    4,
+                    8_000,
+                    10
+            );
+            AtomicBoolean gptFirstRequest = new AtomicBoolean(true);
+            ProbeService gptService = AiServices.builder(ProbeService.class)
+                    .chatModel(AiClient.blockingModel(gptSettings))
+                    .tools(new ProbeTool())
+                    .chatRequestTransformer(request -> AiAssistantSession.requireSearchOnFirstRequest(
+                            request,
+                            gptFirstRequest,
+                            false,
+                            AiTokenBudget.STANDARD_ANSWER,
+                            true
+                    ))
+                    .maxToolCallingRoundTrips(2)
+                    .build();
+            check("fixture answer".equals(gptService.chat("请调用一次本地工具并返回结果")),
+                    "GPT-5 兼容请求应完成工具调用链");
+            check(requests.size() >= 2, "GPT-5 兼容请求应包含工具结果续接请求");
+            String gptFirstBody = requests.get(0).replaceAll("\\s+", "");
+            String gptFollowUpBody = requests.get(1).replaceAll("\\s+", "");
+            check(gptFirstBody.contains("\"max_completion_tokens\":"
+                            + AiTokenBudget.REASONING_FIRST_TOOL_CALL)
+                            && !gptFirstBody.contains("\"max_tokens\":"),
+                    "GPT-5 首轮实际请求只能发送 max_completion_tokens：" + requests.get(0));
+            check(gptFollowUpBody.contains("\"max_completion_tokens\":" + AiTokenBudget.STANDARD_ANSWER)
+                            && !gptFollowUpBody.contains("\"max_tokens\":"),
+                    "GPT-5 后续实际请求只能发送 max_completion_tokens：" + requests.get(1));
 
             requests.clear();
             AtomicBoolean streamingFirstRequest = new AtomicBoolean(true);
@@ -84,7 +129,9 @@ public final class AiLangChainSelfTest {
                     .tools(new ProbeTool())
                     .chatRequestTransformer(request -> AiAssistantSession.requireSearchOnFirstRequest(
                             request,
-                            streamingFirstRequest
+                            streamingFirstRequest,
+                            false,
+                            AiTokenBudget.STANDARD_ANSWER
                     ))
                     .maxToolCallingRoundTrips(2)
                     .build();

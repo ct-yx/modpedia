@@ -3,14 +3,14 @@ package io.ctyx.modpedia.ai;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.model.TokenCountEstimator;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ToolChoice;
 import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.MemoryId;
@@ -23,6 +23,7 @@ import io.ctyx.modpedia.client.AssistantSession;
 import io.ctyx.modpedia.client.AssistantUiState;
 import io.ctyx.modpedia.client.BuiltInGuide;
 import io.ctyx.modpedia.client.ConversationSummary;
+import io.ctyx.modpedia.client.JeiRecipeNavigator;
 import io.ctyx.modpedia.storage.ModPediaPaths;
 import io.ctyx.modpedia.client.MessageRole;
 import io.ctyx.modpedia.client.SourceReference;
@@ -35,6 +36,8 @@ import io.ctyx.modpedia.search.SearchStatus;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.ItemQueryParser;
 import io.ctyx.modpedia.task.TaskSearchSummary;
+import io.ctyx.modpedia.recipe.RecipeQuery;
+import io.ctyx.modpedia.recipe.RecipeQueryTrace;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -66,6 +69,7 @@ public final class AiAssistantSession implements AssistantSession {
         return thread;
     });
     private static final int MAX_DISPLAYED_SOURCES = 5;
+    private static final CalculationTool CALCULATION_TOOL = new CalculationTool();
 
     private final CopyOnWriteArrayList<Consumer<AssistantUiState>> listeners = new CopyOnWriteArrayList<>();
     private final ConcurrentMap<Long, CopyOnWriteArrayList<SearchTrace>> requestTraces = new ConcurrentHashMap<>();
@@ -138,10 +142,11 @@ public final class AiAssistantSession implements AssistantSession {
         requestStartedNanos.put(request, System.nanoTime());
         lastPrompt = normalized;
         ModPedia.LOGGER.info(
-                "AI request started: request={}, conversation={}, mode={}, streaming={}, model={}",
+                "AI request started: request={}, conversation={}, mode={}, format={}, streaming={}, model={}",
                 request,
                 conversationId,
                 settings.mode(),
+                settings.apiFormat(),
                 settings.streaming(),
                 AiClient.effectiveModelName(settings.model())
         );
@@ -194,11 +199,18 @@ public final class AiAssistantSession implements AssistantSession {
                 contextChars,
                 rounds
         );
+        RecipeQueryTool recipeTool = createRecipeTool(request, conversationId, results);
 
         if (settings.streaming()) {
-            startStreaming(request, conversationId, normalized, settings, language, rounds, searchTool, taskQuestion);
+            startStreaming(
+                    request, conversationId, normalized, settings, language, rounds,
+                    searchTool, recipeTool, taskQuestion
+            );
         } else {
-            startBlocking(request, conversationId, normalized, settings, language, rounds, searchTool, taskQuestion);
+            startBlocking(
+                    request, conversationId, normalized, settings, language, rounds,
+                    searchTool, recipeTool, taskQuestion
+            );
         }
     }
 
@@ -470,6 +482,14 @@ public final class AiAssistantSession implements AssistantSession {
         );
     }
 
+    private RecipeQueryTool createRecipeTool(long request, String conversationId, int results) {
+        return new RecipeQueryTool(
+                JeiRecipeNavigator::query,
+                results,
+                trace -> onRecipeTrace(request, conversationId, trace)
+        );
+    }
+
     private void startStreaming(
             long request,
             String conversationId,
@@ -478,14 +498,15 @@ public final class AiAssistantSession implements AssistantSession {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         EXECUTOR.execute(() -> {
             AiRequestLifecycle lifecycle = new AiRequestLifecycle();
             try {
-                var model = AiClient.streamingModel(settings);
+                StreamingChatModel model = AiClient.streamingChatModel(settings);
                 StreamingAssistantService service = buildStreamingService(
-                        model, settings, language, rounds, searchTool, taskQuestion
+                        model, settings, language, rounds, searchTool, recipeTool, taskQuestion
                 );
                 StringBuilder draft = new StringBuilder();
                 AtomicBoolean firstTextLogged = new AtomicBoolean();
@@ -526,6 +547,7 @@ public final class AiAssistantSession implements AssistantSession {
                                         language,
                                         rounds,
                                         searchTool,
+                                        recipeTool,
                                         new IllegalStateException("流式响应完成但没有文本内容"),
                                         lifecycle,
                                         taskQuestion
@@ -543,6 +565,7 @@ public final class AiAssistantSession implements AssistantSession {
                                     language,
                                     rounds,
                                     searchTool,
+                                    recipeTool,
                                     error,
                                     lifecycle,
                                     taskQuestion
@@ -560,6 +583,7 @@ public final class AiAssistantSession implements AssistantSession {
                         language,
                         rounds,
                         searchTool,
+                        recipeTool,
                         throwable,
                         lifecycle,
                         taskQuestion
@@ -576,6 +600,7 @@ public final class AiAssistantSession implements AssistantSession {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             Throwable streamingError,
             AiRequestLifecycle lifecycle,
             boolean taskQuestion
@@ -595,6 +620,9 @@ public final class AiAssistantSession implements AssistantSession {
                     settings.effectiveMaxContextChars(),
                     rounds
             );
+            RecipeQueryTool freshRecipeTool = createRecipeTool(
+                    request, conversationId, effectiveSettings.effectiveMaxResults()
+            );
             ModPedia.LOGGER.warn(
                     "Streaming request fallback: conversation={}, removedMessages={}, reset={}",
                     conversationId,
@@ -602,11 +630,12 @@ public final class AiAssistantSession implements AssistantSession {
                     removedMessages < 0
             );
             BlockingAssistantService service = buildBlockingService(
-                    AiClient.blockingModel(effectiveSettings),
+                    AiClient.chatModel(effectiveSettings),
                     effectiveSettings,
                     language,
                     rounds,
                     freshSearchTool,
+                    freshRecipeTool,
                     taskQuestion
             );
             String answer = service.chat(conversationId, prompt);
@@ -638,14 +667,15 @@ public final class AiAssistantSession implements AssistantSession {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         EXECUTOR.execute(() -> {
             AtomicBoolean retryStarted = new AtomicBoolean();
             try {
-                var model = AiClient.blockingModel(settings);
+                ChatModel model = AiClient.chatModel(settings);
                 BlockingAssistantService service = buildBlockingService(
-                        model, settings, language, rounds, searchTool, taskQuestion
+                        model, settings, language, rounds, searchTool, recipeTool, taskQuestion
                 );
                 publishLoading(conversationId, PHASE_ORGANIZING, "");
                 String answer = service.chat(conversationId, prompt);
@@ -672,6 +702,7 @@ public final class AiAssistantSession implements AssistantSession {
                         language,
                         rounds,
                         searchTool,
+                        recipeTool,
                         throwable,
                         taskQuestion
                 )) {
@@ -710,6 +741,9 @@ public final class AiAssistantSession implements AssistantSession {
                     settings.effectiveMaxContextChars(),
                     rounds
             );
+            RecipeQueryTool freshRecipeTool = createRecipeTool(
+                    request, conversationId, settings.effectiveMaxResults()
+            );
             ModPedia.LOGGER.warn(
                     "AI automatic retry: conversation={}, removedMessages={}, reset={}, reason={}",
                     conversationId,
@@ -718,11 +752,12 @@ public final class AiAssistantSession implements AssistantSession {
                     sanitize(AiClient.friendlyError(firstFailure, settings.effectiveApiKey()))
             );
             BlockingAssistantService service = buildBlockingService(
-                    AiClient.blockingModel(settings),
+                    AiClient.chatModel(settings),
                     settings,
                     language,
                     rounds,
                     freshSearchTool,
+                    freshRecipeTool,
                     taskQuestion
             );
             finish(request, conversationId, service.chat(conversationId, prompt), freshSearchTool.taskSummary());
@@ -743,6 +778,7 @@ public final class AiAssistantSession implements AssistantSession {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             Throwable failure,
             boolean taskQuestion
     ) {
@@ -767,6 +803,9 @@ public final class AiAssistantSession implements AssistantSession {
                     effectiveSettings.effectiveMaxContextChars(),
                     rounds
             );
+            RecipeQueryTool freshRecipeTool = createRecipeTool(
+                    request, conversationId, effectiveSettings.effectiveMaxResults()
+            );
             ModPedia.LOGGER.warn(
                     "Blocking model fallback context reset: conversation={}, removedMessages={}, reset={}",
                     conversationId,
@@ -774,11 +813,12 @@ public final class AiAssistantSession implements AssistantSession {
                     removedMessages < 0
             );
             BlockingAssistantService service = buildBlockingService(
-                    AiClient.blockingModel(effectiveSettings),
+                    AiClient.chatModel(effectiveSettings),
                     effectiveSettings,
                     language,
                     rounds,
                     freshSearchTool,
+                    freshRecipeTool,
                     taskQuestion
             );
             finish(request, conversationId, service.chat(conversationId, prompt), freshSearchTool.taskSummary());
@@ -802,11 +842,12 @@ public final class AiAssistantSession implements AssistantSession {
     }
 
     private StreamingAssistantService buildStreamingService(
-            OpenAiStreamingChatModel model,
+            StreamingChatModel model,
             AiSettings settings,
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
@@ -820,29 +861,32 @@ public final class AiAssistantSession implements AssistantSession {
                         settings.effectiveMaxContextChars()
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
-                .tools(searchTool)
+                .tools(searchTool, CALCULATION_TOOL, recipeTool)
                 // 提示词只能“建议”工具调用；首次请求强制 REQUIRED，避免模型直接
                 // 编造答案或把“如何使用”误答成整合包内另一个模组。工具结果回传后的
                 // 请求恢复 AUTO，模型才能根据证据完整度决定是否继续补搜或直接回答。
                 .chatRequestTransformer(request -> requireSearchOnFirstRequest(
-                        request, firstRequest, taskQuestion
+                        request, firstRequest, taskQuestion,
+                        AiTokenBudget.answerTokens(settings.intensity()),
+                        useCompletionTokenParameter(settings)
                 ))
                 .maxToolCallingRoundTrips(toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
+                        "本地工具参数格式有误，请检查 query、expression、language 等参数后重试。"
                 ))
                 .toolExecutionErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "本地知识库搜索暂时失败，请换一个查询词继续搜索。"
+                        "本地工具执行暂时失败，请检查参数后重试。"
                 ))
                 .build();
     }
 
     private BlockingAssistantService buildBlockingService(
-            OpenAiChatModel model,
+            ChatModel model,
             AiSettings settings,
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
@@ -856,24 +900,27 @@ public final class AiAssistantSession implements AssistantSession {
                         settings.effectiveMaxContextChars()
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
-                .tools(searchTool)
+                .tools(searchTool, CALCULATION_TOOL, recipeTool)
                 .chatRequestTransformer(request -> requireSearchOnFirstRequest(
-                        request, firstRequest, taskQuestion
+                        request, firstRequest, taskQuestion,
+                        AiTokenBudget.answerTokens(settings.intensity()),
+                        useCompletionTokenParameter(settings)
                 ))
                 .maxToolCallingRoundTrips(toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
+                        "本地工具参数格式有误，请检查 query、expression、language 等参数后重试。"
                 ))
                 .toolExecutionErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "本地知识库搜索暂时失败，请换一个查询词继续搜索。"
+                        "本地工具执行暂时失败，请检查参数后重试。"
                 ))
                 .build();
     }
 
     private TokenWindowChatMemory createMemory(String id, AiSettings settings) {
-        // maxContextChars 是搜索结果的字符预算，不是 token 预算。之前直接除以 4，
-        // 对中文 Markdown（约 2 个字符/token）会把完整工具结果裁掉；LangChain4j
-        // 随后只能把 system 和最终 AI 消息留在窗口里，模型看不到搜索证据，就会退回欢迎语。
+        // maxContextChars 是搜索结果的字符预算，不是 token 预算。此前过度压缩中文
+        // Markdown 会把完整工具结果裁掉；LangChain4j 随后只能保留 system 和最终
+        // AI 消息，模型看不到搜索证据，就会退回欢迎语。现在由下方的温和换算和
+        // PersistentChatMemoryStore 的分层历史压缩共同控制窗口。
         int maxTokens = memoryTokenBudget(settings.effectiveMaxContextChars());
         TokenCountEstimator estimator;
         try {
@@ -891,11 +938,12 @@ public final class AiAssistantSession implements AssistantSession {
 
     static int memoryTokenBudget(int contextChars) {
         int normalized = Math.max(4_000, Math.min(64_000, contextChars));
-        // contextChars 是 Markdown 字符预算，不是 token 数。中文通常约 2 个字符/token，
-        // 英文则更省；直接 1:1 映射会把 64,000 字符扩大成不必要的 64,000 token，
-        // 既增加网关延迟，也可能触发模型上下文上限。预留少量系统提示词和消息结构开销，
-        // 实际保留哪些消息仍由 LangChain4j 的 estimator 决定。
-        return Math.max(8_000, (normalized + 1) / 2 + 2_048);
+        // contextChars 是搜索证据的字符预算，不是完整请求的 token 数。此前按 1/2
+        // 换算对中文过于激进：中文 Markdown 常接近一字一 token，工具 JSON、历史
+        // 用户消息和系统提示词也会占用窗口，导致刚检索到的证据在最终回答前被移除。
+        // 保留约 85% 的证据预算，再加消息结构余量；上限仍低于 64k，避免无限放大。
+        long evidenceBudget = Math.round(normalized * 0.85d);
+        return (int) Math.max(10_000, Math.min(48_000, evidenceBudget + 4_096));
     }
 
     /**
@@ -927,6 +975,23 @@ public final class AiAssistantSession implements AssistantSession {
                 trace.hasMore()
         );
         publishLoading(conversationId, PHASE_MORE_SEARCH, "");
+    }
+
+    private void onRecipeTrace(long request, String conversationId, RecipeQueryTrace trace) {
+        if (trace == null || request != requestSequence.get()) {
+            return;
+        }
+        ModPedia.LOGGER.info(
+                "AI JEI recipe query: request={}, item={}, mode={}, method={}, status={}, recipes={}, methods={}",
+                request,
+                trace.query().itemId(),
+                trace.query().mode(),
+                trace.query().methodId(),
+                trace.response().status(),
+                trace.response().recipes().size(),
+                trace.response().methods().size()
+        );
+        publishLoading(conversationId, PHASE_RESULTS, "");
     }
 
     private void publishLoading(String conversationId, String phase, String draft) {
@@ -1047,6 +1112,33 @@ public final class AiAssistantSession implements AssistantSession {
             boolean taskQuestion
     ) {
         return AiToolRouter.requireSearchOnFirstRequest(request, firstRequest, taskQuestion);
+    }
+
+    static ChatRequest requireSearchOnFirstRequest(
+            ChatRequest request,
+            AtomicBoolean firstRequest,
+            boolean taskQuestion,
+            int answerTokens
+    ) {
+        return AiToolRouter.requireSearchOnFirstRequest(request, firstRequest, taskQuestion, answerTokens);
+    }
+
+    static ChatRequest requireSearchOnFirstRequest(
+            ChatRequest request,
+            AtomicBoolean firstRequest,
+            boolean taskQuestion,
+            int answerTokens,
+            boolean useCompletionTokens
+    ) {
+        return AiToolRouter.requireSearchOnFirstRequest(
+                request, firstRequest, taskQuestion, answerTokens, useCompletionTokens
+        );
+    }
+
+    private static boolean useCompletionTokenParameter(AiSettings settings) {
+        return settings != null
+                && settings.apiFormat().isChatCompletions()
+                && AiClient.usesCompletionTokenParameter(settings.model());
     }
 
     private String sanitize(String message) {

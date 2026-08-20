@@ -12,6 +12,7 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
 import io.ctyx.modpedia.search.KnowledgeDatabase;
+import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
 
@@ -43,6 +44,9 @@ public final class SearchKnowledgeToolSelfTest {
                     input("pneumaticcraft:pressure-tubes-en", "Pressure Tubes",
                             "Pressure tubes connect machines and prevent leaks.", "en_us",
                             List.of("pressure tubes", "pressure")),
+                    input("pneumaticcraft:drone-interface", "Drone Interface",
+                            "The Drone Interface can be connected with Pressure Tubes, but this page is a machine reference.",
+                            "en_us", List.of("pressure tubes", "drone interface", "pressure")),
                     input("ae2:installer", "安装器", "安装器用于安装控制器。", "zh_cn", List.of("安装器"))
             ));
             KnowledgeDatabase.sync(root, documents, true);
@@ -164,6 +168,27 @@ public final class SearchKnowledgeToolSelfTest {
                     .get("document_id").getAsString().equals("pneumaticcraft:pressure-tubes-en"),
                     "中文主语言存在低相关结果时仍应合并并优先返回英文高相关结果");
 
+            SearchKnowledgeTool directRankingTool = new SearchKnowledgeTool(
+                    retrieval,
+                    SearchLanguage.EN_US,
+                    20,
+                    4_000,
+                    1,
+                    ignored -> { }
+            );
+            JsonObject directEntity = parse(directRankingTool.search(
+                    "pressure tubes",
+                    "en_us",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            check(directEntity.get("returned_count").getAsInt() >= 1
+                            && directEntity.get("results").getAsJsonArray().get(0).getAsJsonObject()
+                            .get("document_id").getAsString().equals("pneumaticcraft:pressure-tubes-en"),
+                    "标题直接命中的 Pressure Tubes 页面必须排在正文引用 Pressure Tubes 的 Drone Interface 页面之前："
+                            + directEntity);
+
             JsonObject irrelevant = parse(relevanceTool.search(
                     "完全不存在的物品如何使用",
                     "auto",
@@ -222,6 +247,12 @@ public final class SearchKnowledgeToolSelfTest {
             check(first.get("results").getAsJsonArray().get(0).getAsJsonObject()
                     .get("segment_markdown").getAsString().contains("压力容器"),
                     "工具应返回完整 Markdown 段落");
+            check(first.get("results").getAsJsonArray().get(0).getAsJsonObject().has("source_path")
+                            && first.get("results").getAsJsonArray().get(0).getAsJsonObject().has("source_type")
+                            && first.get("results").getAsJsonArray().get(0).getAsJsonObject().has("content_kind")
+                            && first.get("results").getAsJsonArray().get(0).getAsJsonObject().has("matched_terms")
+                            && first.get("results").getAsJsonArray().get(0).getAsJsonObject().has("heading_path"),
+                    "模型结果应保留来源、内容类型、匹配词和标题路径，避免上下文压缩后丢失检索事实");
             check(first.get("has_more").getAsBoolean(), "存在第二篇候选时应报告 has_more");
 
             String firstId = first.get("results").getAsJsonArray().get(0).getAsJsonObject()
@@ -280,6 +311,7 @@ public final class SearchKnowledgeToolSelfTest {
             ));
             check(multiIds.contains("ae2:pressure") && multiIds.contains("ae2:controller"),
                     "中文多实体查询应拆开召回压力容器和控制器，而不是要求同一段同时出现两者");
+            testChineseItemNameToEnglishManual(root);
             testIncompleteToolTurnCleanup();
             testPersistentContextRepair(conversationsRoot);
             System.out.println("ModPedia search knowledge tool self-test passed");
@@ -287,6 +319,59 @@ public final class SearchKnowledgeToolSelfTest {
             deleteTree(root);
             deleteTree(conversationsRoot);
         }
+    }
+
+    private static void testChineseItemNameToEnglishManual(Path root) throws Exception {
+        KnowledgeDatabase.syncItemCatalog(
+                root,
+                "zh_cn",
+                List.of(new ItemCatalogEntry(
+                        "pneumaticcraft:pressure_tube",
+                        "zh_cn",
+                        "压力管道",
+                        "- 用于连接压缩空气并防止漏气",
+                        "pneumaticcraft",
+                        "pressure-tube-zh-v1"
+                ))
+        );
+        // 真实整合包中中文名称来自当前语言物品目录，手册可能只有英文；关键词
+        // 中保留原始物品 ID，检索必须先用 ID 收窄，再返回英文手册，而不是返回
+        // assistant-usage 中的示例句。
+        KnowledgeDatabase.sync(
+                root,
+                List.of(input(
+                        "pneumaticcraft:pressure-tubes-en",
+                        "Pressure Tubes",
+                        "Pressure Tubes connect machines and prevent leaks.",
+                        "en_us",
+                        List.of("pressure tubes", "pneumaticcraft:pressure_tube")
+                )),
+                false
+        );
+        RetrievalService retrieval = new RetrievalService(root);
+        SearchKnowledgeTool tool = new SearchKnowledgeTool(
+                retrieval,
+                SearchLanguage.ZH_CN,
+                8,
+                8_000,
+                1,
+                ignored -> { }
+        );
+        JsonObject output = parse(tool.search(
+                "压力管道怎么连接并防止漏气",
+                "auto",
+                8,
+                "steps",
+                List.of()
+        ));
+        check(output.get("item_context_count").getAsInt() == 1,
+                "中文物品名应先解析到物品目录 ID");
+        check(output.get("returned_count").getAsInt() >= 1,
+                "中文物品名应能回退到英文手册：" + output);
+        check(output.get("results").getAsJsonArray().asList().stream()
+                        .anyMatch(element -> element.getAsJsonObject().get("document_id").getAsString()
+                                .equals("pneumaticcraft:pressure-tubes-en")),
+                "中文物品名不能只返回 ModPedia 示例页或其它压力设备");
     }
 
     private static KnowledgeDatabase.DocumentInput input(String id, String title, String body) {

@@ -28,7 +28,16 @@ public final class AssistantScreen extends Screen {
     private static final int TEXT_COLOR = 0xFFF3F6FA;
     private static final int SUBTLE_TEXT_COLOR = 0xFFB8C3D3;
     private static final int ERROR_COLOR = 0xFFFFB4AB;
+    /**
+     * FTB Library 的侧边栏控件会在父 Screen 中使用 z=5000 绘制。助手先绘制
+     * 父 Screen，再绘制自己的内容，因此 600 仍会让侧边栏图标和文字穿过助手
+     * 表面。使用高于该层的统一前景深度，确保浮窗、二级页面和控件保持在所有
+     * 父页面快捷按钮之上。
+     */
+    private static final float TOP_LAYER_Z = 10_000.0F;
     private static final int TARGET_INSERT_WIDTH = 18;
+    private static AssistantScreen pendingReturnAssistant;
+    private static Screen pendingExternalScreen;
 
     private final Screen previousScreen;
     private final AssistantSession session;
@@ -103,6 +112,8 @@ public final class AssistantScreen extends Screen {
     protected void init() {
         glassStyle = AssistantGlassConfig.load();
         String draft = input == null ? "" : input.getValue();
+        // 识别到的目标只提供给“插入目标”按钮；打开助手时保持输入框为空，
+        // 避免用户尚未确认就把鼠标悬浮物品写入问题。
         if (!draft.isBlank()) {
             inputExpanded = true;
         }
@@ -183,21 +194,36 @@ public final class AssistantScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        // 配置文件可能来自旧版本，或客户端窗口刚刚完成 GUI 缩放。
-        // 每帧先约束一次，避免旧实例把二级页面绘制成全视口页面。
-        constrainBounds();
-        renderWindow(graphics, mouseX, mouseY);
-        // 不调用 super.render，避免 Screen 的底层背景再次覆盖浮窗。
-        // 二级页面控件单独在自己的裁剪区域内绘制，避免脱离原窗口。
-        if (secondaryPanel == SecondaryPanel.SETTINGS) {
-            renderSettingsWidgets(graphics, mouseX, mouseY, partialTick);
-        } else if (secondaryPanel == SecondaryPanel.NONE) {
-            for (var renderable : renderables) {
-                renderable.render(graphics, mouseX, mouseY, partialTick);
-            }
+        // AssistantScreen 是唯一的当前 Minecraft Screen，但保留并绘制打开它之前
+        // 的界面作为底层。这样助手可以叠加在 FTBQ、JEI、容器和其它任意 GUI 上，
+        // 关闭助手时仍由 onClose() 返回同一个 previousScreen。
+        if (previousScreen != null && previousScreen != this) {
+            previousScreen.render(graphics, mouseX, mouseY, partialTick);
         }
-        if (previewSource != null) {
-            renderSourcePreview(graphics);
+        // 原版 GuiGraphics.renderItem 使用 z=150，且 RenderType.gui 开启深度测试；
+        // 仅靠调用顺序会让父页面物品继续压在 z=0 的助手背景上。把整个助手提升到
+        // 高于物品和 Tooltip 的统一层，确保窗口、文字和控件保持同一前景层级。
+        graphics.pose().pushPose();
+        graphics.pose().translate(0.0F, 0.0F, TOP_LAYER_Z);
+        try {
+            // 配置文件可能来自旧版本，或客户端窗口刚刚完成 GUI 缩放。
+            // 每帧先约束一次，避免旧实例把二级页面绘制成全视口页面。
+            constrainBounds();
+            renderWindow(graphics, mouseX, mouseY);
+            // 不调用 super.render，避免 Screen 的底层背景再次覆盖浮窗。
+            // 二级页面控件单独在自己的裁剪区域内绘制，避免脱离原窗口。
+            if (secondaryPanel == SecondaryPanel.SETTINGS) {
+                renderSettingsWidgets(graphics, mouseX, mouseY, partialTick);
+            } else if (secondaryPanel == SecondaryPanel.NONE) {
+                for (var renderable : renderables) {
+                    renderable.render(graphics, mouseX, mouseY, partialTick);
+                }
+            }
+            if (previewSource != null) {
+                renderSourcePreview(graphics);
+            }
+        } finally {
+            graphics.pose().popPose();
         }
     }
 
@@ -474,9 +500,11 @@ public final class AssistantScreen extends Screen {
 
     @Override
     public void onClose() {
+        cancelExternalNavigation(this);
         if (settingsPanel != null) {
             settingsPanel.cancelPendingModelRequest();
         }
+        JadeTargetStore.releaseAssistantTarget();
         if (bounds != null) {
             windowConfig.save(bounds);
         }
@@ -509,11 +537,12 @@ public final class AssistantScreen extends Screen {
     }
 
     private void renderWindow(GuiGraphics graphics, int mouseX, int mouseY) {
+        boolean opaqueSurface = usesOpaqueSurface();
         FloatingAssistantWindow.renderSurface(
                 graphics,
                 bounds,
                 glassStyle,
-                FloatingAssistantWindow.prefersOpaqueSurface(minecraft),
+                opaqueSurface,
                 surfaceInputHeight(),
                 headerHeight()
         );
@@ -542,7 +571,7 @@ public final class AssistantScreen extends Screen {
             settingsPanel.render(
                     graphics,
                     glassStyle,
-                    FloatingAssistantWindow.prefersOpaqueSurface(minecraft),
+                    opaqueSurface,
                     mouseX,
                     mouseY
             );
@@ -550,6 +579,17 @@ public final class AssistantScreen extends Screen {
         WindowBounds.ResizeEdge edge = resizeEdgeAt(mouseX, mouseY);
         FloatingAssistantWindow.renderResizeHandles(graphics, bounds, edge, glassStyle);
         updateCursor(edge);
+    }
+
+    /**
+     * 助手叠加在第三方 Screen 上时使用不透明模态表面。
+     *
+     * <p>之前仅在高对比度或显式减少透明度时使用不透明颜色，导致父页面的
+     * 物品图标和数量透过浮窗表面显示，看起来像是绘制在助手内容之上。游戏画面
+     * 模式继续保留透明效果；存在 parent Screen 时，窗口自身成为完整遮挡层。</p>
+     */
+    private boolean usesOpaqueSurface() {
+        return previousScreen != null || FloatingAssistantWindow.prefersOpaqueSurface(minecraft);
     }
 
     private void drawInputChrome(GuiGraphics graphics, int mouseX, int mouseY) {
@@ -560,7 +600,7 @@ public final class AssistantScreen extends Screen {
                     trigger.top(),
                     trigger.right(),
                     trigger.bottom(),
-                    FloatingAssistantWindow.prefersOpaqueSurface(minecraft)
+                    usesOpaqueSurface()
                             ? glassStyle.opaqueAssistantBubbleColor()
                             : glassStyle.assistantBubbleColor()
             );
@@ -588,7 +628,11 @@ public final class AssistantScreen extends Screen {
                     targetButton.top(),
                     targetButton.right(),
                     targetButton.bottom(),
-                    hovered ? glassStyle.glowInnerColor() : glassStyle.assistantBubbleColor()
+                    hovered
+                            ? glassStyle.glowInnerColor()
+                            : (usesOpaqueSurface()
+                            ? glassStyle.opaqueAssistantBubbleColor()
+                            : glassStyle.assistantBubbleColor())
             );
             graphics.renderOutline(
                     targetButton.left(),
@@ -677,7 +721,7 @@ public final class AssistantScreen extends Screen {
                     y,
                     x + suggestionWidth,
                     y + 22,
-                    FloatingAssistantWindow.prefersOpaqueSurface(minecraft)
+                    usesOpaqueSurface()
                             ? glassStyle.opaqueAssistantBubbleColor()
                             : glassStyle.assistantBubbleColor()
             );
@@ -769,7 +813,7 @@ public final class AssistantScreen extends Screen {
         int bubbleX = message.role() == MessageRole.USER
                 ? area.right() - CONTENT_PADDING - layout.width()
                 : area.left() + CONTENT_PADDING;
-        boolean opaqueSurface = FloatingAssistantWindow.prefersOpaqueSurface(minecraft);
+        boolean opaqueSurface = usesOpaqueSurface();
         int bubbleColor = opaqueSurface
                 ? (message.role() == MessageRole.USER
                 ? glassStyle.opaqueUserBubbleColor()
@@ -942,7 +986,7 @@ public final class AssistantScreen extends Screen {
                     retryBounds.top(),
                     retryBounds.right(),
                     retryBounds.bottom(),
-                    FloatingAssistantWindow.prefersOpaqueSurface(minecraft)
+                    usesOpaqueSurface()
                             ? glassStyle.opaqueAssistantBubbleColor()
                             : glassStyle.assistantBubbleColor()
             );
@@ -1299,12 +1343,64 @@ public final class AssistantScreen extends Screen {
 
     /** 正文标注区是直接跳转按钮；目标暂时不可用时才回退到来源预览。 */
     private void openSourceOrPreview(SourceReference source) {
-        if (sourceNavigator.open(source)) {
+        beginExternalNavigation(this);
+        boolean opened = sourceNavigator.open(source);
+        if (opened) {
+            captureExternalNavigation(this);
             previewSource = null;
             return;
         }
+        cancelExternalNavigation(this);
         previewSource = source;
         previewStatus = "unavailable";
+    }
+
+    private static void beginExternalNavigation(AssistantScreen assistant) {
+        pendingReturnAssistant = assistant;
+        pendingExternalScreen = null;
+    }
+
+    private static void captureExternalNavigation(AssistantScreen assistant) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (pendingReturnAssistant != assistant
+                || minecraft.screen == null
+                || minecraft.screen == assistant) {
+            cancelExternalNavigation(assistant);
+            return;
+        }
+        pendingExternalScreen = minecraft.screen;
+    }
+
+    private static void cancelExternalNavigation(AssistantScreen assistant) {
+        if (pendingReturnAssistant == assistant) {
+            pendingReturnAssistant = null;
+            pendingExternalScreen = null;
+        }
+    }
+
+    /**
+     * 手册 API 可能把助手作为 parent 保存，也可能关闭到 null 或原先的 parent。
+     * 在后一种情况下，等当前手册完成关闭后恢复同一个助手实例，保留会话和滚动状态。
+     */
+    public static void handleExternalScreenClosing(Screen closingScreen) {
+        if (closingScreen == null || closingScreen != pendingExternalScreen) {
+            return;
+        }
+        AssistantScreen assistant = pendingReturnAssistant;
+        Minecraft minecraft = Minecraft.getInstance();
+        minecraft.execute(() -> {
+            if (assistant != pendingReturnAssistant) {
+                return;
+            }
+            Screen current = minecraft.screen;
+            if (current == null || current == assistant || current == assistant.previousScreen) {
+                if (current != assistant) {
+                    minecraft.setScreen(assistant);
+                }
+            }
+            pendingReturnAssistant = null;
+            pendingExternalScreen = null;
+        });
     }
 
     private WindowBounds.ResizeEdge resizeEdgeAt(double mouseX, double mouseY) {
@@ -1529,10 +1625,14 @@ public final class AssistantScreen extends Screen {
         if (target == null || target.itemId().isBlank()) {
             return;
         }
-        String token = "[[item:" + target.itemId() + "|" + target.displayName() + "]]";
+        String token = targetToken(target);
         String value = input.getValue();
         input.setValue(value.isBlank() ? token : value + " " + token);
         input.setFocused(true);
+    }
+
+    private static String targetToken(JadeTargetStore.Target target) {
+        return "[[item:" + target.itemId() + "|" + target.displayName() + "]]";
     }
 
     private void recordItemHits(

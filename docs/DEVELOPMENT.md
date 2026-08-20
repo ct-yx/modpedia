@@ -9,7 +9,7 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.1.0` |
+| 发布版本 | `v1.2.0` |
 | GitHub 发布状态 | 正式发布，自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
@@ -24,7 +24,7 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.1.0
+https://github.com/ct-yx/modpedia/releases/tag/v1.2.0
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
@@ -88,6 +88,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.1.0
 - [x] 移除 FTB Quests 客户端 Tick 全量轮询；`search_tasks` 才按问题触发运行时读取，TeamData 读取有界，同一 AI 请求只读取一次，结果只在 `TaskRuntimeSnapshot` 内存中复用。
 - [x] 任务运行时快照增加时间线：读取 FTBQ started/completed 的原始时间戳，记录 TeamData 进度变化检测时间，并通过 `search_tasks.timeline` 返回具体条目和静态标题；时间线不写入数据库。
 - [x] 不导入 JEI 配方；仅解析物品 ID、渲染本地化名称并尝试 Shift+左键配方跳转。
+- [x] 增加 `query_item_recipes` 分阶段联动：工作台/熔炉直接查询，其它方式 `OTHER → DETAIL`，熔炉返回处理时间，机器等级去重，结果通过 Worker IPC 返回。
 - [~] 用真实 FTB Quests、JEI、Jade 客户端版本回归任务快照、配方界面和视线目标识别。
 
 ### 3.2 物品与来源渲染协议
@@ -128,12 +129,17 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.1.0
 - [x] 历史会话保存用户/助手消息、正文来源标注、三个后续问题和 SearchTrace，不复制知识正文。
 - [x] API Key 仅用于认证，不写入日志和会话；`ai.json` 只保存系统标识派生的 AES-GCM 密文，进程首次读取后复用内存缓存；系统标识变化时清除密钥字段，空白时回退到环境变量。
 - [x] AI 设置保存使用原子替换并回读校验，失败时不会显示“已保存”。
-- [x] `AiClient` 支持 `/models` 模型列表、模型 ID 去重排序、根地址自动补全 `/v1` 和 HTML/401 友好错误提示。
+- [x] `AiClient` 支持按协议读取 `/models` 模型列表、模型 ID 去重排序、根地址自动补全 `/v1`/`/v1beta` 和 HTML/401 友好错误提示。
 - [x] 设置页模型名称右侧提供“获取模型列表”，再次点击可循环切换已获取模型。
+- [x] 设置页支持 Chat Completions、原生 Messages、Responses 和 Gemini `generateContent`；`api_format` 随设置和 Worker IPC 持久化，端点按协议自动归一化。
+- [x] 新增协议适配器覆盖普通请求、工具调用续接、分段 SSE、认证头和 Gemini `models/<model>` 路由；本地 Mock 不访问外网。
 - [x] 设置页提供“批量测试模型”，一次性测试 `/models` 返回的全部模型，不要求玩家逐个模型手测；报告写入 `config/modpedia/runtime/diagnostics/`。
 - [x] 兼容性探测分别覆盖普通请求、非流式工具续接、普通 SSE 和流式工具续接，并区分普通+工具可用与流式+工具可用。
 - [x] 503、429、网络超时和孤立工具调用自动重试一次；明确的配置错误直接显示，不重复请求。
 - [x] 设置页支持 `AI` / `SEARCH_ONLY`；仅搜索模式跳过 API 配置和网络请求。
+- [x] 增加本地 `calculate` 工具；复杂算术、比例、配方总量和取整使用 `BigDecimal` 确定性计算，不调用模型或执行脚本。
+- [x] 平衡 AI 成本与证据完整性：首轮工具参数使用 1,536 tokens，GPT-5/o 使用 3,072；回答预算按搜索档位为 1,280/2,560/4,096。检索阶段静默；结果保留来源、内容类型、路径、匹配词和完整当前 Markdown。历史上下文保留最近两次工具回合，只有更早回合压缩正文首尾和重复字符串，不删除工具调用、来源 ID 或标题路径。GPT-5/o 系列使用 `max_completion_tokens`，旧模型继续使用 `max_tokens`。
+- [x] 增加 `AiCostOptimizationSelfTest`，覆盖提示词长度、首轮/回答输出预算、历史工具证据分层保留和来源字段完整性；不调用真实模型。
 - [x] Mock 会话与真实 AI 会话接口兼容，支持离线 UI/搜索测试。
 - [~] 使用真实模型回归多问题补搜、流式输出、取消、超时和历史恢复。
 
@@ -146,6 +152,8 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
 git diff --check
 # AI HTTP 地址、模型列表和错误提示夹具
 ./gradlew aiClientSelfTest
+# 四种 API 格式的普通请求、工具调用、模型列表和 SSE 夹具
+./gradlew aiProtocolSelfTest
 # 批量测试当前 API 的全部模型（不会打印或写入 API Key）
 ./gradlew aiModelCompatibility \
   -PaiSettingsFile="$HOME/.modpedia/ai.json" \
@@ -172,7 +180,18 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v1.1.0 发布清单
+## 7. v1.2.0 发布清单
+
+- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.2.0`。
+- [x] 对比 `v1.1.0` 整理四种 AI API 格式、模型列表/连接测试、分阶段 JEI 配方查询和本地 `calculate` 工具。
+- [x] 修复物品目标冻结、显式插入、原生选项页 `K` 拦截和 Tooltip 异常导致的扫描日志膨胀。
+- [x] 调整 Token 与历史证据压缩，保留当前检索事实、来源字段和标题路径。
+- [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
+- [x] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
+- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.2.0`。
+- [~] 真实模型兼容性和不同大型整合包的持续回归按 `KNOWN_LIMITATIONS.md` 单独记录。
+
+## 7.1 历史：v1.1.0 发布清单
 
 - [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.1.0`。
 - [x] `./gradlew test`、`./gradlew build`、严格 Worker 性能自测和 `git diff --check` 通过。
@@ -182,7 +201,7 @@ git diff --check
 - [x] Mod 列表图标和 Mod 介绍已写入元数据并进入构建 JAR。
 - [~] 图形客户端、第三方手册跳转、可选联动和 Dedicated Server 的持续回归仍按已知限制记录。
 
-## 7.1 历史：v0.2.0 发布清单
+## 7.2 历史：v0.2.0 发布清单
 
 - [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
 - [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
@@ -241,7 +260,7 @@ docs: update mod development checklist
 ### UI 与窗口
 
 - [ ] 在 GUI Scale `4` 下测试 `160×110`、普通尺寸和最大尺寸。
-- [ ] `K` 打开/关闭助手；关闭时游戏画面完全恢复，世界继续运行。
+- [x] `K` 打开/关闭助手；Minecraft 原生选项及按键控制页面拦截 `K`，JEI、FTBQ、容器等其它界面仍可呼出，关闭时游戏画面完全恢复。
 - [ ] 拖动标题栏后关闭并重新打开，确认位置保存。
 - [ ] 拖动四边和四角，确认宽高始终满足 `160×110`、`720×720` 和 `85%` 视口限制。
 - [ ] 缩放游戏窗口，确认浮窗和二级页面同步约束在可见范围内。
@@ -324,6 +343,6 @@ Repository secret:   MODPEDIA=<发布 API Token>
 
 - [ ] `MODPEDIA` Repository variable 与目标项目匹配。
 - [ ] `MODPEDIA` Repository secret 具有上传/发布权限且未写入任何文件。
-- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.1.0`。
+- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.2.0`。
 - [ ] Action 的 `loaders` 为 `neoforge`、`game-versions` 为 `1.21.1`。
 - [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。

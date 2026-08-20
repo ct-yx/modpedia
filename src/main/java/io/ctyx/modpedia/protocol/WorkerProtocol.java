@@ -27,6 +27,8 @@ public final class WorkerProtocol {
     public static final String CHAT_CANCEL = "chat.cancel";
     public static final String RUNTIME_CONTEXT_REQUEST = "runtime_context_request";
     public static final String RUNTIME_CONTEXT_RESPONSE = "runtime_context_response";
+    public static final String RECIPE_QUERY_REQUEST = "recipe_query_request";
+    public static final String RECIPE_QUERY_RESPONSE = "recipe_query_response";
     public static final String KNOWLEDGE_REBUILD = "knowledge.rebuild";
     /** 请求被后续知识库构建合并，不能被当作真正的构建完成事件。 */
     public static final String KNOWLEDGE_REBUILD_COALESCED = "knowledge.rebuild.coalesced";

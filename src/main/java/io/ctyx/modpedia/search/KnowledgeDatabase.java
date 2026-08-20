@@ -850,8 +850,15 @@ public final class KnowledgeDatabase {
         }
 
         try {
+            ItemQueryParser.Parsed itemQuery = ItemQueryParser.parse(actualQuery.text());
             boolean identifierQuery = looksLikeIdentifier(actualQuery.text());
-            Map<DocumentKey, DocumentRow> metadataDocuments = identifierQuery
+            // FTS5 会把 namespace:path 拆成多个 token。对物品 ID 直接走文档元数据
+            // 命中，才能把“显示名称 -> ID -> 英文手册”稳定收窄到真正包含该物品
+            // 的条目；否则 namespace 的高频命中会把压力管、涡流管和其它页面混在
+            // 一起，Java 侧再也无法从精简后的工具结果中恢复目标实体。
+            Map<DocumentKey, DocumentRow> metadataDocuments = !itemQuery.itemIds().isEmpty()
+                    ? findItemIdentifierDocuments(connection, itemQuery.itemIds(), language, actualQuery.scope())
+                    : identifierQuery
                     ? findExactDocuments(connection, actualQuery.text(), queryTerms, language, actualQuery.scope())
                     : new LinkedHashMap<>();
             Map<Long, SegmentRef> segmentRefs = identifierQuery && !metadataDocuments.isEmpty()
@@ -929,7 +936,13 @@ public final class KnowledgeDatabase {
             List<SearchResult> results = segmentsPerDocument == 1
                     ? new ArrayList<>(bestByDocument.values())
                     : selectExpandedResults(expandedByDocument, language, segmentsPerDocument);
-            results = refineCjkResults(results, actualQuery.text());
+            // 已确认物品会先通过 item_catalog 映射为稳定 ID，再按文档元数据命中。
+            // 这类查询可能是“中文显示名 + 英文手册”的组合；如果继续按原始中文
+            // 短语收窄，英文正文因不包含中文实体会在 SQLite 层被提前过滤，模型
+            // 只能收到 NO_MATCH。稳定 ID 已经完成实体约束，此处保留跨语言结果。
+            if (itemQuery.itemIds().isEmpty()) {
+                results = refineCjkResults(results, actualQuery.text());
+            }
             results.sort(Comparator
                     .comparingInt(SearchResult::score)
                     .reversed()
@@ -1070,6 +1083,71 @@ public final class KnowledgeDatabase {
             statement.setString(3, normalizedRaw);
             statement.setString(4, SearchTextNormalizer.normalizeField(query.phrase()));
             statement.setString(5, SearchTextNormalizer.compact(query.phrase()));
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    DocumentRow document = readDocumentRow(rows);
+                    result.put(document.key(), document);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static Map<DocumentKey, DocumentRow> findItemIdentifierDocuments(
+            Connection connection,
+            Collection<String> itemIds,
+            SearchLanguage language,
+            KnowledgeScope scope
+    ) throws SQLException {
+        LinkedHashSet<String> requested = new LinkedHashSet<>();
+        if (itemIds != null) {
+            for (String itemId : itemIds) {
+                // 这里必须保留 namespace:path 的冒号；normalized 文档元数据由
+                // SearchTextNormalizer.tokens() 写入完整 ID token，不能把它变成
+                // “namespace path”后再查询。
+                String normalized = SearchTextNormalizer.normalizeRaw(itemId).strip();
+                if (!normalized.isBlank()) {
+                    requested.add(normalized);
+                }
+            }
+        }
+        if (requested.isEmpty()) {
+            return Map.of();
+        }
+
+        StringBuilder sql = new StringBuilder("""
+                SELECT document_id, language, source_key, fingerprint, priority,
+                       source_mod, source_type, title, category, keywords_json,
+                       source_version, source_path, markdown, source_id, collection_id,
+                       content_kind, origin_type, metadata_json, id_normalized,
+                       title_normalized, keywords_normalized, other_normalized
+                FROM documents
+                WHERE
+                """);
+        appendLanguageFilter(sql, language, "language");
+        appendScopeFilter(sql, scope, "content_kind");
+        sql.append(" AND (");
+        for (int index = 0; index < requested.size(); index++) {
+            if (index > 0) {
+                sql.append(" OR ");
+            }
+            // normalized 字段由空格分隔 token；LIKE 同时覆盖 document id、标题、
+            // 关键词和来源元数据，且不依赖 FTS tokenizer 如何处理冒号和斜线。
+            sql.append("id_normalized LIKE ? OR title_normalized LIKE ? "
+                    + "OR keywords_normalized LIKE ? OR other_normalized LIKE ?");
+        }
+        sql.append(')');
+
+        Map<DocumentKey, DocumentRow> result = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            int parameter = 1;
+            for (String itemId : requested) {
+                String value = "%" + itemId + "%";
+                statement.setString(parameter++, value);
+                statement.setString(parameter++, value);
+                statement.setString(parameter++, value);
+                statement.setString(parameter++, value);
+            }
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     DocumentRow document = readDocumentRow(rows);

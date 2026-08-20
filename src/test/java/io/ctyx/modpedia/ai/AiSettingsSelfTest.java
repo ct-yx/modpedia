@@ -32,6 +32,7 @@ public final class AiSettingsSelfTest {
             check(!persistedJson.contains("secret-value"), "配置文件不得包含 API Key 明文");
             check(!persistedJson.contains("\"apiKey\""), "配置文件不得包含 apiKey 明文字段");
             AiSettings restored = new AiSettingsStore(file, "test-machine-a").load();
+            check(!restored.streaming(), "关闭流式响应后应从持久化设置恢复为非流式模式");
             check("https://example.invalid/v1".equals(restored.endpoint()), "API 地址应去除首尾空白");
             check("https://example.invalid/v1".equals(
                             AiSettings.normalizeEndpoint("https://example.invalid/v1/chat/completions")),
@@ -62,6 +63,18 @@ public final class AiSettingsSelfTest {
                     ).requestConfigured(),
                     "没有配置 API Key 时不能进入模型请求链路");
             check(restored.mode() == AssistantMode.AI, "旧版默认设置应使用 AI 模式");
+
+            AiSettings nativeSettings = restored.withApiFormat(AiApiFormat.NATIVE_MESSAGES);
+            check(store.save(nativeSettings), "API 格式切换后应能保存");
+            check(Files.readString(file).contains("\"api_format\": \"NATIVE_MESSAGES\""),
+                    "配置文件应保存明确的 API 格式字段");
+            check(new AiSettingsStore(file, "test-machine-a").load().apiFormat()
+                            == AiApiFormat.NATIVE_MESSAGES,
+                    "原生 Messages 格式应能从配置文件恢复");
+            check("https://example.invalid/v1beta".equals(
+                            AiSettings.normalizeEndpoint("https://example.invalid", AiApiFormat.GENERATE_CONTENT)),
+                    "generateContent 根地址应归一化为 /v1beta");
+            store.save(restored);
 
             Files.writeString(file, "{\"endpoint\":\"https://legacy.invalid/v1\",\"model\":\"legacy\",\"apiKey\":\"legacy-secret\"}");
             AiSettings migrated = new AiSettingsStore(file, "test-machine-a").load();

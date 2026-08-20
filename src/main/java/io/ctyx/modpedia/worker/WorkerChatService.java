@@ -4,12 +4,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.model.TokenCountEstimator;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.MemoryId;
@@ -21,12 +21,14 @@ import io.ctyx.modpedia.ai.AiResponseSanitizer;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ai.AiSettingsStore;
 import io.ctyx.modpedia.ai.AssistantMode;
+import io.ctyx.modpedia.ai.CalculationTool;
 import io.ctyx.modpedia.ai.ConversationStore;
 import io.ctyx.modpedia.ai.ConversationRecord;
 import io.ctyx.modpedia.ai.FollowUpQuestionParser;
 import io.ctyx.modpedia.ai.LocalSearchMessageFormatter;
 import io.ctyx.modpedia.ai.PersistentChatMemoryStore;
 import io.ctyx.modpedia.ai.PromptBuilder;
+import io.ctyx.modpedia.ai.RecipeQueryTool;
 import io.ctyx.modpedia.ai.SearchKnowledgeTool;
 import io.ctyx.modpedia.ai.SearchTrace;
 import io.ctyx.modpedia.ai.SourceCitationParser;
@@ -51,6 +53,9 @@ import io.ctyx.modpedia.task.TaskQuery;
 import io.ctyx.modpedia.task.TaskRuntimeReadResult;
 import io.ctyx.modpedia.task.TaskRuntimeSnapshot;
 import io.ctyx.modpedia.task.TaskSearchSummary;
+import io.ctyx.modpedia.recipe.RecipeQuery;
+import io.ctyx.modpedia.recipe.RecipeQueryTrace;
+import io.ctyx.modpedia.recipe.RecipeResponse;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -70,6 +75,7 @@ import java.util.logging.Logger;
 /** Worker 内的 AI、上下文、SQLite 检索和会话编排。 */
 public final class WorkerChatService {
     private static final int MAX_DISPLAYED_SOURCES = 5;
+    private static final CalculationTool CALCULATION_TOOL = new CalculationTool();
     private static final AtomicLong REQUEST_SEQUENCE = new AtomicLong();
     private static final Logger LOG = Logger.getLogger("ModPediaWorker");
 
@@ -81,6 +87,7 @@ public final class WorkerChatService {
     private final RetrievalService retrievalService;
     private final WorkerEventSink sink;
     private final RuntimeContextRequester runtimeContextRequester;
+    private final RecipeQueryRequester recipeQueryRequester;
     private final Predicate<String> requestCancelled;
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<SearchTrace>> requestTraces =
             new ConcurrentHashMap<>();
@@ -99,6 +106,7 @@ public final class WorkerChatService {
                 settingsStore,
                 sink,
                 runtimeContextRequester,
+                null,
                 ignored -> false
         );
     }
@@ -111,6 +119,26 @@ public final class WorkerChatService {
             RuntimeContextRequester runtimeContextRequester,
             Predicate<String> requestCancelled
     ) {
+        this(
+                knowledgeRoot,
+                conversationStore,
+                settingsStore,
+                sink,
+                runtimeContextRequester,
+                null,
+                requestCancelled
+        );
+    }
+
+    public WorkerChatService(
+            Path knowledgeRoot,
+            ConversationStore conversationStore,
+            AiSettingsStore settingsStore,
+            WorkerEventSink sink,
+            RuntimeContextRequester runtimeContextRequester,
+            RecipeQueryRequester recipeQueryRequester,
+            Predicate<String> requestCancelled
+    ) {
         this.knowledgeRoot = knowledgeRoot.toAbsolutePath().normalize();
         this.conversationStore = conversationStore;
         this.memoryStore = new PersistentChatMemoryStore(conversationStore);
@@ -118,6 +146,7 @@ public final class WorkerChatService {
         this.retrievalService = new RetrievalService(this.knowledgeRoot);
         this.sink = sink;
         this.runtimeContextRequester = runtimeContextRequester;
+        this.recipeQueryRequester = recipeQueryRequester;
         this.requestCancelled = requestCancelled == null ? ignored -> false : requestCancelled;
     }
 
@@ -181,10 +210,11 @@ public final class WorkerChatService {
                 contextChars,
                 rounds
         );
+        RecipeQueryTool recipeTool = createRecipeTool(requestId, conversationId, results);
         if (settings.streaming()) {
-            stream(requestId, conversationId, prompt, language, settings, rounds, searchTool, taskQuestion);
+            stream(requestId, conversationId, prompt, language, settings, rounds, searchTool, recipeTool, taskQuestion);
         } else {
-            block(requestId, conversationId, prompt, language, settings, rounds, searchTool, taskQuestion);
+            block(requestId, conversationId, prompt, language, settings, rounds, searchTool, recipeTool, taskQuestion);
         }
     }
 
@@ -262,6 +292,7 @@ public final class WorkerChatService {
             AiSettings settings,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         if (cancelled(requestId)) {
@@ -270,7 +301,7 @@ public final class WorkerChatService {
         try {
             sendStatus(requestId, "organizing", "正在整理回答……");
             BlockingAssistantService service = buildBlockingService(
-                    AiClient.blockingModel(settings), settings, language, rounds, searchTool, taskQuestion
+                    AiClient.chatModel(settings), settings, language, rounds, searchTool, recipeTool, taskQuestion
             );
             finish(requestId, conversationId, service.chat(conversationId, prompt), searchTool.taskSummary());
         } catch (Throwable firstFailure) {
@@ -287,8 +318,11 @@ public final class WorkerChatService {
                             requestId, language, settings.effectiveMaxResults(),
                             settings.effectiveMaxContextChars(), rounds
                     );
+                    RecipeQueryTool retryRecipeTool = createRecipeTool(requestId, conversationId,
+                            settings.effectiveMaxResults());
                     BlockingAssistantService retry = buildBlockingService(
-                            AiClient.blockingModel(settings), settings, language, rounds, retryTool, taskQuestion
+                            AiClient.chatModel(settings), settings, language, rounds, retryTool,
+                            retryRecipeTool, taskQuestion
                     );
                     finish(requestId, conversationId, retry.chat(conversationId, prompt), retryTool.taskSummary());
                     return;
@@ -318,15 +352,16 @@ public final class WorkerChatService {
             AiSettings settings,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         AtomicReference<StreamingHandle> activeHandle = new AtomicReference<>();
         AtomicBoolean terminal = new AtomicBoolean();
         CountDownLatch finished = new CountDownLatch(1);
         try {
-            OpenAiStreamingChatModel model = AiClient.streamingModel(settings);
+            StreamingChatModel model = AiClient.streamingChatModel(settings);
             StreamingAssistantService service = buildStreamingService(
-                    model, settings, language, rounds, searchTool, taskQuestion
+                    model, settings, language, rounds, searchTool, recipeTool, taskQuestion
             );
             StringBuilder draft = new StringBuilder();
             TokenStream stream = service.chat(conversationId, prompt)
@@ -484,6 +519,20 @@ public final class WorkerChatService {
         );
     }
 
+    private RecipeQueryTool createRecipeTool(String requestId, String conversationId, int results) {
+        return new RecipeQueryTool(
+                recipeQueryRequester == null
+                        ? null
+                        : query -> recipeQueryRequester.request(
+                                requestId,
+                                conversationId,
+                                query
+                        ),
+                results,
+                trace -> onRecipeTrace(requestId, trace)
+        );
+    }
+
     private void onSearchTrace(String requestId, SearchTrace trace) {
         requestTraces.computeIfAbsent(requestId, ignored -> new CopyOnWriteArrayList<>()).add(trace);
         JsonObject event = event(WorkerProtocol.TOOL_CALL, requestId);
@@ -499,6 +548,31 @@ public final class WorkerChatService {
         addTraceFields(result, trace);
         result.addProperty("returned_count", trace.sources().size());
         result.add("sources", sources.deepCopy());
+        sendQuietly(result);
+    }
+
+    private void onRecipeTrace(String requestId, RecipeQueryTrace trace) {
+        if (trace == null || trace.query() == null || trace.response() == null) {
+            return;
+        }
+        JsonObject call = event(WorkerProtocol.TOOL_CALL, requestId);
+        call.addProperty("tool", RecipeQueryTool.TOOL_NAME);
+        call.addProperty("item_id", trace.query().itemId());
+        call.addProperty("mode", trace.query().mode().name());
+        call.addProperty("method_id", trace.query().methodId());
+        call.addProperty("status", "requested");
+        sendQuietly(call);
+
+        RecipeResponse response = trace.response();
+        JsonObject result = event(WorkerProtocol.TOOL_RESULT, requestId);
+        result.addProperty("tool", RecipeQueryTool.TOOL_NAME);
+        result.addProperty("item_id", response.itemId());
+        result.addProperty("mode", response.mode().name());
+        result.addProperty("status", response.status());
+        result.addProperty("returned_count", response.recipes().size());
+        result.addProperty("method_count", response.methods().size());
+        result.addProperty("has_more", response.hasMore());
+        result.add("machines", WorkerPayloadCodec.array(response.machines()));
         sendQuietly(result);
     }
 
@@ -670,11 +744,12 @@ public final class WorkerChatService {
     }
 
     private BlockingAssistantService buildBlockingService(
-            OpenAiChatModel model,
+            ChatModel model,
             AiSettings settings,
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
@@ -685,26 +760,30 @@ public final class WorkerChatService {
                         settings.effectiveMaxResults(), settings.effectiveMaxContextChars()
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
-                .tools(searchTool)
+                .tools(searchTool, CALCULATION_TOOL, recipeTool)
                 .chatRequestTransformer(request -> WorkerAiSupport.requireSearchOnFirstRequest(
-                        request, firstRequest, taskQuestion
+                        request, firstRequest, taskQuestion,
+                        io.ctyx.modpedia.ai.AiTokenBudget.answerTokens(settings.intensity()),
+                        settings.apiFormat().isChatCompletions()
+                                && AiClient.usesCompletionTokenParameter(settings.model())
                 ))
                 .maxToolCallingRoundTrips(WorkerAiSupport.toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
+                        "本地工具参数格式有误，请检查 query、expression、language 等参数后重试。"
                 ))
                 .toolExecutionErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "本地知识库搜索暂时失败，请换一个查询词继续搜索。"
+                        "本地工具执行暂时失败，请检查参数后重试。"
                 ))
                 .build();
     }
 
     private StreamingAssistantService buildStreamingService(
-            OpenAiStreamingChatModel model,
+            StreamingChatModel model,
             AiSettings settings,
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            RecipeQueryTool recipeTool,
             boolean taskQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
@@ -715,16 +794,19 @@ public final class WorkerChatService {
                         settings.effectiveMaxResults(), settings.effectiveMaxContextChars()
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
-                .tools(searchTool)
+                .tools(searchTool, CALCULATION_TOOL, recipeTool)
                 .chatRequestTransformer(request -> WorkerAiSupport.requireSearchOnFirstRequest(
-                        request, firstRequest, taskQuestion
+                        request, firstRequest, taskQuestion,
+                        io.ctyx.modpedia.ai.AiTokenBudget.answerTokens(settings.intensity()),
+                        settings.apiFormat().isChatCompletions()
+                                && AiClient.usesCompletionTokenParameter(settings.model())
                 ))
                 .maxToolCallingRoundTrips(WorkerAiSupport.toolCallingRoundTrips(rounds))
                 .toolArgumentsErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "搜索工具参数格式有误，请改写 query、language、limit、focus 后重试。"
+                        "本地工具参数格式有误，请检查 query、expression、language 等参数后重试。"
                 ))
                 .toolExecutionErrorHandler((error, ignored) -> ToolErrorHandlerResult.text(
-                        "本地知识库搜索暂时失败，请换一个查询词继续搜索。"
+                        "本地工具执行暂时失败，请检查参数后重试。"
                 ))
                 .build();
     }
@@ -772,6 +854,11 @@ public final class WorkerChatService {
     @FunctionalInterface
     public interface RuntimeContextRequester {
         TaskRuntimeSnapshot request(String requestId, String conversationId, TaskQuery query);
+    }
+
+    @FunctionalInterface
+    public interface RecipeQueryRequester {
+        RecipeResponse request(String requestId, String conversationId, RecipeQuery query);
     }
 
     private final class TaskRuntimeReaderAdapter implements io.ctyx.modpedia.task.TaskRuntimeReader {

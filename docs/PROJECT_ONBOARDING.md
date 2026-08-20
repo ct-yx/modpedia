@@ -35,7 +35,7 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | Java | 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
-| 当前发布版本 | `v1.1.0` |
+| 当前发布版本 | `v1.2.0` |
 | 当前检查分支 | `main` |
 | 当前检查 HEAD | 以 `git log -1` 为准 |
 | 主配置目录 | `config/modpedia/` |

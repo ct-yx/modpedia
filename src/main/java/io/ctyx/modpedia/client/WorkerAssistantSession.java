@@ -241,7 +241,9 @@ public final class WorkerAssistantSession implements AssistantSession {
             case WorkerProtocol.STATUS, WorkerProtocol.TOOL_CALL -> {
                 String message = WorkerProtocol.string(event, "message");
                 if (message.isBlank()) {
-                    message = switch (WorkerProtocol.string(event, "status")) {
+                    message = "query_item_recipes".equals(WorkerProtocol.string(event, "tool"))
+                            ? recipeToolStatus(event)
+                            : switch (WorkerProtocol.string(event, "status")) {
                         case "task_runtime_read" -> "正在读取当前任务进度……";
                         case "task_runtime_file_read" -> "正在读取本地任务存档……";
                         case "task_database_query" -> "已读取任务进度，正在查询任务资料……";
@@ -296,6 +298,15 @@ public final class WorkerAssistantSession implements AssistantSession {
                 // hello、pong 和知识库维护事件不改变聊天 UI。
             }
         }
+    }
+
+    private String recipeToolStatus(JsonObject event) {
+        return switch (WorkerProtocol.string(event, "mode")) {
+            case "WORKBENCH" -> "正在查询工作台合成配方……";
+            case "FURNACE" -> "正在查询熔炉烧炼配方……";
+            case "DETAIL" -> "正在读取选定处理方式的详细配方……";
+            default -> "正在读取可用的物品处理方式……";
+        };
     }
 
     private void applyConversationState(JsonObject event) {

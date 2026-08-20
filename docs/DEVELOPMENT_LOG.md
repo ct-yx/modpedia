@@ -1,5 +1,27 @@
 # ModPedia 开发日志
 
+## 2026-08-21 · v1.2.0 发布与 AI/配方联动收尾
+
+### 对比 v1.1.0 的变更
+
+- 增加 Chat Completions、原生 Messages、Responses 和 Gemini `generateContent` 四种 API 格式；统一设置、模型列表、连接测试、认证、工具调用续接和 SSE 解析链路。
+- 增加本地 `calculate` 工具，以 `BigDecimal` 处理比例、总量、取整和多步算术；计算结果不伪装为手册来源。
+- 增加 `query_item_recipes`：工作台/熔炉直接查询，熔炉返回处理时间；其它方式使用 `OTHER → DETAIL`，机器等级合并，结果通过 Worker IPC 返回且不写入知识库。
+- 修正 Jade/FTBQ/JEI/容器槽位/Tooltip 的物品识别；按下 `K` 时冻结目标，打开助手后由界面按钮显式插入，避免底层页面继续改变目标。
+- 物品目录改为主菜单阶段一次性缓存；第三方 Tooltip 监听器异常时熔断简介捕获并继续导入 ID/名称，避免大型整合包重复异常造成日志恶性膨胀。
+- 放宽 Token 压缩策略，保留最近两次工具回合的完整证据，更早历史保留来源 ID、标题路径、来源路径和正文首尾；按搜索强度使用分级预算。
+- 原生 Minecraft 选项/按键页面不再被 `K` 呼出助手；补充协议、配方、计算、输入策略、物品目录调度和成本优化自测。
+
+### 发布验证
+
+```text
+./gradlew test
+./gradlew build
+git diff --check
+```
+
+本轮测试与构建结果记录在发布工件 `build/release-artifacts/v1.2.0/VERIFICATION.txt`；发布 JAR、校验文件和当前版本更新日志由 `v1.2.0` 标签流水线生成。
+
 ## 2026-08-18 · v1.1.0 发布与用户级 AI 配置迁移
 
 ### 变更

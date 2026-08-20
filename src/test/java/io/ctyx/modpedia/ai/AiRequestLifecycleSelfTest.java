@@ -56,10 +56,18 @@ public final class AiRequestLifecycleSelfTest {
         AtomicBoolean first = new AtomicBoolean(true);
         ChatRequest original = ChatRequest.builder()
                 .messages(UserMessage.from("问题"))
+                .toolSpecifications(
+                        ToolSpecification.builder().name("search_knowledge").build(),
+                        ToolSpecification.builder().name("calculate").build(),
+                        ToolSpecification.builder().name("query_item_recipes").build()
+                )
                 .build();
         ChatRequest forced = AiAssistantSession.requireSearchOnFirstRequest(original, first);
         check(forced.toolChoice() == ToolChoice.REQUIRED,
                 "AI 新问题的第一次模型请求必须强制调用 search_knowledge");
+        check(forced.toolSpecifications().size() == 1
+                        && "search_knowledge".equals(forced.toolSpecifications().getFirst().name()),
+                "普通问题首轮只能暴露 search_knowledge，不能被计算/配方工具抢走");
         ChatRequest followUp = AiAssistantSession.requireSearchOnFirstRequest(original, first);
         check(followUp == original,
                 "工具结果后的模型请求应恢复自动选择，允许结束或继续补搜");

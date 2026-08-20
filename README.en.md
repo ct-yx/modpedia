@@ -14,7 +14,7 @@ answers while preserving links back to the original manual pages.
 
 | Item | Version / status |
 | --- | --- |
-| Mod | **v1.1.0** |
+| Mod | **v1.2.0** |
 | Release status | Official GitHub release |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244** (compatible with **21.1.x**) |
@@ -24,10 +24,10 @@ answers while preserving links back to the original manual pages.
 | Author | **ctyx** |
 
 The current JAR, checksum, installation guide, and known limitations are
-available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0).
-`v1.0.0`, `v1.0.0-fix`, and `v1.0.1` remain historical versions. `v1.1.0`
-includes user-level shared AI settings, API key storage protection, Worker
-startup caching, and a Mod List icon.
+available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0).
+`v1.1.0` and earlier remain historical versions. `v1.2.0` adds four AI API
+formats, a local calculation tool, staged JEI recipe queries, frozen item
+targets, and a Tooltip scan circuit breaker for large modpacks.
 
 ## Quick installation
 
@@ -39,7 +39,7 @@ startup caching, and a Mod List icon.
 
 ### Installation
 
-1. Download **modpedia-1.1.0.jar**.
+1. Download **modpedia-1.2.0.jar**.
 2. Put the ModPedia JAR in the instance's **mods/** directory.
 3. Start the game and enter a single-player world or server.
 4. Wait for the initial knowledge database and item catalog prefill to finish;
@@ -67,7 +67,11 @@ The following integrations are optional:
 - **JEI**: Recipes are not imported into the database. Registered item IDs in
   answers, including model-generated `namespace:path` values, are resolved to
   localized names on demand. Hold Ctrl to show IDs, and Shift-click an item name
-  to try opening the JEI recipe screen.
+  to try opening the JEI recipe screen. The model can also call
+  `query_item_recipes`: `WORKBENCH` and `FURNACE` directly query their recipe
+  classes, with furnace processing time; other processing first uses `OTHER` to
+  obtain a `method_id`, then `DETAIL` to read inputs, outputs, metadata, and a
+  machine list with tiers merged.
 - **Jade**: When Jade is installed, the block or item under the crosshair can be
   recorded. After opening the assistant, one click inserts its item ID. Display
   areas show the localized name by default and the ID while Ctrl is held.
@@ -106,8 +110,13 @@ answer. It does not read the API configuration.
 
 Select **AI answer** in Settings and fill in:
 
-- **API URL**: A Chat Completions-compatible API root, usually ending in `/v1`.
-  If only a domain is entered, the client adds `/v1` automatically.
+- **API format**: Choose `Chat Completions`, `Native Messages`, `Responses`, or
+  `Gemini generateContent`. The selected format controls the request body,
+  authentication header, tool-calling shape, and SSE parser; it is persisted as
+  `api_format`.
+- **API URL**: Enter the API root for the selected format. Chat Completions,
+  Native Messages, and Responses usually use `/v1`; Gemini uses `/v1beta`. If
+  only a domain is entered, the client adds the matching version path.
 - **Model name**: Click **Get model list** on the right, then click the button
   again to switch between returned models.
 - **API key**: The Settings field takes priority; the `MODPEDIA_API_KEY`
@@ -125,19 +134,28 @@ Select **AI answer** in Settings and fill in:
   redacted report is written to `config/modpedia/runtime/diagnostics/`.
 
 If the connection test says that the API URL returned webpage content, the URL
-points to a web page or service root instead of an API endpoint. Check the `/v1`
-path first. Model-list and connection-test logs never write the API key.
+points to a web page or service root instead of an API endpoint. Check the
+version path for the selected format. Some Native Messages services do not
+expose `/models`; enter the model name directly in that case. Model-list and
+connection-test logs never write the API key.
 
-Batch testing separates models into **ordinary + tools available** and
-**streaming + tools available**. When streaming is enabled, prefer a model that
-passes the streaming tool chain. Some image, realtime, or Codex-account-only
-models may appear in the list but still be unsuitable for the current Chat
-Completions tool-calling chain.
+Batch testing currently targets the Chat Completions `/models` interface and
+separates models into **ordinary + tools available** and **streaming + tools
+available**. The other three formats can be checked with **Test connection** and
+the real conversation chain. Some services or models do not expose a model list;
+enter the model name directly.
 
-The model can call `search_knowledge`. When recipe, step, prerequisite, or
-version evidence is incomplete, it rewrites the query and searches again. The
-final answer shows only 3–5 highly relevant source buttons actually returned in
-this round and labeled by the model, followed by three suggested questions.
+The model can call `search_knowledge`, `search_wiki`, `search_tasks`,
+`query_item_recipes`, and the local deterministic `calculate` tool. When recipe, step, prerequisite, or
+version evidence is incomplete, it rewrites the query and searches again. Retrieval
+rounds send tool calls only, without process narration; first tool arguments and
+final answers use profile-specific output budgets. The two most recent tool turns
+keep complete evidence; older turns compact only repeated body text into head/tail
+snippets while retaining source IDs, heading paths, and source paths. For multi-step recipe
+totals, ratios, rounding, and other non-trivial arithmetic, the model sends an
+expression to `calculate` instead of relying on mental arithmetic. The final
+answer shows only 3–5 highly relevant source buttons actually returned in this
+round and labeled by the model, followed by three suggested questions.
 
 Default search budgets:
 
@@ -147,11 +165,16 @@ Default search budgets:
 | Standard | 3 | 8 | 16,000 characters |
 | Deep | 5 | 12 | 28,000 characters |
 
+AI requests keep the first tool-call output short, cap the final answer by search
+profile, and suppress process narration during retrieval. GPT-5/o-series models
+use `max_completion_tokens`; other Chat Completions models keep `max_tokens`, so
+the request never sends both mutually exclusive fields.
+
 ## Shortcuts and UI
 
 | Action | Behavior |
 | --- | --- |
-| **K** | Open or close the assistant window |
+| **K** | Open or close the assistant window; disabled on Minecraft's native Options and Controls screens |
 | **Esc** | Defocus the input first, otherwise close the current page |
 | **Enter** | Send a single-line question |
 | **Shift+Enter** | Insert a newline in the input |
@@ -452,7 +475,7 @@ accepted.
 The token is read only from a GitHub Actions Secret and is not written to the
 repository, build artifacts, or logs. To retry a publication, run
 `Publish Mod Release` from Actions and enter an existing version tag such as
-`v1.1.0`; this does not create another GitHub Release.
+`v1.2.0`; this does not create another GitHub Release.
 
 ## Known limitations
 
@@ -471,9 +494,9 @@ repository, build artifacts, or logs. To retry a publication, run
   prefers a direct Worker read of the small SNBT file; multiplayer or unavailable
   local files use a bounded TeamData runtime index, then static definitions come
   from SQLite. The task Wiki uses its bundled copy when a network update fails.
-- JEI recipe navigation and Jade target recognition depend on their client
-  runtime APIs. Missing or incompatible versions only disable the corresponding
-  button.
+- JEI recipe queries/navigation and Jade target recognition depend on their
+  client runtime APIs. Missing or incompatible versions only disable the
+  corresponding integration; recipes are never written to `knowledge.db`.
 - Search-only mode currently uses rule-based retrieval; vector search remains a
   future enhancement.
 - The SQLite derived database and item catalog are built during the loading
@@ -493,7 +516,7 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)
 - [Known limitations](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0)
 
 ## Author and license
 

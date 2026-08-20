@@ -3,10 +3,12 @@ package io.ctyx.modpedia;
 import com.mojang.blaze3d.platform.InputConstants;
 import io.ctyx.modpedia.client.AssistantScreen;
 import io.ctyx.modpedia.client.AssistantSession;
+import io.ctyx.modpedia.client.AssistantInputPolicy;
 import io.ctyx.modpedia.client.FtbQuestsClientAdapter;
 import io.ctyx.modpedia.client.JadeClientBridge;
 import io.ctyx.modpedia.client.JadeTargetStore;
 import io.ctyx.modpedia.client.ItemCatalogSyncService;
+import io.ctyx.modpedia.client.JeiRecipeNavigator;
 import io.ctyx.modpedia.client.ManualSourceNavigator;
 import io.ctyx.modpedia.client.MockAssistantSession;
 import io.ctyx.modpedia.client.FloatingAssistantWindow;
@@ -26,9 +28,13 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.fml.event.lifecycle.FMLLoadCompleteEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.RenderTooltipEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.event.GameShuttingDownEvent;
+import org.lwjgl.glfw.GLFW;
 
 /** 客户端入口，负责启动知识库构建和注册手动重建入口。 */
 @Mod(value = ModPedia.MOD_ID, dist = Dist.CLIENT)
@@ -85,6 +91,7 @@ public final class ModPediaClient {
             );
             return ModPediaBridge.RuntimeContextResult.snapshot(result);
         });
+        bridge.setRecipeQueryHandler(JeiRecipeNavigator::query);
     }
 
     /**
@@ -103,7 +110,90 @@ public final class ModPediaClient {
 
 /** 客户端游戏总线事件，处理手动重建按键。 */
 final class ModPediaClientEvents {
+    private static int suppressQueuedAssistantClicks;
+    private static boolean rawAssistantKeyHandled;
+
     private ModPediaClientEvents() {
+    }
+
+    /**
+     * 在原始 GLFW 输入事件层处理助手快捷键。
+     *
+     * <p>部分第三方页面（尤其是自定义 Widget/ScreenWrapper）不会可靠地进入
+     * {@link ScreenEvent.KeyPressed.Pre}，或者会在自己的键盘处理链中提前吞掉 K。
+     * 原始输入事件发生在 Screen 分发之前，因此这里作为统一入口；后续 Screen 事件
+     * 和普通 KeyMapping 消费只负责抑制重复触发。</p>
+     */
+    @SubscribeEvent
+    static void onRawKeyInput(InputEvent.Key event) {
+        if (event.getAction() != GLFW.GLFW_PRESS
+                || !matchesAssistantKey(event.getKey(), event.getScanCode())) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof AssistantScreen) {
+            rawAssistantKeyHandled = true;
+            suppressQueuedAssistantClicks = 2;
+            toggleAssistant();
+            return;
+        }
+        if (AssistantInputPolicy.blocksAssistant(minecraft.screen)) {
+            // 原始 GLFW 事件早于 Screen 分发；先标记消费，避免同一个 K 又在
+            // ScreenEvent 或 ClientTick 的 KeyMapping 路径中打开助手。
+            rawAssistantKeyHandled = true;
+            suppressQueuedAssistantClicks = 2;
+            return;
+        }
+        rawAssistantKeyHandled = true;
+        suppressQueuedAssistantClicks = 2;
+        toggleAssistant();
+    }
+
+    /**
+     * Screen 会先于普通 KeyMapping 消费处理按键。拦截第三方 GUI 的 K，保证
+     * FTBQ、JEI、容器和其它自定义页面都能打开助手，同时把后续一次 queued click
+     * 抵消，避免同一按键在本 tick 被打开后又立即关闭。
+     */
+    @SubscribeEvent
+    static void onScreenKeyPressed(ScreenEvent.KeyPressed.Pre event) {
+        if (!matchesAssistantKey(event.getKeyCode(), event.getScanCode())) {
+            return;
+        }
+        if (rawAssistantKeyHandled) {
+            rawAssistantKeyHandled = false;
+            event.setCanceled(true);
+            return;
+        }
+        if (AssistantInputPolicy.blocksAssistant(event.getScreen())) {
+            event.setCanceled(true);
+            suppressQueuedAssistantClicks = 2;
+            return;
+        }
+        if (event.getScreen() instanceof AssistantScreen) {
+            return;
+        }
+        event.setCanceled(true);
+        suppressQueuedAssistantClicks = 2;
+        toggleAssistant();
+    }
+
+    private static boolean matchesAssistantKey(int keyCode, int scanCode) {
+        InputConstants.Key eventKey = InputConstants.getKey(keyCode, scanCode);
+        if (ModPediaClient.OPEN_ASSISTANT.isActiveAndMatches(eventKey)) {
+            return true;
+        }
+        // 某些自定义 Screen 传入的 keyCode/scanCode 组合会让
+        // InputConstants.getKey() 选错类型；按绑定本身再做一次直接匹配。
+        InputConstants.Key configured = ModPediaClient.OPEN_ASSISTANT.getKey();
+        return configured.getType() == InputConstants.Type.KEYSYM
+                ? keyCode == configured.getValue()
+                : scanCode == configured.getValue();
+    }
+
+    /** 任意原生或第三方 GUI 在真正绘制 Tooltip 前都会经过的客户端事件。 */
+    @SubscribeEvent
+    static void onGatherTooltip(RenderTooltipEvent.GatherComponents event) {
+        JadeTargetStore.updateFromTooltip(event.getItemStack());
     }
 
     @SubscribeEvent
@@ -113,21 +203,20 @@ final class ModPediaClientEvents {
         ModPediaBridge.get().observeClientWorld(minecraft.level, minecraft.player);
         // 只在主菜单阶段检查语言切换。ItemCatalogSyncService 在进入世界后
         // 会立即返回，因此这里不会重新触发游戏内的全量 Tooltip 扫描。
+        ItemCatalogSyncService.observeMenuState(minecraft);
         ItemCatalogSyncService.tick();
         JadeClientBridge.tick();
         JadeTargetStore.tick(minecraft);
         if (ModPediaClient.OPEN_ASSISTANT.consumeClick()) {
-            if (minecraft.screen instanceof AssistantScreen assistantScreen) {
-                assistantScreen.onClose();
+            if (suppressQueuedAssistantClicks > 0) {
+                suppressQueuedAssistantClicks = 0;
             } else {
-                AssistantScreen assistantScreen = new AssistantScreen(
-                        minecraft.screen,
-                        ModPediaClient.ASSISTANT_SESSION,
-                        new ManualSourceNavigator()
-                );
-                minecraft.setScreen(assistantScreen);
+                toggleAssistant();
             }
             return;
+        }
+        if (suppressQueuedAssistantClicks > 0) {
+            suppressQueuedAssistantClicks--;
         }
         if (!ModPediaClient.REBUILD_KNOWLEDGE.consumeClick()) {
             return;
@@ -140,6 +229,37 @@ final class ModPediaClientEvents {
                 ? "message.modpedia.rebuild_started"
                 : "message.modpedia.rebuild_busy";
         minecraft.gui.setOverlayMessage(Component.translatable(messageKey), false);
+    }
+
+    private static void toggleAssistant() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof AssistantScreen assistantScreen) {
+            assistantScreen.onClose();
+            return;
+        }
+        JadeTargetStore.freezeForAssistant(minecraft);
+        AssistantScreen assistantScreen = new AssistantScreen(
+                minecraft.screen,
+                ModPediaClient.ASSISTANT_SESSION,
+                new ManualSourceNavigator()
+        );
+        minecraft.setScreen(assistantScreen);
+    }
+
+    @SubscribeEvent
+    static void onScreenOpening(ScreenEvent.Opening event) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft != null
+                && minecraft.level == null
+                && minecraft.player == null
+                && event.getScreen() != null) {
+            ItemCatalogSyncService.markMainMenuReady();
+        }
+    }
+
+    @SubscribeEvent
+    static void onScreenClosing(ScreenEvent.Closing event) {
+        AssistantScreen.handleExternalScreenClosing(event.getScreen());
     }
 
     @SubscribeEvent

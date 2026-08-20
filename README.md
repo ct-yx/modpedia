@@ -11,7 +11,7 @@ English version: [README.en.md](README.en.md)
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.1.0** |
+| Mod | **v1.2.0** |
 | 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
@@ -20,7 +20,7 @@ English version: [README.en.md](README.en.md)
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0)。`v1.0.0`、`v1.0.0-fix` 和 `v1.0.1` 保留为历史版本；`v1.1.0` 包含用户级共享 AI 配置、API Key 存储保护、Worker 启动缓存和 Mod 列表图标。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0)。`v1.1.0` 及更早版本保留为历史版本；`v1.2.0` 增加四种 AI API 格式、本地计算工具、分阶段 JEI 配方查询、物品目标冻结和 Tooltip 扫描日志熔断。
 
 ## 快速安装
 
@@ -32,7 +32,7 @@ English version: [README.en.md](README.en.md)
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.1.0.jar**。
+1. 下载 **modpedia-1.2.0.jar**。
 2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
@@ -43,7 +43,7 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 以下联动模组均为可选：
 
 - **FTB Quests**：不再在客户端 Tick 中轮询或全量序列化任务。任务问题调用 `search_tasks` 时先取得当前玩家运行时进度；单机优先由 Worker 直接读取 `saves/<世界>/ftbquests/<team-uuid>.snbt`，多人或本地文件不可用时回退到游戏 JVM 的 TeamData，再由 Worker 查询静态任务数据库并在内存中覆盖结果。同一 AI 请求只读取一次，实时进度不写入数据库。运行时响应还会返回具体任务的 `timeline`：started/completed 使用 FTBQ 时间戳，进度变化使用检测时间，模型可以列出新增条目而不是只比较数量。任务 Wiki 作为独立的 `content_kind=wiki` 来源导入，不与模组手册混在检索范围内。
-- **JEI**：不导入配方数据库。回答正文中的已注册物品 ID（包括模型直接输出的 `namespace:path`）按需解析为本地化名称，按住 Ctrl 显示 ID，按住 Shift 点击物品名称时尝试打开 JEI 配方界面。
+- **JEI**：不导入配方数据库。回答正文中的已注册物品 ID（包括模型直接输出的 `namespace:path`）按需解析为本地化名称，按住 Ctrl 显示 ID，按住 Shift 点击物品名称时尝试打开 JEI 配方界面。模型还可以调用 `query_item_recipes`：工作台（`WORKBENCH`）和熔炉（`FURNACE`）直接读取对应配方，熔炉附带处理时间；其它处理方式先用 `OTHER` 获取 `method_id`，再用 `DETAIL` 查询具体输入、输出、附加信息和已合并等级的机器列表。
 - **Jade**：在 Jade 已安装时记录当前视线下的方块物品，打开助手后可一键插入物品 ID；显示区域默认显示名称，按住 Ctrl 才显示 ID。
 - **物品目录**：在进入主菜单前，客户端注册表完成后把当前语言的全部物品 ID、名称和完整 Tooltip 简介写入同一个 `knowledge.db` 的 `item_catalog` 表；数万条记录先由独立 I/O 线程写成原子 JSONL 载荷，IPC 只传路径，Worker 再用短事务批量写入，不复制整个数据库，也不在游戏 Tick 中拼接大 JSON。确认物品后，AI 和仅搜索模式会先读取这份资料，再继续搜索手册。语言切换只在回到主菜单后重新捕获，不会在世界内持续扫描。
 
@@ -66,17 +66,18 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 
 在设置中选择“AI 回答”，填写：
 
-- API 地址：兼容 Chat Completions 的 API 根地址，通常以 `/v1` 结尾；如果只填写域名，客户端会自动补全 `/v1`；
+- API 格式：可选 `Chat Completions`、`原生 Messages`、`Responses` 和 `Gemini generateContent`；选择后客户端会使用对应的请求体、认证头、工具调用和 SSE 格式，并把 `api_format` 写入配置；
+- API 地址：填写所选协议的 API 根地址。Chat Completions、原生 Messages 和 Responses 通常使用 `/v1`，Gemini 使用 `/v1beta`；如果只填写域名，客户端会按格式自动补全版本路径；
 - 模型名称：可以点击右侧“获取模型列表”，成功后再次点击按钮在返回的模型之间切换；
 - API Key：优先使用设置页输入；设置页留空时才使用环境变量 MODPEDIA_API_KEY。
 - `~/.modpedia/ai.json` 是跨游戏实例共享的用户级配置，不随整合包分发。它不保存 API Key 明文，而是使用当前系统标识派生的 AES-GCM 密钥保存密文；游戏进程首次读取时解密并缓存，系统标识变化后会清除密钥密文。系统标识读取失败时使用同目录的 `installation-id` 回退标识；在支持 POSIX 权限的系统上目录为 `0700`、文件为 `0600`。
 - 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/runtime/diagnostics/`。
 
-如果连接测试提示“API 地址返回了网页内容”，说明地址指向了网页或服务根页面，而不是 API 端点；优先检查 `/v1` 路径。模型列表和连接测试都不会把 API Key 写入日志。
+如果连接测试提示“API 地址返回了网页内容”，说明地址指向了网页或服务根页面，而不是 API 端点；请检查当前格式对应的版本路径。模型列表和连接测试都不会把 API Key 写入日志。部分原生 Messages 服务不提供 `/models`，此时直接填写模型名称即可。
 
-批量测试把模型分为“普通+工具可用”和“流式+工具可用”。如果当前开启流式响应，应优先选择报告中流式工具链通过的模型；某些图片、实时或 Codex 账户专用模型即使出现在列表中，也可能不适用于当前 Chat Completions 工具调用链。
+“批量测试模型”当前针对 Chat Completions 的 `/models` 接口，分为“普通+工具可用”和“流式+工具可用”。其他三种协议仍可通过“测试连接”和真实对话链路验证；某些服务或模型不提供模型列表时，直接填写模型名称即可。
 
-模型可以调用 search_knowledge。当配方、步骤、前置条件或版本证据不足时，会继续改写查询并补充检索；最终只展示 3–5 个本轮实际搜索到且由模型标注用途的正文内来源按钮，并在回答底部给出三个后续问题按钮。
+模型可以调用 `search_knowledge`、`search_wiki`、`search_tasks`、`query_item_recipes` 和本地 `calculate` 工具。当配方、步骤、前置条件或版本证据不足时，会继续改写查询并补充检索；涉及 JEI 配方时按工作台、熔炉或其它处理方式分阶段读取，不把配方伪装成手册来源；涉及多步配方总量、比例、取整或其他复杂数字推导时，模型把表达式交给本地 `calculate`，不依赖 LLM 心算。检索阶段只发送工具调用，不输出过程性长文本；首轮工具参数和最终回答按搜索档位限额。上下文保留最近两次工具回合的完整证据，更早回合只压缩重复正文的首尾片段，同时保留来源 ID、标题路径和来源路径，避免为了节约 Token 丢失检索事实。最终只展示 3–5 个本轮实际搜索到且由模型标注用途的正文内来源按钮，并在回答底部给出三个后续问题按钮。
 
 默认搜索预算：
 
@@ -86,11 +87,13 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 | 标准 | 3 | 8 | 16,000 字符 |
 | 深入 | 5 | 12 | 28,000 字符 |
 
+AI 请求会把首轮工具调用限制为 1,536 tokens（GPT-5/o 为 3,072），最终回答按搜索强度使用 1,280/2,560/4,096 tokens，检索阶段不发送过程性文字。GPT-5/o 系列使用兼容接口要求的 `max_completion_tokens`，其他 Chat Completions 模型继续使用 `max_tokens`，避免发送两个互斥字段。
+
 ## 快捷键与界面
 
 | 操作 | 行为 |
 | --- | --- |
-| **K** | 打开/关闭助手浮窗 |
+| **K** | 打开/关闭助手浮窗；Minecraft 原生游戏设置页和按键绑定页不会呼出 |
 | **Esc** | 输入框优先失焦，否则关闭当前页面 |
 | **Enter** | 发送单行问题 |
 | **Shift+Enter** | 在输入框中换行 |
@@ -350,7 +353,7 @@ build/reports/modpedia/knowledge-benchmark.md
 如果使用标准命名，也可以配置 `CURSEFORGE_PROJECT_ID` 和 `CURSEFORGE_TOKEN`。
 
 Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物或日志。若发布过程需要重试，
-在 Actions 中运行 `Publish Mod Release`，输入已有的版本标签，例如 `v1.1.0`；不会重新创建 GitHub Release。
+在 Actions 中运行 `Publish Mod Release`，输入已有的版本标签，例如 `v1.2.0`；不会重新创建 GitHub Release。
 
 ## 已知限制
 
@@ -360,7 +363,7 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - 具体来源跳转依赖目标手册模组的客户端公开入口；入口缺失时保留来源预览。
 - AI 回答需要玩家自行配置兼容 API；仅搜索模式可以完全离线使用。
 - FTB Quests 不会在每个 Tick 生成运行时快照；只有进入世界后实际询问任务时才读取当前进度。单机优先由 Worker 直接读取小型 SNBT 文件，多人或本地文件不可用时才读取 TeamData 的有界运行时索引，再从 SQLite 取静态任务定义。任务 Wiki 网络更新失败时使用内置副本。
-- JEI 配方跳转和 Jade 目标识别依赖各自客户端运行时 API，缺少或版本不匹配时仅关闭对应按钮。
+- JEI 配方查询/跳转和 Jade 目标识别依赖各自客户端运行时 API，缺少或版本不匹配时仅关闭对应联动；配方不会写入 `knowledge.db`。
 - 当前仅搜索使用规则检索，向量检索仍属于后续增强方向。
 - 首次启动会在加载屏幕阶段完成 SQLite 派生库和物品目录；F9 重建期间知识库尚未完成时搜索结果可能暂时为空。
 
@@ -377,7 +380,7 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.1.0)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0)
 
 ## 作者与许可证
 

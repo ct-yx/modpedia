@@ -4,6 +4,7 @@ import io.ctyx.modpedia.ModPedia;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.SearchLanguage;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -31,8 +32,10 @@ public final class ItemCatalogSyncService {
     /** 给第三方配置和 Tooltip 注册器一个稳定窗口，避免在 FML load complete 的
      * 同一时刻捕获到“配置尚未加载”的临时状态。 */
     private static final long INITIAL_CAPTURE_DELAY_MS = 3_000L;
-    private static final long TOOLTIP_RETRY_DELAY_MS = 2_000L;
-    private static final int MAX_TOOLTIP_RETRY_ROUNDS = 2;
+    /** 全量 Tooltip 仅用于补充简介；配置尚未完成时直接关闭，避免第三方
+     * Tooltip 监听器在每个物品上重复抛错并把启动日志放大到数 GB。名称和 ID
+     * 仍然通过本地化注册表捕获，不受该降级影响。 */
+    private static final String CONFIG_NOT_LOADED_MESSAGE = "config value before config is loaded";
     private static final Object STATE_LOCK = new Object();
     private static final ExecutorService PERSIST_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "modpedia-item-catalog-persist");
@@ -50,6 +53,9 @@ public final class ItemCatalogSyncService {
     private static volatile String syncedLanguage = "";
     private static volatile long retryAtMillis;
     private static volatile boolean clientLoadComplete;
+    /** FMLLoadComplete 早于部分整合包的最终配置初始化；只有真正打开主菜单
+     * 后才开始触发会广播 Tooltip 事件的捕获。 */
+    private static volatile boolean mainMenuReady;
     private static CompletableFuture<Boolean> inFlight;
     private static CapturedCatalog pendingCatalog;
     private static SyncState state = SyncState.IDLE;
@@ -71,6 +77,39 @@ public final class ItemCatalogSyncService {
      */
     public static void markClientLoadComplete() {
         clientLoadComplete = true;
+        if (mainMenuReady) {
+            syncBeforeMainMenuAsync(ModPediaBridge.get());
+        }
+    }
+
+    /** 由 TitleScreen 打开事件调用，作为安全的全量 Tooltip 捕获起点。 */
+    public static void markMainMenuReady() {
+        boolean firstMenuObservation = !mainMenuReady;
+        mainMenuReady = true;
+        // observeMenuState() 在每个客户端 tick 都会经过这里；只允许第一次
+        // 观察打开启动任务，避免物品目录同步完成后每帧重新扫描注册表。
+        if (firstMenuObservation && clientLoadComplete) {
+            syncBeforeMainMenuAsync(ModPediaBridge.get());
+        }
+    }
+
+    /**
+     * FancyMenu 等客户端菜单会替换原生 {@link TitleScreen}，因此不能只依赖
+     * {@code ScreenEvent.Opening(TitleScreen)}。这个观察入口只在尚未创建世界和
+     * 玩家、且当前确实存在一个屏幕时打开同一个菜单安全门；进入世界后不会再次
+     * 触发，也不会把 Tooltip 全量捕获推迟到游戏内。
+     */
+    public static void observeMenuState(Minecraft minecraft) {
+        if (shutdown || !clientLoadComplete || minecraft == null) {
+            return;
+        }
+        if (isMenuCandidate(
+                minecraft.level != null,
+                minecraft.player != null,
+                minecraft.screen != null
+        )) {
+            markMainMenuReady();
+        }
     }
 
     /** 仅供生命周期回归测试和诊断读取当前调度状态。 */
@@ -86,13 +125,17 @@ public final class ItemCatalogSyncService {
         }
     }
 
+    static boolean isMainMenuReadyForTest() {
+        return mainMenuReady;
+    }
+
     /**
      * 把一次性 Tooltip 捕获安排到客户端线程，并让启动流程等待其完成。
      * 这样目录不会在进入世界后“补扫”，同时 SQLite 写入仍由 Worker 执行。
      */
     public static CompletableFuture<Boolean> syncBeforeMainMenuAsync(ModPediaBridge bridge) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (shutdown || minecraft == null || !clientLoadComplete) {
+        if (shutdown || minecraft == null || !clientLoadComplete || !mainMenuReady) {
             return CompletableFuture.completedFuture(false);
         }
 
@@ -100,6 +143,9 @@ public final class ItemCatalogSyncService {
         CapturedCatalog reusable;
         String language = languageCode(minecraft);
         synchronized (STATE_LOCK) {
+            if (state == SyncState.READY && language.equals(syncedLanguage)) {
+                return CompletableFuture.completedFuture(true);
+            }
             // ClientTick、启动回调和语言检查可能在同一时间触发。所有调用方
             // 必须等待同一个 Future，不能把“已经运行”误报成 false。
             if (inFlight != null && !inFlight.isDone()) {
@@ -195,7 +241,7 @@ public final class ItemCatalogSyncService {
         Minecraft minecraft = Minecraft.getInstance();
         // 语言切换只允许在主菜单阶段触发一次新的捕获；进入世界后绝不启动
         // Tooltip 扫描，因此不会把语言检查变成游戏内持续工作。
-        if (shutdown || !clientLoadComplete || !canCaptureInMenu(minecraft)
+        if (shutdown || !clientLoadComplete || !mainMenuReady || !canCaptureInMenu(minecraft)
                 || !ModPediaBridge.get().isReady()
                 || System.currentTimeMillis() < retryAtMillis) {
             return;
@@ -212,6 +258,7 @@ public final class ItemCatalogSyncService {
         synchronized (STATE_LOCK) {
             shutdown = true;
             clientLoadComplete = false;
+            mainMenuReady = false;
             state = SyncState.SHUTDOWN;
             active = inFlight;
             inFlight = null;
@@ -259,18 +306,13 @@ public final class ItemCatalogSyncService {
                 complete(result, false, null);
                 return;
             }
-            if (job.retryingTooltips) {
-                continueTooltipRetryOnClientThread(job, bridge, result);
-                return;
-            }
-
             int end = Math.min(job.items.size(), job.nextIndex + CAPTURE_BATCH_SIZE);
             for (int index = job.nextIndex; index < end; index++) {
                 CaptureResult captured = capture(
                         job.minecraft,
                         job.language,
                         job.items.get(index),
-                        true
+                        !job.tooltipCaptureDisabled
                 );
                 job.entries.set(index, captured.entry());
                 if (!captured.tooltipAvailable()) {
@@ -278,9 +320,20 @@ public final class ItemCatalogSyncService {
                 }
                 if (captured.tooltipFailure()) {
                     job.tooltipFailures++;
-                    job.failedTooltipIndexes.add(index);
+                    // ItemStack#getTooltipLines 会广播第三方 Tooltip 事件；某个
+                    // 监听器一旦抛错，继续对后续物品调用就会让 NeoForge 为每个
+                    // 物品重复打印完整堆栈。Tooltip 只是简介增强，ID 和名称仍
+                    // 然可以完整导入，因此对本次扫描立即熔断。
+                    job.tooltipCaptureDisabled = true;
                 } else if (!captured.entry().descriptionMarkdown().isBlank()) {
                     job.tooltipSuccesses++;
+                }
+                // “config value before config is loaded” 是整合包启动阶段的
+                // 全局状态，不是单个物品坏了。保留这个字段用于诊断；实际
+                // 熔断条件覆盖所有第三方 Tooltip 异常，避免其它异常类型也
+                // 在大型注册表中造成重复日志。
+                if (captured.configurationUnavailable()) {
+                    job.tooltipCaptureDisabled = true;
                 }
             }
             job.nextIndex = end;
@@ -288,71 +341,12 @@ public final class ItemCatalogSyncService {
                 scheduleNextCapture(job, bridge, result);
                 return;
             }
-
-            if (!job.failedTooltipIndexes.isEmpty()
-                    && job.tooltipRetryRound < MAX_TOOLTIP_RETRY_ROUNDS) {
-                job.retryingTooltips = true;
-                job.tooltipRetryRound++;
-                job.retryCursor = 0;
-                job.retryIndexes = List.copyOf(job.failedTooltipIndexes);
-                job.failedTooltipIndexes.clear();
-                scheduleNextCapture(job, bridge, result, TOOLTIP_RETRY_DELAY_MS);
-                return;
-            }
-
             finishCapture(job, bridge, result);
         } catch (Throwable failure) {
             ItemNameResolver.abortLanguageIndex();
             ModPedia.LOGGER.warn("Pre-menu item catalog capture failed; previous catalog retained", failure);
             complete(result, false, failure);
         }
-    }
-
-    private static void continueTooltipRetryOnClientThread(
-            CaptureJob job,
-            ModPediaBridge bridge,
-            CompletableFuture<Boolean> result
-    ) {
-        int end = Math.min(job.retryIndexes.size(), job.retryCursor + CAPTURE_BATCH_SIZE);
-        for (int cursor = job.retryCursor; cursor < end; cursor++) {
-            int itemIndex = job.retryIndexes.get(cursor);
-            RegistryItem registryItem = job.items.get(itemIndex);
-            ItemCatalogEntry previous = job.entries.get(itemIndex);
-            TooltipCapture tooltip = captureTooltip(job.minecraft, registryItem.item());
-            if (tooltip.failure()) {
-                job.tooltipFailures++;
-                job.failedTooltipIndexes.add(itemIndex);
-                continue;
-            }
-            String description = tooltip.markdown();
-            String displayName = previous == null ? registryItem.id().toString() : previous.displayName();
-            String sourceMod = registryItem.id().getNamespace();
-            job.entries.set(itemIndex, new ItemCatalogEntry(
-                    registryItem.id().toString(),
-                    job.language,
-                    displayName,
-                    description,
-                    sourceMod,
-                    fingerprint(registryItem.id().toString(), job.language, displayName, description, sourceMod)
-            ));
-            job.tooltipSuccesses++;
-        }
-        job.retryCursor = end;
-        if (end < job.retryIndexes.size()) {
-            scheduleNextCapture(job, bridge, result);
-            return;
-        }
-        if (!job.failedTooltipIndexes.isEmpty()
-                && job.tooltipRetryRound < MAX_TOOLTIP_RETRY_ROUNDS) {
-            job.tooltipRetryRound++;
-            job.retryCursor = 0;
-            job.retryIndexes = List.copyOf(job.failedTooltipIndexes);
-            job.failedTooltipIndexes.clear();
-            scheduleNextCapture(job, bridge, result, TOOLTIP_RETRY_DELAY_MS);
-            return;
-        }
-
-        finishCapture(job, bridge, result);
     }
 
     private static void finishCapture(
@@ -370,13 +364,13 @@ public final class ItemCatalogSyncService {
                         : entry);
             }
             ModPedia.LOGGER.info(
-                    "Item catalog pre-menu capture completed: language={}, items={}, tooltip_successes={}, tooltip_fallbacks={}, tooltip_failures={}, retry_rounds={}, capture_ms={}",
+                    "Item catalog pre-menu capture completed: language={}, items={}, tooltip_successes={}, tooltip_fallbacks={}, tooltip_failures={}, tooltip_capture_disabled={}, capture_ms={}",
                     job.language,
                     completedEntries.size(),
                     job.tooltipSuccesses,
                     job.tooltipFallbacks,
                     job.tooltipFailures,
-                    job.tooltipRetryRound,
+                    job.tooltipCaptureDisabled,
                     elapsedMillis(job.startedNanos)
             );
             CapturedCatalog captured = new CapturedCatalog(job.language, List.copyOf(completedEntries));
@@ -498,7 +492,22 @@ public final class ItemCatalogSyncService {
     private static boolean canCaptureInMenu(Minecraft minecraft) {
         return minecraft != null
                 && minecraft.options != null
-                && canCaptureInMenu(minecraft.level != null, minecraft.player != null);
+                && mainMenuReady
+                && isMenuCandidate(
+                        minecraft.level != null,
+                        minecraft.player != null,
+                        minecraft.screen != null
+                );
+    }
+
+    /** 过渡屏幕也可能暂时没有 level/player，必须与真正的主菜单区分。 */
+    static boolean canCaptureInMenu(boolean hasLevel, boolean hasPlayer, boolean mainMenuScreen) {
+        return !hasLevel && !hasPlayer && mainMenuScreen;
+    }
+
+    /** 只要客户端还没有进入世界，第三方菜单替换原生 TitleScreen 也算菜单阶段。 */
+    static boolean isMenuCandidate(boolean hasLevel, boolean hasPlayer, boolean hasScreen) {
+        return !hasLevel && !hasPlayer && hasScreen;
     }
 
     private static CaptureResult capture(
@@ -537,13 +546,13 @@ public final class ItemCatalogSyncService {
         String sourceMod = registryItem.id().getNamespace();
         String fingerprint = fingerprint(itemId, language, displayName, descriptionMarkdown, sourceMod);
         return new CaptureResult(new ItemCatalogEntry(
-                itemId,
-                language,
-                displayName,
+                    itemId,
+                    language,
+                    displayName,
                 descriptionMarkdown,
                 sourceMod,
                 fingerprint
-        ), tooltip.available(), tooltip.failure());
+        ), tooltip.available(), tooltip.failure(), tooltip.configurationUnavailable());
     }
 
     private static TooltipCapture captureTooltip(Minecraft minecraft, Item item) {
@@ -563,12 +572,30 @@ public final class ItemCatalogSyncService {
                     markdown.append("- ").append(line).append('\n');
                 }
             }
-            return new TooltipCapture(markdown.toString().strip(), true, false);
+            return new TooltipCapture(markdown.toString().strip(), true, false, false);
         } catch (Throwable exception) {
-            // 不在客户端线程打印每个物品的堆栈。失败物品由当前批次记录，
-            // 等待配置稳定后只重试这些物品，而不是再次扫描整个注册表。
-            return new TooltipCapture("", false, true);
+            // 第三方 Tooltip 监听器可能在整合包配置完成前抛出异常。名称仍然
+            // 已经可以保存；对“配置未加载”直接结束本次 Tooltip 捕获，避免把
+            // 同一个异常放大到整个注册表。
+            boolean configurationUnavailable = isConfigurationUnavailable(exception);
+            return new TooltipCapture("", false, true, configurationUnavailable);
         }
+    }
+
+    /** NeoForge 事件总线有时把第三方异常包在多个 Completion/Invocation cause 中。 */
+    static boolean isConfigurationUnavailable(Throwable failure) {
+        Throwable current = failure;
+        int depth = 0;
+        while (current != null && depth++ < 8) {
+            String message = current.getMessage();
+            if (message != null
+                    && message.toLowerCase(java.util.Locale.ROOT)
+                    .contains(CONFIG_NOT_LOADED_MESSAGE)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static CaptureResult fallbackCapture(String language, RegistryItem registryItem) {
@@ -582,7 +609,7 @@ public final class ItemCatalogSyncService {
                 "",
                 sourceMod,
                 fingerprint
-        ), false, false);
+        ), false, false, false);
     }
 
     private static boolean persist(String language, List<ItemCatalogEntry> entries, ModPediaBridge bridge) {
@@ -670,13 +697,19 @@ public final class ItemCatalogSyncService {
     private record CaptureResult(
             ItemCatalogEntry entry,
             boolean tooltipAvailable,
-            boolean tooltipFailure
+            boolean tooltipFailure,
+            boolean configurationUnavailable
     ) {
     }
 
-    private record TooltipCapture(String markdown, boolean available, boolean failure) {
+    private record TooltipCapture(
+            String markdown,
+            boolean available,
+            boolean failure,
+            boolean configurationUnavailable
+    ) {
         private static TooltipCapture disabled() {
-            return new TooltipCapture("", false, false);
+            return new TooltipCapture("", false, false, false);
         }
     }
 
@@ -688,16 +721,12 @@ public final class ItemCatalogSyncService {
         private final String language;
         private final List<RegistryItem> items;
         private final List<ItemCatalogEntry> entries;
-        private final List<Integer> failedTooltipIndexes = new ArrayList<>();
-        private List<Integer> retryIndexes = List.of();
         private final long startedNanos = System.nanoTime();
         private int nextIndex;
-        private int retryCursor;
         private int tooltipFallbacks;
         private int tooltipFailures;
         private int tooltipSuccesses;
-        private int tooltipRetryRound;
-        private boolean retryingTooltips;
+        private boolean tooltipCaptureDisabled;
 
         private CaptureJob(Minecraft minecraft, String language, List<RegistryItem> items) {
             this.minecraft = minecraft;
