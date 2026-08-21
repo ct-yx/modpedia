@@ -66,6 +66,23 @@ I1–I3 的 `[~]` 不表示缺少基础实现，而是仍需在真实安装版�
 
 I2 还包含物品目录：客户端注册表冻结后按当前语言批量导入物品名称和完整 Tooltip，确认物品时作为 AI 和仅搜索模式的独立上下文；该目录与手册 FTS 保持分表结构。
 
+## 2.2 Worker 兼容层
+
+当前 Worker 已经以独立 JVM 运行，后续移植优先替换客户端适配层，不重写 Worker、AI、
+SQLite/FTS 和检索逻辑。具体基线、握手字段、能力列表和迁移矩阵见
+[WORKER_BASELINE.md](WORKER_BASELINE.md) 和 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
+
+| 工作项 | 状态 |
+| --- | --- |
+| 固定 `worker-baseline-1` 与用户级共享 lib 目录 | `[x]` |
+| 纯 Java DTO、设置/会话路径工厂和客户端扫描器移出 Worker Core | `[x]` |
+| Worker/客户端握手交换 API level、基线和能力 | `[x]` |
+| NeoForge 1.21.1 客户端适配层验证矩阵 | `[~]` |
+| 新 Minecraft 版本只替换适配层并复用 Worker | `[ ]` |
+
+兼容性规则：Worker 依赖或协议发生不兼容变化时递增基线；Minecraft 版本变化但 Worker
+依赖和协议不变时继续复用同一基线。
+
 ## 3. M0：Beta 稳定性收尾
 
 ### 工作项

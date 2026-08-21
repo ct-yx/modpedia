@@ -1,4 +1,4 @@
-package io.ctyx.modpedia.client;
+package io.ctyx.modpedia.api;
 
 /** 历史会话列表使用的轻量摘要。 */
 public record ConversationSummary(

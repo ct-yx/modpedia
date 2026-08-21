@@ -3,6 +3,7 @@ package io.ctyx.modpedia.client;
 import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ModPedia;
+import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
@@ -240,12 +241,18 @@ public final class ModPediaBridge {
                 String helloId = UUID.randomUUID().toString();
                 JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, helloId);
                 hello.addProperty("auth_token", token);
+                WorkerCompatibility.addClientHello(hello);
                 send(hello);
                 JsonObject ack = WorkerProtocol.read(reader);
                 if (ack == null
                         || !WorkerProtocol.HELLO_ACK.equals(WorkerProtocol.string(ack, "type"))
-                        || !WorkerProtocol.bool(ack, "accepted", false)) {
-                    throw new IOException("Worker 握手失败：" + WorkerProtocol.string(ack, "error"));
+                        || !WorkerProtocol.bool(ack, "accepted", false)
+                        || !WorkerCompatibility.isCompatibleAck(ack)) {
+                    String error = WorkerProtocol.string(ack, "error");
+                    if (error.isBlank() && ack != null) {
+                        error = "兼容层不匹配：" + WorkerCompatibility.describe(ack);
+                    }
+                    throw new IOException("Worker 握手失败：" + error);
                 }
                 synchronized (lifecycleLock) {
                     if (shuttingDown) {

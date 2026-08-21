@@ -1,8 +1,8 @@
 package io.ctyx.modpedia.ai;
 
-import io.ctyx.modpedia.client.ChatMessage;
-import io.ctyx.modpedia.client.MessageRole;
-import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.api.ChatMessage;
+import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;

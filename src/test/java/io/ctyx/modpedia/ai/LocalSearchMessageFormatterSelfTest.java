@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.ai;
 
+
+import io.ctyx.modpedia.api.ChatMessage;
 import io.ctyx.modpedia.search.SearchResponse;
 import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
@@ -26,7 +28,7 @@ public final class LocalSearchMessageFormatterSelfTest {
                 120,
                 List.of("压力容器")
         );
-        io.ctyx.modpedia.client.ChatMessage formatted = LocalSearchMessageFormatter.format(
+        io.ctyx.modpedia.api.ChatMessage formatted = LocalSearchMessageFormatter.format(
                 "压力容器",
                 new SearchResponse(SearchStatus.READY, "压力容器", List.of(result), "")
         );
@@ -42,7 +44,7 @@ public final class LocalSearchMessageFormatterSelfTest {
                 formatted,
                 "demo:pressure"
         );
-        io.ctyx.modpedia.client.ChatMessage withItem = LocalSearchMessageFormatter.format(
+        io.ctyx.modpedia.api.ChatMessage withItem = LocalSearchMessageFormatter.format(
                 "[[item:demo:pressure|压力容器]] 怎么使用",
                 new SearchResponse(SearchStatus.NO_MATCH, "", List.of(), ""),
                 List.of(new ItemCatalogEntry(
@@ -72,7 +74,7 @@ public final class LocalSearchMessageFormatterSelfTest {
 
     private static final class ChatMessageAssertions {
         private static void assertMessage(
-                io.ctyx.modpedia.client.ChatMessage message,
+                io.ctyx.modpedia.api.ChatMessage message,
                 String failure,
                 String expected
         ) {
@@ -82,7 +84,7 @@ public final class LocalSearchMessageFormatterSelfTest {
         }
 
         private static void assertSource(
-                io.ctyx.modpedia.client.ChatMessage message,
+                io.ctyx.modpedia.api.ChatMessage message,
                 String expectedDocumentId
         ) {
             if (message.sources().stream().noneMatch(source -> expectedDocumentId.equals(source.documentId()))) {

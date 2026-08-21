@@ -1,8 +1,12 @@
-package io.ctyx.modpedia.knowledge;
+package io.ctyx.modpedia.client;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.ctyx.modpedia.knowledge.GuideLocaleSelector;
+import io.ctyx.modpedia.knowledge.KnowledgeContentKind;
+import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
+import io.ctyx.modpedia.knowledge.ScannedResource;
 import net.neoforged.fml.ModList;
 import net.neoforged.neoforgespi.language.IModFileInfo;
 import net.neoforged.neoforgespi.language.IModInfo;

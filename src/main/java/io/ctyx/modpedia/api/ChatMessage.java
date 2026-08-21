@@ -1,4 +1,4 @@
-package io.ctyx.modpedia.client;
+package io.ctyx.modpedia.api;
 
 import io.ctyx.modpedia.task.TaskSearchSummary;
 

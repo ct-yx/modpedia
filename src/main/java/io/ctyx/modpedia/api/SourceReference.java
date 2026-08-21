@@ -1,4 +1,4 @@
-package io.ctyx.modpedia.client;
+package io.ctyx.modpedia.api;
 
 public record SourceReference(
         String documentId,

@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.ChatMessage;
 import java.util.List;
 
 public sealed interface AssistantUiState

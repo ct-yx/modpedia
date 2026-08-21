@@ -4,8 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import io.ctyx.modpedia.storage.ModPediaPaths;
-import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -35,12 +33,7 @@ public final class AiSettingsStore {
         this.protector = new ApiKeyProtector(machineIdentity);
     }
 
-    public static AiSettingsStore runtime() {
-        ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
-        paths.migrateLegacyQuietly();
-        return new AiSettingsStore(paths.aiSettings());
-    }
-
+    // Worker 只接收显式路径；客户端运行时路径由 AiAssistantSession 适配层提供。
     /** 首次读取时解密一次；后续请求直接复用当前进程缓存。 */
     public synchronized AiSettings load() {
         if (loaded) {

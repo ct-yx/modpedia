@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.storage;
 
+import io.ctyx.modpedia.compat.WorkerCompatibility;
+
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -24,7 +26,7 @@ public final class ModPediaPaths {
      * Worker 依赖的固定兼容基线。只要 Worker 运行库不变，不同 ModPedia 版本和
      * 不同游戏实例都复用这一套 lib；增删或升级嵌入依赖时必须递增该编号。
      */
-    public static final String WORKER_LIBRARY_BASELINE = "worker-baseline-1";
+    public static final String WORKER_LIBRARY_BASELINE = WorkerCompatibility.WORKER_LIBRARY_BASELINE;
 
     private final Path configDirectory;
     private final Path root;

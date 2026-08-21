@@ -1,7 +1,7 @@
 package io.ctyx.modpedia.ai;
 
 import com.google.gson.Gson;
-import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.api.SourceReference;
 
 import java.util.ArrayList;
 import java.util.List;

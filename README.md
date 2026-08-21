@@ -379,6 +379,8 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - [架构设计](docs/ARCHITECTURE.md)
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
 - [后续开发路线](docs/ROADMAP.md)
+- [Worker 基线与兼容层](docs/WORKER_BASELINE.md)
+- [Worker 验证矩阵](docs/WORKER_VERIFICATION_MATRIX.md)
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)

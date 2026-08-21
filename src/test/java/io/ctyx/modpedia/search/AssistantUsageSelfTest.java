@@ -3,7 +3,7 @@ package io.ctyx.modpedia.search;
 import io.ctyx.modpedia.knowledge.KnowledgeCompiler;
 import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.ScannedResource;
-import io.ctyx.modpedia.client.BuiltInGuide;
+import io.ctyx.modpedia.knowledge.BuiltInGuide;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
