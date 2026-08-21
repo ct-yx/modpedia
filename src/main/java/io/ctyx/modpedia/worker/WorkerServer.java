@@ -8,6 +8,7 @@ import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ai.AiSettingsStore;
 import io.ctyx.modpedia.ai.AiClient;
 import io.ctyx.modpedia.ai.AiModelCompatibilityTester;
+import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.ai.ConversationRecord;
 import io.ctyx.modpedia.ai.ConversationStore;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
@@ -185,16 +186,25 @@ public final class WorkerServer {
         if (hello == null || !WorkerProtocol.HELLO.equals(WorkerProtocol.string(hello, "type"))) {
             return false;
         }
-        boolean valid = WorkerProtocol.integer(hello, "protocol_version", -1) == WorkerProtocol.VERSION
-                && expectedToken.equals(WorkerProtocol.string(hello, "auth_token"));
+        boolean protocolValid = WorkerProtocol.integer(hello, "protocol_version", -1)
+                == WorkerProtocol.VERSION;
+        boolean tokenValid = expectedToken.equals(WorkerProtocol.string(hello, "auth_token"));
+        boolean compatibilityValid = WorkerCompatibility.isCompatibleClient(hello);
+        boolean valid = protocolValid && tokenValid && compatibilityValid;
         JsonObject response = WorkerProtocol.message(
                 WorkerProtocol.HELLO_ACK,
                 WorkerProtocol.string(hello, "request_id")
         );
+        WorkerCompatibility.addWorkerAck(response);
         response.addProperty("accepted", valid);
         response.addProperty("worker_pid", ProcessHandle.current().pid());
         if (!valid) {
-            response.addProperty("error", "Worker 认证失败或协议版本不匹配");
+            String error = !protocolValid
+                    ? "Worker 协议版本不匹配"
+                    : !tokenValid
+                    ? "Worker 认证失败"
+                    : "Worker 兼容层不匹配：" + WorkerCompatibility.describe(hello);
+            response.addProperty("error", error);
         }
         send(response);
         return valid;

@@ -27,7 +27,7 @@
 https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 ```
 
-后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
+后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。Worker 独立 JVM 的基线、握手字段和迁移矩阵见[Worker 基线与兼容层](WORKER_BASELINE.md)。
 
 运行目录、SQLite 数据库、测试日志和测试 JAR 均属于本地验证产物，不进入提交；交付记录统一写入
 `docs/DEVELOPMENT_LOG.md`。
@@ -72,6 +72,9 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
+- [~] Worker 使用 `worker-baseline-1`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
+  具体基线、禁止依赖和迁移矩阵见 [docs/WORKER_BASELINE.md](WORKER_BASELINE.md)；可执行证据矩阵见
+[WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
 - [ ] 只有基准证明必要时才引入段落预索引或向量检索。
 

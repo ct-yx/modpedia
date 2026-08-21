@@ -408,6 +408,19 @@ def workerConcurrencySelfTest = tasks.register('workerConcurrencySelfTest', Java
     mainClass = 'io.ctyx.modpedia.worker.WorkerConcurrencySelfTest'
 }
 
+def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.compat.WorkerCoreBoundarySelfTest'
+    systemProperty 'modpedia.projectRoot', project.projectDir.absolutePath
+}
+
+def workerCompatibilitySelfTest = tasks.register('workerCompatibilitySelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.compat.WorkerCompatibilitySelfTest'
+}
+
 def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     // 使用最终 Jar-in-Jar 产物启动子 JVM，验证发布 JAR 的 Worker 入口，而不是只
     // 验证 Gradle 开发 classpath。测试夹具不调用模型，也不访问网络。
@@ -633,6 +646,8 @@ tasks.named('test', Test) {
     dependsOn workerGuideScannerSelfTest
     dependsOn knowledgeOperationGateSelfTest
     dependsOn workerConcurrencySelfTest
+    dependsOn workerCoreBoundarySelfTest
+    dependsOn workerCompatibilitySelfTest
     dependsOn workerIpcSelfTest
     dependsOn modPediaPathsSelfTest
     dependsOn knowledgeBenchmarkFixtureSelfTest

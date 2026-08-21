@@ -517,6 +517,8 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Architecture](docs/ARCHITECTURE.md)
 - [Knowledge-base design](docs/KNOWLEDGE_BASE.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Worker baseline and compatibility](docs/WORKER_BASELINE.md)
+- [Worker verification matrix](docs/WORKER_VERIFICATION_MATRIX.md)
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)
 - [Known limitations](KNOWN_LIMITATIONS.md)

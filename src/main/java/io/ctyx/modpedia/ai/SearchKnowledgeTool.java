@@ -1,12 +1,13 @@
 package io.ctyx.modpedia.ai;
 
+import io.ctyx.modpedia.knowledge.BuiltInGuide;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
-import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
 import io.ctyx.modpedia.search.KnowledgeScope;

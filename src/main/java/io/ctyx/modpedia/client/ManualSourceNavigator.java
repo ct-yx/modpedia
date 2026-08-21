@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.ModPedia;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;

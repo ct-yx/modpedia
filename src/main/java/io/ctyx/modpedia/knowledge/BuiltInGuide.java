@@ -1,5 +1,6 @@
-package io.ctyx.modpedia.client;
+package io.ctyx.modpedia.knowledge;
 
+import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
 

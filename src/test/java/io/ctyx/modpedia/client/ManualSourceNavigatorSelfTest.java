@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.client;
 
+
+import io.ctyx.modpedia.api.SourceReference;
 import java.util.List;
 
 /** GuideME 来源跳转参数的纯 Java 回归测试。 */

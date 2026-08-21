@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.ChatMessage;
+import io.ctyx.modpedia.api.MessageRole;
 import io.ctyx.modpedia.task.TaskSearchSummary;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;

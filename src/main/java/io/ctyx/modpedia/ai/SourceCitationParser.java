@@ -1,6 +1,6 @@
 package io.ctyx.modpedia.ai;
 
-import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.api.SourceReference;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
