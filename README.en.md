@@ -317,7 +317,10 @@ derived files and should stay out of the modpack. Worker shared libraries live
 at `~/.modpedia/worker/lib/worker-baseline-1/`; they are user-level files and
 must not be copied into a modpack. ModPedia versions and game instances using
 the same Worker baseline reuse that directory. Increment the baseline number
-when Worker dependencies change.
+when Worker dependencies change. The directory contains `manifest.sha256` with
+the embedded JAR sizes and SHA-256 digests. Startup validates and atomically
+repairs missing or corrupted libraries, and the Worker validates the manifest
+again before opening IPC.
 
 Keep these fact sources with the modpack:
 

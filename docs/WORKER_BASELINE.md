@@ -30,6 +30,17 @@
 同一基线可以被不同 ModPedia 版本和不同游戏实例复用。实例自己的 Worker JAR、
 IPC 载荷、日志、会话和知识库仍然位于实例运行目录，不放入共享 `lib`。
 
+共享目录同时维护：
+
+```text
+~/.modpedia/worker/lib/worker-baseline-1/manifest.sha256
+```
+
+启动 Worker 前，客户端从当前发布 JAR 的 `META-INF/jarjar/*.jar` 计算 SHA-256，
+在跨实例文件锁内校验清单和每个依赖。缺失、截断、被替换或版本变化的文件会先写入
+临时文件，再原子替换；随后 Worker JVM 自己再次校验清单，校验失败时不会建立 IPC
+连接。清单不包含 API Key、Token 或绝对路径。
+
 ## 2. 兼容规则
 
 ```text
@@ -37,6 +48,7 @@ Worker 依赖或协议发生不兼容变化 → 递增基线编号
 Worker API level 发生不兼容变化   → 递增 API level，并通常递增基线编号
 Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用同一基线
 客户端适配层变化                  → 只更新 client_adapter，不自动递增 Worker 基线
+共享 lib 内容指纹变化              → 必须递增基线编号并生成新目录
 ```
 
 如果新客户端需要 Worker 尚不存在的能力，应先增加握手能力字段并完成双方实现；

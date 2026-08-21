@@ -3,6 +3,7 @@ package io.ctyx.modpedia.client;
 import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ModPedia;
+import io.ctyx.modpedia.compat.WorkerLibraryVerifier;
 import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
@@ -49,7 +50,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
@@ -923,6 +923,10 @@ public final class ModPediaBridge {
         command.add(paths.conversationsRoot().toString());
         command.add("--settings");
         command.add(paths.aiSettings().toString());
+        command.add("--worker-library");
+        command.add(paths.workerLibraryRoot().toString());
+        command.add("--worker-baseline");
+        command.add(WorkerCompatibility.WORKER_LIBRARY_BASELINE);
         Path log = workerDirectory.resolve("worker.log");
         ProcessBuilder builder = new ProcessBuilder(command)
                 .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()));
@@ -959,8 +963,11 @@ public final class ModPediaBridge {
                     .getCodeSource().getLocation().toURI());
             entries.add(codeSource.toString());
             if (Files.isRegularFile(codeSource) && codeSource.toString().endsWith(".jar")) {
-                entries.addAll(extractNestedJars(codeSource, sharedLibraryDirectory));
+                entries.addAll(WorkerLibraryVerifier.synchronize(codeSource, sharedLibraryDirectory).classpath()
+                        .stream().map(Path::toString).toList());
             }
+        } catch (IOException exception) {
+            throw exception;
         } catch (Exception exception) {
             ModPedia.LOGGER.debug("Worker classpath code source unavailable", exception);
         }
@@ -973,10 +980,23 @@ public final class ModPediaBridge {
             );
             if (installedArchive != null) {
                 entries.add(installedArchive.toString());
-                entries.addAll(extractNestedJars(installedArchive, sharedLibraryDirectory));
+                WorkerLibraryVerifier.SyncResult libraries = WorkerLibraryVerifier.synchronize(
+                        installedArchive,
+                        sharedLibraryDirectory
+                );
+                entries.addAll(libraries.classpath().stream().map(Path::toString).toList());
+                if (libraries.changed()) {
+                    ModPedia.LOGGER.info(
+                            "worker_library_repaired baseline={} files={}",
+                            libraries.baseline(),
+                            libraries.repairedFiles()
+                    );
+                }
             } else {
                 ModPedia.LOGGER.warn("未找到包含 {} 的 ModPedia 发布 JAR", WORKER_MAIN_ENTRY);
             }
+        } catch (IOException exception) {
+            throw exception;
         } catch (Exception exception) {
             ModPedia.LOGGER.warn("扫描 ModPedia Worker 发布 JAR 失败", exception);
         }
@@ -1026,46 +1046,6 @@ public final class ModPediaBridge {
         } catch (Exception exception) {
             ModPedia.LOGGER.debug("Worker 侧运行时 API 路径不可用：{}", className, exception);
         }
-    }
-
-    private List<String> extractNestedJars(Path jar, Path outputDirectory) throws IOException {
-        Files.createDirectories(outputDirectory);
-        List<String> result = new ArrayList<>();
-        try (ZipFile zip = new ZipFile(jar.toFile())) {
-            var entries = zip.stream()
-                    .filter(entry -> !entry.isDirectory())
-                    .filter(entry -> entry.getName().startsWith("META-INF/jarjar/")
-                            && entry.getName().endsWith(".jar"))
-                    .toList();
-            for (ZipEntry entry : entries) {
-                Path target = outputDirectory.resolve(Path.of(entry.getName()).getFileName().toString());
-                if (!Files.isRegularFile(target)) {
-                    Path temporary = outputDirectory.resolve(
-                            target.getFileName() + ".tmp-" + UUID.randomUUID()
-                    );
-                    try {
-                        try (var input = zip.getInputStream(entry)) {
-                            Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
-                        }
-                        try {
-                            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
-                        } catch (java.nio.file.FileAlreadyExistsException ignored) {
-                            // 另一个游戏实例已经完成同一基线的提取。
-                        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                            try {
-                                Files.move(temporary, target);
-                            } catch (java.nio.file.FileAlreadyExistsException ignoredAgain) {
-                                // 另一个游戏实例已经完成同一基线的提取。
-                            }
-                        }
-                    } finally {
-                        Files.deleteIfExists(temporary);
-                    }
-                }
-                result.add(target.toString());
-            }
-        }
-        return result;
     }
 
     private void readEvents(BufferedReader reader, Socket observedSocket, Process observedProcess) {

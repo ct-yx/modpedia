@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.ctyx.modpedia.compat.WorkerCompatibility;
+import io.ctyx.modpedia.compat.WorkerLibraryVerifier;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
@@ -21,7 +22,6 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -32,7 +32,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Predicate;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
@@ -870,6 +869,13 @@ public final class WorkerIpcSelfTest {
             command.add(conversations.toString());
             command.add("--settings");
             command.add(settings.toString());
+            String publishedJar = System.getProperty("modpedia.worker.jar", "").strip();
+            if (!publishedJar.isBlank() && Files.isRegularFile(Path.of(publishedJar))) {
+                command.add("--worker-library");
+                command.add(libraryDirectory.toAbsolutePath().normalize().toString());
+                command.add("--worker-baseline");
+                command.add(WorkerCompatibility.WORKER_LIBRARY_BASELINE);
+            }
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
             return builder
@@ -887,13 +893,8 @@ public final class WorkerIpcSelfTest {
             Files.createDirectories(libraryDirectory);
             List<String> entries = new ArrayList<>();
             entries.add(jar.toString());
-            try (ZipFile zip = new ZipFile(jar.toFile())) {
-                zip.stream()
-                        .filter(entry -> !entry.isDirectory())
-                        .filter(entry -> entry.getName().startsWith("META-INF/jarjar/"))
-                        .filter(entry -> entry.getName().endsWith(".jar"))
-                        .forEach(entry -> extract(zip, entry, libraryDirectory, entries));
-            }
+            entries.addAll(WorkerLibraryVerifier.synchronize(jar, libraryDirectory).classpath()
+                    .stream().map(Path::toString).toList());
             // 发布 JAR 不再携带 SLF4J；真实游戏由 NeoForge 模块层提供，测试进程
             // 从自身的编译 classpath 取出同一份 API，模拟生产 Worker 的装配方式。
             addClassLocation(entries, "org.slf4j.LoggerFactory");
@@ -918,19 +919,6 @@ public final class WorkerIpcSelfTest {
             }
         }
 
-        private static void extract(ZipFile zip, ZipEntry entry, Path directory, List<String> output) {
-            try {
-                Path target = directory.resolve(Path.of(entry.getName()).getFileName().toString());
-                if (!Files.isRegularFile(target)) {
-                    try (var input = zip.getInputStream(entry)) {
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                }
-                output.add(target.toString());
-            } catch (IOException exception) {
-                throw new RuntimeException("提取 Worker 依赖失败：" + entry.getName(), exception);
-            }
-        }
 
         private void send(JsonObject value) throws IOException {
             WorkerProtocol.write(writer, value);

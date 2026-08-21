@@ -75,6 +75,9 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 - [~] Worker 使用 `worker-baseline-1`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
   具体基线、禁止依赖和迁移矩阵见 [docs/WORKER_BASELINE.md](WORKER_BASELINE.md)；可执行证据矩阵见
 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
+- [x] Worker 共享 lib 使用 `manifest.sha256`、SHA-256 指纹、跨进程文件锁和原子替换；客户端同步后，
+  Worker JVM 在 IPC 前再次校验，`workerLibraryVerifierSelfTest` 覆盖首次安装、无变化复用、损坏修复、
+  依赖升级和清单重建。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
 - [ ] 只有基准证明必要时才引入段落预索引或向量检索。
 

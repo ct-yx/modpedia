@@ -1,6 +1,8 @@
 package io.ctyx.modpedia.worker;
 
 import io.ctyx.modpedia.storage.ModPediaPaths;
+import io.ctyx.modpedia.compat.WorkerCompatibility;
+import io.ctyx.modpedia.compat.WorkerLibraryVerifier;
 
 import java.net.Socket;
 import java.nio.file.Path;
@@ -40,6 +42,17 @@ public final class WorkerMain {
         Path settingsPath = Path.of(options.getOrDefault(
                 "settings", paths.aiSettings().toString()
         ));
+        String libraryOption = options.get("worker-library");
+        if (libraryOption != null && !libraryOption.isBlank()) {
+            Path libraryRoot = Path.of(libraryOption).toAbsolutePath().normalize();
+            WorkerLibraryVerifier.Verification verification = WorkerLibraryVerifier.verifyManifest(
+                    libraryRoot,
+                    options.getOrDefault("worker-baseline", WorkerCompatibility.WORKER_LIBRARY_BASELINE)
+            );
+            if (!verification.valid()) {
+                throw new IllegalStateException("Worker 共享 lib 校验失败：" + verification.summary());
+            }
+        }
 
         try (Socket socket = new Socket(host, port)) {
             socket.setTcpNoDelay(true);

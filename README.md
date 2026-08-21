@@ -212,7 +212,9 @@ config/modpedia/runtime/knowledge/state.json
 这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
 数据库文件也属于派生文件，不应进入整合包。Worker 的共享依赖库位于用户目录
 `~/.modpedia/worker/lib/worker-baseline-1/`，也不属于整合包，不要复制或打包；同一 Worker 基线的
-不同 ModPedia 版本和游戏实例会复用该目录。Worker 依赖发生变化时会递增基线编号。
+不同 ModPedia 版本和游戏实例会复用该目录。目录中的 `manifest.sha256` 保存嵌入 JAR 的大小和
+SHA-256；启动时会校验并原子修复损坏或不匹配的库，Worker 在建立 IPC 前还会再次校验。Worker
+依赖发生变化时会递增基线编号。
 
 整合包作者需要随包保留的知识源如下：
 
