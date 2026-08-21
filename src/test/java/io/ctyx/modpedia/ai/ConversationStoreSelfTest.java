@@ -1,9 +1,9 @@
 package io.ctyx.modpedia.ai;
 
-import io.ctyx.modpedia.client.ChatMessage;
-import io.ctyx.modpedia.client.ConversationSummary;
-import io.ctyx.modpedia.client.MessageRole;
-import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.api.ChatMessage;
+import io.ctyx.modpedia.api.ConversationSummary;
+import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.SourceReference;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

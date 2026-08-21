@@ -21,12 +21,12 @@ import io.ctyx.modpedia.ModPedia;
 import io.ctyx.modpedia.ModPediaClient;
 import io.ctyx.modpedia.client.AssistantSession;
 import io.ctyx.modpedia.client.AssistantUiState;
-import io.ctyx.modpedia.client.BuiltInGuide;
-import io.ctyx.modpedia.client.ConversationSummary;
+import io.ctyx.modpedia.knowledge.BuiltInGuide;
+import io.ctyx.modpedia.api.ConversationSummary;
 import io.ctyx.modpedia.client.JeiRecipeNavigator;
 import io.ctyx.modpedia.storage.ModPediaPaths;
-import io.ctyx.modpedia.client.MessageRole;
-import io.ctyx.modpedia.client.SourceReference;
+import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.search.RetrievalService;
 import io.ctyx.modpedia.search.SearchLanguage;
 import io.ctyx.modpedia.search.SearchQuery;
@@ -87,9 +87,9 @@ public final class AiAssistantSession implements AssistantSession {
 
     public AiAssistantSession() {
         this(
-                new RetrievalService(defaultKnowledgeRoot()),
-                ConversationStore.runtime(),
-                AiSettingsStore.runtime(),
+                new RetrievalService(defaultPaths().runtimeKnowledgeRoot()),
+                new ConversationStore(defaultPaths().conversationsRoot()),
+                new AiSettingsStore(defaultPaths().aiSettings()),
                 PromptBuilder.runtime()
         );
     }
@@ -150,7 +150,7 @@ public final class AiAssistantSession implements AssistantSession {
                 settings.streaming(),
                 AiClient.effectiveModelName(settings.model())
         );
-        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.client.ChatMessage(
+        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.api.ChatMessage(
                 MessageRole.USER,
                 normalized,
                 List.of()
@@ -241,12 +241,12 @@ public final class AiAssistantSession implements AssistantSession {
 
         lastPrompt = null;
         String prompt = BuiltInGuide.prompt();
-        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.client.ChatMessage(
+        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.api.ChatMessage(
                 MessageRole.USER,
                 prompt,
                 List.of()
         ));
-        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.client.ChatMessage(
+        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.api.ChatMessage(
                 MessageRole.ASSISTANT,
                 markdown,
                 List.of(BuiltInGuide.source())
@@ -1047,7 +1047,7 @@ public final class AiAssistantSession implements AssistantSession {
                 traces == null ? 0 : traces.size(),
                 sources.size()
         );
-        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.client.ChatMessage(
+        conversationStore.appendMessage(conversationId, new io.ctyx.modpedia.api.ChatMessage(
                 MessageRole.ASSISTANT,
                 displayMarkdown,
                 sources,
@@ -1186,10 +1186,10 @@ public final class AiAssistantSession implements AssistantSession {
         return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
     }
 
-    private static java.nio.file.Path defaultKnowledgeRoot() {
+    private static ModPediaPaths defaultPaths() {
         ModPediaPaths paths = ModPediaPaths.forConfig(FMLPaths.CONFIGDIR.get());
         paths.migrateLegacyQuietly();
-        return paths.runtimeKnowledgeRoot();
+        return paths;
     }
 
     public interface StreamingAssistantService {

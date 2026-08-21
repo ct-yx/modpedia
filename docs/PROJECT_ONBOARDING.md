@@ -235,8 +235,9 @@ git diff --check
 3. 阅读 docs/KNOWLEDGE_BASE.md
 4. 阅读 docs/DEVELOPMENT.md 和 docs/ROADMAP.md
 5. 阅读 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)，了解 AI 上下文、数据库 v8 和外部百科的统一后续路线
-6. 运行 ./gradlew test
-7. 检查 ModPediaBridge、StartupKnowledgeBootstrap 和 ItemCatalogSyncService
-8. 按 docs/DEVELOPMENT.md 与 NEXT_DEVELOPMENT_PLAN.md 的清单补充对应自测
-9. 再启动 runClient 或 runServer 做人工回归
+6. 阅读 [WORKER_BASELINE.md](WORKER_BASELINE.md) 和 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)，确认独立 Worker 基线、握手兼容和验证矩阵
+7. 运行 ./gradlew test
+8. 检查 ModPediaBridge、StartupKnowledgeBootstrap 和 ItemCatalogSyncService
+9. 按 docs/DEVELOPMENT.md、NEXT_DEVELOPMENT_PLAN.md 与 WORKER_BASELINE.md 的清单补充对应自测
+10. 再启动 runClient 或 runServer 做人工回归
 ```

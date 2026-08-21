@@ -1,6 +1,6 @@
 package io.ctyx.modpedia.ai;
 
-import io.ctyx.modpedia.client.ChatMessage;
+import io.ctyx.modpedia.api.ChatMessage;
 
 import java.util.List;
 

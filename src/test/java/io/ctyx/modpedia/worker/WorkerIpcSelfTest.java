@@ -3,6 +3,7 @@ package io.ctyx.modpedia.worker;
 import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
@@ -58,10 +59,12 @@ public final class WorkerIpcSelfTest {
             verifyPublishedJarDoesNotBundleRuntimeGson();
             verifyRejectedHandshake(root.resolve("bad-token"), "token-ok", "token-bad", false);
             verifyRejectedHandshake(root.resolve("bad-version"), "token-version", "token-version", true);
+            verifyRejectedCompatibilityHandshake(root.resolve("bad-baseline"));
 
             try (Harness harness = Harness.start(root.resolve("valid"), "token-valid")) {
                 JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "hello-valid");
                 hello.addProperty("auth_token", "token-valid");
+                WorkerCompatibility.addClientHello(hello);
                 hello.addProperty("conversation_id", CONVERSATION_ID);
                 harness.send(hello);
                 JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
@@ -259,6 +262,7 @@ public final class WorkerIpcSelfTest {
         try (Harness harness = Harness.start(root, expectedToken)) {
             JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "hello-rejected");
             hello.addProperty("auth_token", suppliedToken);
+            WorkerCompatibility.addClientHello(hello);
             if (wrongVersion) {
                 hello.addProperty("protocol_version", WorkerProtocol.VERSION + 1);
             }
@@ -274,12 +278,30 @@ public final class WorkerIpcSelfTest {
         }
     }
 
+    private static void verifyRejectedCompatibilityHandshake(Path root) throws Exception {
+        try (Harness harness = Harness.start(root, "token-compatibility")) {
+            JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "hello-bad-baseline");
+            hello.addProperty("auth_token", "token-compatibility");
+            WorkerCompatibility.addClientHello(hello);
+            hello.addProperty("worker_baseline", "worker-baseline-999");
+            harness.send(hello);
+            JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
+                    WorkerProtocol.string(event, "type")));
+            check(!WorkerProtocol.bool(ack, "accepted", true), "错误 Worker 基线应拒绝握手");
+            check(WorkerProtocol.string(ack, "error").contains("兼容层"),
+                    "兼容层拒绝应返回明确错误");
+            check(harness.process.waitFor(START_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS),
+                    "兼容层不匹配后 Worker 应退出");
+        }
+    }
+
     /** 关闭 Worker 后用同一配置目录重启，确认历史索引和会话消息仍可恢复。 */
     private static void verifyConversationRestart(Path root) throws Exception {
         String conversationId;
         try (Harness harness = Harness.start(root, "token-restart")) {
             JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "restart-hello-one");
             hello.addProperty("auth_token", "token-restart");
+            WorkerCompatibility.addClientHello(hello);
             harness.send(hello);
             JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
                     WorkerProtocol.string(event, "type")));
@@ -326,6 +348,7 @@ public final class WorkerIpcSelfTest {
         try (Harness harness = Harness.start(root, "token-restart")) {
             JsonObject hello = WorkerProtocol.message("hello", "restart-hello-two");
             hello.addProperty("auth_token", "token-restart");
+            WorkerCompatibility.addClientHello(hello);
             harness.send(hello);
             JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
                     WorkerProtocol.string(event, "type")));

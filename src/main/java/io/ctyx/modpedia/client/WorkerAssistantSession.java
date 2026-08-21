@@ -1,5 +1,10 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.ChatMessage;
+import io.ctyx.modpedia.api.ConversationSummary;
+import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.SourceReference;
+import io.ctyx.modpedia.knowledge.BuiltInGuide;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;

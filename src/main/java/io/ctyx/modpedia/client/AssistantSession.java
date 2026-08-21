@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.ConversationSummary;
+import io.ctyx.modpedia.knowledge.BuiltInGuide;
 import java.util.List;
 import java.util.function.Consumer;
 

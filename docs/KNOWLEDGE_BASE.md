@@ -382,7 +382,7 @@ config/modpedia/runtime/conversations/
 第二阶段已经接入以下运行时组件：
 
 ```text
-LocalGuideScanner
+client.LocalGuideScanner
   ↓
 MarkdownDocumentConverter / JsonGuideDocumentConverter
   ↓

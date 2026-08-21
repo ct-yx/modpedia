@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.ChatMessage;
 import net.minecraft.client.gui.Font;
 
 import java.util.List;

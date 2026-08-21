@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.ai.SourceCitationParser;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.Font;

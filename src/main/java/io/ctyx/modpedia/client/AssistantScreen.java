@@ -1,5 +1,10 @@
 package io.ctyx.modpedia.client;
 
+import io.ctyx.modpedia.api.ChatMessage;
+import io.ctyx.modpedia.api.ConversationSummary;
+import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.SourceReference;
+import io.ctyx.modpedia.knowledge.BuiltInGuide;
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.client.Minecraft;

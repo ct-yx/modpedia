@@ -16,6 +16,7 @@ ModPedia Worker JVM
     ├── ConversationStore / ChatMemory
     └── Markdown、Wiki 和任务静态导入
     │
+    │  WorkerCompatibility：API level、基线、能力集合
     ▼
 AssistantScreen（非暂停客户端 Screen）
     │
@@ -284,8 +285,10 @@ safeArea = viewport - 12px;
 ## 6. 当前类结构
 
 ```text
+io.ctyx.modpedia.client/
+└── LocalGuideScanner              # NeoForge 资源扫描，只在客户端适配层
+
 io.ctyx.modpedia.knowledge/
-├── LocalGuideScanner
 ├── ScannedResource
 ├── GuideDocumentConverter
 ├── MarkdownDocumentConverter

@@ -1,10 +1,11 @@
 package io.ctyx.modpedia.ai;
 
+import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.SourceReference;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import io.ctyx.modpedia.client.ChatMessage;
-import io.ctyx.modpedia.client.ConversationSummary;
-import io.ctyx.modpedia.storage.ModPediaPaths;
+import io.ctyx.modpedia.api.ChatMessage;
+import io.ctyx.modpedia.api.ConversationSummary;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -35,14 +36,7 @@ public final class ConversationStore {
         load();
     }
 
-    public static ConversationStore runtime() {
-        ModPediaPaths paths = ModPediaPaths.forConfig(
-                net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get()
-        );
-        paths.migrateLegacyQuietly();
-        return new ConversationStore(paths.conversationsRoot());
-    }
-
+    // Worker 只接收显式路径；客户端运行时路径由 AiAssistantSession 适配层提供。
     public synchronized List<ConversationSummary> summaries() {
         return records.values().stream()
                 .sorted(Comparator.comparingLong(ConversationRecord::updatedAt).reversed())
@@ -148,7 +142,7 @@ public final class ConversationStore {
         List<ChatMessage> messages = new ArrayList<>(current.messages());
         messages.add(message);
         String title = current.title();
-        if (title.equals("新会话") && message.role() == io.ctyx.modpedia.client.MessageRole.USER) {
+        if (title.equals("新会话") && message.role() == io.ctyx.modpedia.api.MessageRole.USER) {
             title = truncate(message.markdown().replaceAll("\\s+", " ").strip(), 48);
         }
         replace(new ConversationRecord(
@@ -185,7 +179,7 @@ public final class ConversationStore {
 
     public synchronized void removeLastMessageIfRole(
             String id,
-            io.ctyx.modpedia.client.MessageRole role
+            io.ctyx.modpedia.api.MessageRole role
     ) {
         ConversationRecord current = records.get(id);
         if (current == null || current.messages().isEmpty()) {
@@ -271,13 +265,13 @@ public final class ConversationStore {
         List<ChatMessage> migratedMessages = new ArrayList<>();
         boolean changed = false;
         for (ChatMessage message : record.messages()) {
-            if (message == null || message.role() != io.ctyx.modpedia.client.MessageRole.ASSISTANT
+            if (message == null || message.role() != io.ctyx.modpedia.api.MessageRole.ASSISTANT
                     || message.sources() == null || !message.sources().isEmpty()
                     || SourceCitationParser.parse(message.markdown()).isEmpty()) {
                 migratedMessages.add(message);
                 continue;
             }
-            List<io.ctyx.modpedia.client.SourceReference> sources = SourceCitationParser.selectSources(
+            List<io.ctyx.modpedia.api.SourceReference> sources = SourceCitationParser.selectSources(
                     record.searchTraces(),
                     message.markdown(),
                     5

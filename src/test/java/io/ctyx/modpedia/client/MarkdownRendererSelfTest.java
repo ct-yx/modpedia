@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.client;
 
+
+import io.ctyx.modpedia.api.SourceReference;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
