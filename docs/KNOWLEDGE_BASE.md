@@ -81,6 +81,11 @@ JSONL 载荷，IPC 只传递载荷路径；Worker 读取完成载荷后使用一
 20,000 条夹具的 Worker 文件载荷同步、首次写入和相同指纹复用均保持在毫秒级，实际整合包仍以
 客户端加载日志和 `worker.log` 中的 `payload_read_ms` / `database_write_ms` 为准。
 
+实例级 `config/modpedia/runtime/worker/` 只保存 `worker.log` 和临时 payload。Worker 嵌入依赖
+统一缓存到用户级 `~/.modpedia/worker/lib/worker-baseline-1/`；相同基线的不同 ModPedia 版本和
+游戏实例共用该目录。依赖发生增删或升级时必须递增基线编号，旧实例启动时会把历史
+`runtime/worker/lib/` 合并到当前基线目录。
+
 ### `runtime/knowledge/cache/`
 
 保存来源清单、关键词索引和扫描报告。

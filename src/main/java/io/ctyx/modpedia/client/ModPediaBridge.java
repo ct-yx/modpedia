@@ -900,7 +900,7 @@ public final class ModPediaBridge {
         command.add(javaExecutable());
         command.add("-Dmodpedia.worker=true");
         command.add("-cp");
-        command.add(workerClasspath(workerDirectory));
+        command.add(workerClasspath(paths));
         command.add("io.ctyx.modpedia.worker.WorkerMain");
         command.add("--port");
         command.add(Integer.toString(port));
@@ -925,11 +925,13 @@ public final class ModPediaBridge {
         return builder.start();
     }
 
-    private String workerClasspath(Path workerDirectory) throws IOException {
+    private String workerClasspath(ModPediaPaths paths) throws IOException {
         String override = System.getProperty("modpedia.worker.classpath", "").strip();
         if (!override.isBlank()) {
             return override;
         }
+        Path sharedLibraryDirectory = paths.workerLibraryRoot();
+        Files.createDirectories(sharedLibraryDirectory);
         LinkedHashSet<String> entries = new LinkedHashSet<>();
         String current = System.getProperty("java.class.path", "");
         if (!current.isBlank()) {
@@ -950,7 +952,7 @@ public final class ModPediaBridge {
                     .getCodeSource().getLocation().toURI());
             entries.add(codeSource.toString());
             if (Files.isRegularFile(codeSource) && codeSource.toString().endsWith(".jar")) {
-                entries.addAll(extractNestedJars(codeSource, workerDirectory.resolve("lib")));
+                entries.addAll(extractNestedJars(codeSource, sharedLibraryDirectory));
             }
         } catch (Exception exception) {
             ModPedia.LOGGER.debug("Worker classpath code source unavailable", exception);
@@ -964,7 +966,7 @@ public final class ModPediaBridge {
             );
             if (installedArchive != null) {
                 entries.add(installedArchive.toString());
-                entries.addAll(extractNestedJars(installedArchive, workerDirectory.resolve("lib")));
+                entries.addAll(extractNestedJars(installedArchive, sharedLibraryDirectory));
             } else {
                 ModPedia.LOGGER.warn("未找到包含 {} 的 ModPedia 发布 JAR", WORKER_MAIN_ENTRY);
             }
@@ -1031,8 +1033,26 @@ public final class ModPediaBridge {
             for (ZipEntry entry : entries) {
                 Path target = outputDirectory.resolve(Path.of(entry.getName()).getFileName().toString());
                 if (!Files.isRegularFile(target)) {
-                    try (var input = zip.getInputStream(entry)) {
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+                    Path temporary = outputDirectory.resolve(
+                            target.getFileName() + ".tmp-" + UUID.randomUUID()
+                    );
+                    try {
+                        try (var input = zip.getInputStream(entry)) {
+                            Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                        try {
+                            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                        } catch (java.nio.file.FileAlreadyExistsException ignored) {
+                            // 另一个游戏实例已经完成同一基线的提取。
+                        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                            try {
+                                Files.move(temporary, target);
+                            } catch (java.nio.file.FileAlreadyExistsException ignoredAgain) {
+                                // 另一个游戏实例已经完成同一基线的提取。
+                            }
+                        }
+                    } finally {
+                        Files.deleteIfExists(temporary);
                     }
                 }
                 result.add(target.toString());

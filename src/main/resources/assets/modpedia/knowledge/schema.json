@@ -40,11 +40,15 @@
     "keyword_index": "config/modpedia/runtime/knowledge/keyword-index.json",
     "state": "config/modpedia/runtime/knowledge/state.json",
     "database": "config/modpedia/runtime/knowledge/knowledge.db",
-    "ai_settings": "~/.modpedia/ai.json",
-    "installation_id": "~/.modpedia/installation-id",
     "conversations": "config/modpedia/runtime/conversations",
     "diagnostics": "config/modpedia/runtime/diagnostics",
     "worker": "config/modpedia/runtime/worker"
+  },
+  "shared_user_directories": {
+    "root": "~/.modpedia",
+    "ai_settings": "~/.modpedia/ai.json",
+    "installation_id": "~/.modpedia/installation-id",
+    "worker_library": "~/.modpedia/worker/lib/worker-baseline-1"
   },
   "content_directories": {
     "root": "config/modpedia/knowledge",

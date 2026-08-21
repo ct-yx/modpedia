@@ -16,10 +16,16 @@ import java.util.Set;
  * ModPedia 的实际文件布局。
  *
  * <p>{@code knowledge/} 只保存整合包作者提供的事实源，{@code runtime/} 保存
- * Worker 状态和可从事实源重建的派生文件；跨实例的 AI 设置保存在当前 OS 用户目录。
- * 这样发布整合包时不会把 API Key、会话或本地索引一起带走。</p>
+ * Worker 状态和可从事实源重建的派生文件；跨实例的 AI 设置和 Worker 依赖缓存保存在当前
+ * OS 用户目录。这样发布整合包时不会把 API Key、会话、本地索引或共享运行库一起带走。</p>
  */
 public final class ModPediaPaths {
+    /**
+     * Worker 依赖的固定兼容基线。只要 Worker 运行库不变，不同 ModPedia 版本和
+     * 不同游戏实例都复用这一套 lib；增删或升级嵌入依赖时必须递增该编号。
+     */
+    public static final String WORKER_LIBRARY_BASELINE = "worker-baseline-1";
+
     private final Path configDirectory;
     private final Path root;
     private final Path userRoot;
@@ -73,6 +79,7 @@ public final class ModPediaPaths {
         moveIfPresent(root.resolve("conversations"), conversationsRoot(), moved);
         moveIfPresent(root.resolve("diagnostics"), diagnosticsRoot(), moved);
         moveIfPresent(root.resolve("worker"), workerRoot(), moved);
+        migrateWorkerLibraries(moved);
         moveIfPresent(root.resolve("assistant-window.json"), assistantWindow(), moved);
         moveIfPresent(root.resolve("assistant-glass.json"), assistantGlass(), moved);
         moveIfPresent(root.resolve("search-synonyms.json"), searchSynonyms(), moved);
@@ -90,6 +97,47 @@ public final class ModPediaPaths {
             }
         }
         return new MigrationResult(List.copyOf(moved));
+    }
+
+    /**
+     * 把旧的实例级 Worker lib 合并到用户级固定基线目录。日志和 payload 仍留在
+     * 当前实例；只有可由 ModPedia JAR 重新提取的依赖库跨实例共享。
+     */
+    private void migrateWorkerLibraries(List<String> moved) throws IOException {
+        Path legacy = workerRoot().resolve("lib");
+        if (!Files.isDirectory(legacy)) {
+            return;
+        }
+        Path shared = workerLibraryRoot();
+        copyDirectoryContents(legacy, shared);
+        deleteTree(legacy);
+        moved.add(legacy + " -> " + shared);
+    }
+
+    private void copyDirectoryContents(Path source, Path target) throws IOException {
+        Files.createDirectories(target);
+        try (var paths = Files.walk(source)) {
+            for (Path entry : paths.toList()) {
+                Path relative = source.relativize(entry);
+                Path destination = target.resolve(relative.toString());
+                if (Files.isDirectory(entry)) {
+                    Files.createDirectories(destination);
+                } else if (Files.isRegularFile(entry)) {
+                    Files.copy(entry, destination, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    private void deleteTree(Path root) throws IOException {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (var paths = Files.walk(root)) {
+            for (Path entry : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(entry);
+            }
+        }
     }
 
     private void migrateAiSettings(List<String> moved) throws IOException {
@@ -233,6 +281,13 @@ public final class ModPediaPaths {
 
     public Path workerRoot() {
         return runtimeRoot.resolve("worker");
+    }
+
+    /** 不随整合包分发、供同一 Worker 基线的实例共享的依赖缓存目录。 */
+    public Path workerLibraryRoot() {
+        return userRoot.resolve("worker")
+                .resolve("lib")
+                .resolve(WORKER_LIBRARY_BASELINE);
     }
 
     public Path workerPayloadRoot() {

@@ -1,5 +1,19 @@
 # ModPedia 开发日志
 
+## 2026-08-21 · v1.2.0-fix Worker 共享运行库修复
+
+- Worker 依赖库改为用户级固定基线目录 `~/.modpedia/worker/lib/worker-baseline-1/`。
+- 旧实例级 `runtime/worker/lib/` 在启动时迁移，实例级日志和 payload 保持不变。
+- 通过原子提取、跨实例路径测试和完整自动化测试。
+
+### 发布验证
+
+```text
+./gradlew test
+./gradlew build
+git diff --check
+```
+
 ## 2026-08-21 · v1.2.0 发布与 AI/配方联动收尾
 
 ### 对比 v1.1.0 的变更

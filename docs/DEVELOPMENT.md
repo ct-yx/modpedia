@@ -9,7 +9,7 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.2.0` |
+| 发布版本 | `v1.2.0-fix` |
 | GitHub 发布状态 | 正式发布，自动化门槛已完成 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
@@ -24,7 +24,7 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.2.0
+https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。
@@ -180,18 +180,22 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v1.2.0 发布清单
+## 7. v1.2.0-fix 发布清单
 
-- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.2.0`。
+- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.2.0-fix`。
 - [x] 对比 `v1.1.0` 整理四种 AI API 格式、模型列表/连接测试、分阶段 JEI 配方查询和本地 `calculate` 工具。
 - [x] 修复物品目标冻结、显式插入、原生选项页 `K` 拦截和 Tooltip 异常导致的扫描日志膨胀。
 - [x] 调整 Token 与历史证据压缩，保留当前检索事实、来源字段和标题路径。
 - [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
 - [x] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
-- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.2.0`。
+- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.2.0-fix`。
 - [~] 真实模型兼容性和不同大型整合包的持续回归按 `KNOWN_LIMITATIONS.md` 单独记录。
 
-## 7.1 历史：v1.1.0 发布清单
+## 7.1 历史：v1.2.0 发布清单
+
+- [x] `v1.2.0` 已作为历史正式版本保留。
+
+## 7.2 历史：v1.1.0 发布清单
 
 - [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.1.0`。
 - [x] `./gradlew test`、`./gradlew build`、严格 Worker 性能自测和 `git diff --check` 通过。
@@ -201,7 +205,7 @@ git diff --check
 - [x] Mod 列表图标和 Mod 介绍已写入元数据并进入构建 JAR。
 - [~] 图形客户端、第三方手册跳转、可选联动和 Dedicated Server 的持续回归仍按已知限制记录。
 
-## 7.2 历史：v0.2.0 发布清单
+## 7.3 历史：v0.2.0 发布清单
 
 - [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
 - [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
@@ -344,6 +348,6 @@ Repository secret:   MODPEDIA=<发布 API Token>
 
 - [ ] `MODPEDIA` Repository variable 与目标项目匹配。
 - [ ] `MODPEDIA` Repository secret 具有上传/发布权限且未写入任何文件。
-- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.2.0`。
+- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.2.0-fix`。
 - [ ] Action 的 `loaders` 为 `neoforge`、`game-versions` 为 `1.21.1`。
 - [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。

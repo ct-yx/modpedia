@@ -56,7 +56,8 @@ config/modpedia/
 
 ~/.modpedia/
 ├── ai.json                           # 跨游戏实例共享的用户级 AI 设置
-└── installation-id                   # 无系统 UUID 时的共享回退标识
+├── installation-id                   # 无系统 UUID 时的共享回退标识
+└── worker/lib/worker-baseline-1/      # 同一 Worker 基线共享的依赖库
 ```
 
 旧版本散落在 `config/modpedia/` 根目录的运行时文件会在启动时迁移到 `runtime/`；原始
@@ -385,6 +386,12 @@ Worker
   ├─ single knowledge executor：扫描、Wiki、物品目录和 SQLite 写入隔离
   └─ read-only retrieval connections
 ```
+
+Worker 的嵌入依赖不再写入每个实例的 `config/modpedia/runtime/worker/lib/`，而是放在用户级
+`~/.modpedia/worker/lib/worker-baseline-1/`。固定基线编号表示一套兼容的 Worker 运行库；
+只要依赖没有增删或升级，不同 ModPedia 版本和不同整合包实例共用同一目录。依赖发生变化时
+必须递增基线编号，例如改为 `worker-baseline-2`，避免新旧运行库混用。实例级
+`runtime/worker/` 仍只保存 `worker.log`、临时 payload 和其他可删除运行时文件。
 
 运行时 FTBQ 进度只在需要回答任务问题时读取。客户端侧读取协调器限制为一个活动
 上下文读取，相同聊天请求合并，短时快照复用；超时、取消、世界切换和退出都会清理

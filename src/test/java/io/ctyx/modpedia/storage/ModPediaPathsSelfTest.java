@@ -32,6 +32,7 @@ public final class ModPediaPathsSelfTest {
             write(legacyRoot.resolve("conversations/conversation.json"), "history");
             write(legacyRoot.resolve("diagnostics/report.json"), "report");
             write(legacyRoot.resolve("worker/worker.log"), "worker");
+            write(legacyRoot.resolve("worker/lib/gson.jar"), "worker-library");
             write(legacyRoot.resolve("assistant-window.json"), "window");
             write(legacyRoot.resolve("assistant-glass.json"), "glass");
             write(legacyRoot.resolve("search-synonyms.json"), "{\"groups\":[]}");
@@ -62,6 +63,10 @@ public final class ModPediaPathsSelfTest {
                     "会话应迁移到 runtime");
             check(Files.isRegularFile(paths.workerRoot().resolve("worker.log")),
                     "Worker 文件应迁移到 runtime");
+            check(Files.isRegularFile(paths.workerLibraryRoot().resolve("gson.jar")),
+                    "旧 Worker lib 应迁移到用户级固定基线目录");
+            check(!Files.exists(paths.workerRoot().resolve("lib")),
+                    "迁移成功后实例 runtime 不应继续保留 Worker lib");
             check(Files.isRegularFile(paths.runtimeKnowledgeRoot().resolve("knowledge.db")),
                     "SQLite 应迁移到 runtime/knowledge");
             check(Files.isRegularFile(paths.runtimeKnowledgeRoot().resolve("generated/generated.md")),
@@ -87,6 +92,20 @@ public final class ModPediaPathsSelfTest {
             );
             check(paths.aiSettings().equals(anotherInstance.aiSettings()),
                     "不同游戏实例应共享同一个用户级 ai.json");
+            check(paths.workerLibraryRoot().equals(anotherInstance.workerLibraryRoot()),
+                    "不同游戏实例应共享同一个 Worker 基线 lib");
+
+            Path secondLegacyConfig = temporary.resolve("second-instance/config");
+            Path secondLegacyLibrary = secondLegacyConfig.resolve(
+                    "modpedia/runtime/worker/lib/second.jar"
+            );
+            write(secondLegacyLibrary, "second-worker-library");
+            ModPediaPaths secondPaths = ModPediaPaths.forConfig(secondLegacyConfig, userHome);
+            secondPaths.migrateLegacy();
+            check(Files.isRegularFile(paths.workerLibraryRoot().resolve("second.jar")),
+                    "已有用户级 Worker 基线时也应合并旧实例 lib");
+            check(!Files.exists(secondLegacyLibrary),
+                    "合并成功后第二个实例不应继续保留 Worker lib");
 
             Path generated = paths.runtimeKnowledgeRoot().resolve("generated/fixture.md");
             ScannedResource scanned = new ScannedResource(

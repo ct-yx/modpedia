@@ -16,7 +16,7 @@ answers while preserving links back to the original manual pages.
 
 | Item | Version / status |
 | --- | --- |
-| Mod | **v1.2.0** |
+| Mod | **v1.2.0-fix** |
 | Release status | Official GitHub release |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244** (compatible with **21.1.x**) |
@@ -26,8 +26,8 @@ answers while preserving links back to the original manual pages.
 | Author | **ctyx** |
 
 The current JAR, checksum, installation guide, and known limitations are
-available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0).
-`v1.1.0` and earlier remain historical versions. `v1.2.0` adds four AI API
+available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix).
+`v1.1.0` and earlier remain historical versions. `v1.2.0-fix` adds four AI API
 formats, a local calculation tool, staged JEI recipe queries, frozen item
 targets, and a Tooltip scan circuit breaker for large modpacks.
 
@@ -41,7 +41,7 @@ targets, and a Tooltip scan circuit breaker for large modpacks.
 
 ### Installation
 
-1. Download **modpedia-1.2.0.jar**.
+1. Download **modpedia-1.2.0-fix.jar**.
 2. Put the ModPedia JAR in the instance's **mods/** directory.
 3. Start the game and enter a single-player world or server.
 4. Wait for the initial knowledge database and item catalog prefill to finish;
@@ -313,7 +313,11 @@ config/modpedia/runtime/knowledge/state.json
 
 These files are regenerated on first startup or after pressing **F9**.
 `knowledge.db-wal`, `knowledge.db-shm`, and temporary database files are also
-derived files and should stay out of the modpack.
+derived files and should stay out of the modpack. Worker shared libraries live
+at `~/.modpedia/worker/lib/worker-baseline-1/`; they are user-level files and
+must not be copied into a modpack. ModPedia versions and game instances using
+the same Worker baseline reuse that directory. Increment the baseline number
+when Worker dependencies change.
 
 Keep these fact sources with the modpack:
 
@@ -476,7 +480,7 @@ accepted.
 The token is read only from a GitHub Actions Secret and is not written to the
 repository, build artifacts, or logs. To retry a publication, run
 `Publish Mod Release` from Actions and enter an existing version tag such as
-`v1.2.0`; this does not create another GitHub Release.
+`v1.2.0-fix`; this does not create another GitHub Release.
 
 ## Known limitations
 
@@ -516,7 +520,7 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)
 - [Known limitations](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix)
 
 ## Author and license
 

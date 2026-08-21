@@ -13,7 +13,7 @@ English version: [README.en.md](README.en.md)
 
 | 项目 | 版本/状态 |
 | --- | --- |
-| Mod | **v1.2.0** |
+| Mod | **v1.2.0-fix** |
 | 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
@@ -22,7 +22,7 @@ English version: [README.en.md](README.en.md)
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0)。`v1.1.0` 及更早版本保留为历史版本；`v1.2.0` 增加四种 AI API 格式、本地计算工具、分阶段 JEI 配方查询、物品目标冻结和 Tooltip 扫描日志熔断。
+当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix)。`v1.1.0` 及更早版本保留为历史版本；`v1.2.0-fix` 增加四种 AI API 格式、本地计算工具、分阶段 JEI 配方查询、物品目标冻结和 Tooltip 扫描日志熔断。
 
 ## 快速安装
 
@@ -34,7 +34,7 @@ English version: [README.en.md](README.en.md)
 
 ### 安装步骤
 
-1. 下载 **modpedia-1.2.0.jar**。
+1. 下载 **modpedia-1.2.0-fix.jar**。
 2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
 3. 启动游戏，进入单人世界或服务器。
 4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
@@ -210,7 +210,9 @@ config/modpedia/runtime/knowledge/state.json
 ~~~
 
 这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
-数据库文件也属于派生文件，不应进入整合包。
+数据库文件也属于派生文件，不应进入整合包。Worker 的共享依赖库位于用户目录
+`~/.modpedia/worker/lib/worker-baseline-1/`，也不属于整合包，不要复制或打包；同一 Worker 基线的
+不同 ModPedia 版本和游戏实例会复用该目录。Worker 依赖发生变化时会递增基线编号。
 
 整合包作者需要随包保留的知识源如下：
 
@@ -354,7 +356,7 @@ build/reports/modpedia/knowledge-benchmark.md
 如果使用标准命名，也可以配置 `CURSEFORGE_PROJECT_ID` 和 `CURSEFORGE_TOKEN`。
 
 Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物或日志。若发布过程需要重试，
-在 Actions 中运行 `Publish Mod Release`，输入已有的版本标签，例如 `v1.2.0`；不会重新创建 GitHub Release。
+在 Actions 中运行 `Publish Mod Release`，输入已有的版本标签，例如 `v1.2.0-fix`；不会重新创建 GitHub Release。
 
 ## 已知限制
 
@@ -380,7 +382,7 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0)
+- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix)
 
 ## 作者与许可证
 
