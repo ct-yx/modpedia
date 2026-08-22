@@ -1,0 +1,63 @@
+buildscript {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+    dependencies {
+        // ForgeGradle 2.3 生成 1.12.2 Forge 兼容构件；不引入目标加载器专用 API。
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+apply plugin: 'java'
+
+version = project.mod_version
+group = project.mod_group_id
+archivesBaseName = project.mod_id
+
+sourceCompatibility = targetCompatibility = '1.8'
+
+repositories {
+    mavenCentral()
+}
+
+minecraft {
+    version = "${project.minecraft_version}-${project.forge_version}"
+    mappings = 'snapshot_20171003'
+    makeObfSourceJar = false
+    // 不创建 /run；仅保留 ForgeGradle 的运行入口配置，实际测试环境另行准备。
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${project.minecraft_version}-${project.forge_version}"
+}
+
+processResources {
+    inputs.property 'mod_id', project.mod_id
+    inputs.property 'mod_name', project.mod_name
+    inputs.property 'mod_version', project.mod_version
+    inputs.property 'mod_description', project.mod_description
+
+    filesMatching(['mcmod.info', 'pack.mcmeta']) {
+        expand(
+                mod_id: project.mod_id,
+                mod_name: project.mod_name,
+                mod_version: project.mod_version,
+                mod_description: project.mod_description
+        )
+    }
+}
+
+jar {
+    manifest {
+        attributes(
+                'Specification-Title': project.mod_name,
+                'Specification-Vendor': 'ctyx',
+                'Specification-Version': '1',
+                'Implementation-Title': project.mod_name,
+                'Implementation-Version': project.mod_version,
+                'Implementation-Vendor': 'ctyx'
+        )
+    }
+}

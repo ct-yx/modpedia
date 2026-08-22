@@ -1,0 +1,16 @@
+.gradle/
+build/
+out/
+run/
+run-*/
+logs/
+eclipse/
+idea/
+.idea/
+*.iml
+*.ipr
+*.iws
+*.classpath
+*.project
+/.settings/
+src/main/resources/META-INF/pack.mcmeta
