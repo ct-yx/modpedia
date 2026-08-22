@@ -3,53 +3,38 @@
 ModPedia 是一个面向 Minecraft 整合包的本地模组知识助手：它读取已安装模组中的手册资源，转换为统一 Markdown，写入 SQLite 检索库，再以搜索结果或 AI 回答的方式呈现，并保留原手册来源跳转。
 
 [![Build](https://github.com/ct-yx/modpedia/actions/workflows/build.yml/badge.svg)](https://github.com/ct-yx/modpedia/actions/workflows/build.yml)
-[![Release](https://img.shields.io/github/v/release/ct-yx/modpedia?include_prereleases&label=release)](https://github.com/ct-yx/modpedia/releases)
 
 English version: [README.en.md](README.en.md)
 
 专项后续计划：[AI 上下文、数据库 v8 与外部百科](docs/NEXT_DEVELOPMENT_PLAN.md)
 
-## 当前版本
+## 开发基线
 
-| 项目 | 版本/状态 |
+本分支是 Worker Core 与客户端适配层的开发分支，不承担发布资产、下载页面或外部发布平台管理。
+发布版本号、下载链接、更新日志和网页内容以 `main` 分支为唯一事实源。
+
+| 项目 | 开发基线 |
 | --- | --- |
-| Mod | **v1.2.0-fix** |
-| 发布状态 | GitHub 正式发布 |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
 | Java | **21** |
 | Mod ID | **modpedia** |
+| Worker 基线 | **worker-baseline-1** |
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
-当前发布包的 JAR、校验文件、安装说明和已知限制位于 [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix)。`v1.1.0` 及更早版本保留为历史版本；`v1.2.0-fix` 增加四种 AI API 格式、本地计算工具、分阶段 JEI 配方查询、物品目标冻结和 Tooltip 扫描日志熔断。
+## 本分支验证
 
-## 快速安装
+从源码构建并运行本分支的 Worker/客户端适配层：
 
-### 必需环境
+```bash
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+./gradlew test
+./gradlew build
+git diff --check
+```
 
-1. 安装 Minecraft **1.21.1**。
-2. 安装 NeoForge **21.1.x**。
-3. 安装 Java **21**。
-
-### 安装步骤
-
-1. 下载 **modpedia-1.2.0-fix.jar**。
-2. 将 ModPedia JAR 放入实例的 **mods/** 目录。
-3. 启动游戏，进入单人世界或服务器。
-4. 等待加载屏幕完成首次知识库和物品目录预填充；需要立即重建时按 **F9**。
-5. 进入游戏后按 **K** 打开助手。
-
-ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作为可选手册适配对象存在，实际正文来自整合包中安装的内容模组。
-
-以下联动模组均为可选：
-
-- **FTB Quests**：不再在客户端 Tick 中轮询或全量序列化任务。任务问题调用 `search_tasks` 时先取得当前玩家运行时进度；单机优先由 Worker 直接读取 `saves/<世界>/ftbquests/<team-uuid>.snbt`，多人或本地文件不可用时回退到游戏 JVM 的 TeamData，再由 Worker 查询静态任务数据库并在内存中覆盖结果。同一 AI 请求只读取一次，实时进度不写入数据库。运行时响应还会返回具体任务的 `timeline`：started/completed 使用 FTBQ 时间戳，进度变化使用检测时间，模型可以列出新增条目而不是只比较数量。任务 Wiki 作为独立的 `content_kind=wiki` 来源导入，不与模组手册混在检索范围内。
-- **JEI**：不导入配方数据库。回答正文中的已注册物品 ID（包括模型直接输出的 `namespace:path`）按需解析为本地化名称，按住 Ctrl 显示 ID，按住 Shift 点击物品名称时尝试打开 JEI 配方界面。模型还可以调用 `query_item_recipes`：工作台（`WORKBENCH`）和熔炉（`FURNACE`）直接读取对应配方，熔炉附带处理时间；其它处理方式先用 `OTHER` 获取 `method_id`，再用 `DETAIL` 查询具体输入、输出、附加信息和已合并等级的机器列表。
-- **Jade**：在 Jade 已安装时记录当前视线下的方块物品，打开助手后可一键插入物品 ID；显示区域默认显示名称，按住 Ctrl 才显示 ID。
-- **物品目录**：在进入主菜单前，客户端注册表完成后把当前语言的全部物品 ID、名称和完整 Tooltip 简介写入同一个 `knowledge.db` 的 `item_catalog` 表；数万条记录先由独立 I/O 线程写成原子 JSONL 载荷，IPC 只传路径，Worker 再用短事务批量写入，不复制整个数据库，也不在游戏 Tick 中拼接大 JSON。确认物品后，AI 和仅搜索模式会先读取这份资料，再继续搜索手册。语言切换只在回到主菜单后重新捕获，不会在世界内持续扫描。
-
-缺少这些联动模组时，助手、手册扫描、SQLite 搜索和 AI 仍可正常加载。助手界面本身不依赖外部 UI 模组。
+发布 JAR、安装说明、校验文件、更新日志和网页不在本分支维护；需要发布时由 `main` 分支按统一流程处理。
 
 ## 第一次使用
 
@@ -296,7 +281,6 @@ src/main/java/io/ctyx/modpedia/
 docs/
 ├── ARCHITECTURE.md
 ├── DEVELOPMENT.md
-├── DEVELOPMENT_LOG.md
 ├── KNOWLEDGE_BASE.md
 └── ROADMAP.md
 ~~~
@@ -349,22 +333,6 @@ build/reports/modpedia/knowledge-benchmark.md
 并比较 contentful 与 external-content 以及 optimize 前后结果。
 
 详细的 Mod 开发清单、手动回归和发布流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
-本轮合并前维护、测试记录和交付检查见 [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)。
-
-### CurseForge 自动发布
-
-仓库提供 `.github/workflows/publish-curseforge.yml`：推送 `v*` 版本标签后，会重新执行测试和构建，
-从当前版本的 `CHANGELOG.md` 提取单个版本段落，并上传 NeoForge 1.21.1 JAR。当前工作流优先读取
-已经配置的 `MODPEDIA` 变量和 Secret，也兼容标准名称；配置位置为仓库的
-`Settings → Secrets and variables → Actions`：
-
-- Repository variable：`MODPEDIA`，填写项目 ID；
-- Repository secret：`MODPEDIA`，填写发布 API Token。
-
-如果使用标准命名，也可以配置 `CURSEFORGE_PROJECT_ID` 和 `CURSEFORGE_TOKEN`。
-
-Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物或日志。若发布过程需要重试，
-在 Actions 中运行 `Publish Mod Release`，输入已有的版本标签，例如 `v1.2.0-fix`；不会重新创建 GitHub Release。
 
 ## 已知限制
 
@@ -383,17 +351,13 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 ## 相关文档
 
 - [Mod 开发清单](docs/DEVELOPMENT.md)
-- [开发日志](docs/DEVELOPMENT_LOG.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
 - [后续开发路线](docs/ROADMAP.md)
 - [Worker 基线与兼容层](docs/WORKER_BASELINE.md)
 - [Worker 变更与版本适配流程](docs/WORKER_CHANGE_PROTOCOL.md)
 - [Worker 验证矩阵](docs/WORKER_VERIFICATION_MATRIX.md)
-- [更新日志](CHANGELOG.md)
-- [安装说明](INSTALL.md)
 - [已知限制](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix)
 
 ## 作者与许可证
 

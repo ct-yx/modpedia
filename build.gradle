@@ -198,9 +198,9 @@ dependencies {
             strictly '[2.5.9, 2.6)'
         }
     }
-    jarJar(implementation("com.knuddels:jtokkit:1.1.0")) {
+    jarJar(implementation("com.knuddels:jtokkit:${jtokkit_version}")) {
         version {
-            strictly '[1.1.0, 1.2)'
+            strictly "[${jtokkit_version}, 1.2)"
         }
     }
     jarJar(implementation("org.jspecify:jspecify:1.0.0")) {
@@ -223,7 +223,7 @@ dependencies {
     additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-core:2.22.1"
     additionalRuntimeClasspath "com.fasterxml.jackson.core:jackson-databind:2.22.1"
     additionalRuntimeClasspath "org.apache.opennlp:opennlp-tools:2.5.9"
-    additionalRuntimeClasspath "com.knuddels:jtokkit:1.1.0"
+    additionalRuntimeClasspath "com.knuddels:jtokkit:${jtokkit_version}"
     additionalRuntimeClasspath "org.jspecify:jspecify:1.0.0"
     additionalRuntimeClasspath "org.slf4j:slf4j-api:2.0.9"
 
@@ -408,6 +408,14 @@ def workerConcurrencySelfTest = tasks.register('workerConcurrencySelfTest', Java
     mainClass = 'io.ctyx.modpedia.worker.WorkerConcurrencySelfTest'
 }
 
+def workerTokenEstimatorSelfTest = tasks.register('workerTokenEstimatorSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerTokenEstimatorSelfTest'
+    systemProperty 'modpedia.langchain4j.version', langchain4j_version
+    systemProperty 'modpedia.jtokkit.version', jtokkit_version
+}
+
 def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -429,6 +437,8 @@ def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.worker.WorkerIpcSelfTest'
     systemProperty 'modpedia.worker.jar', tasks.named('jar').flatMap { it.archiveFile }.get().asFile.absolutePath
+    systemProperty 'modpedia.langchain4j.version', langchain4j_version
+    systemProperty 'modpedia.jtokkit.version', jtokkit_version
 }
 
 def modPediaPathsSelfTest = tasks.register('modPediaPathsSelfTest', JavaExec) {
@@ -646,6 +656,7 @@ tasks.named('test', Test) {
     dependsOn workerGuideScannerSelfTest
     dependsOn knowledgeOperationGateSelfTest
     dependsOn workerConcurrencySelfTest
+    dependsOn workerTokenEstimatorSelfTest
     dependsOn workerCoreBoundarySelfTest
     dependsOn workerCompatibilitySelfTest
     dependsOn workerIpcSelfTest

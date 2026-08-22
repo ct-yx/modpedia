@@ -34,6 +34,7 @@ import java.util.concurrent.Executors;
 import java.util.function.Predicate;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
 
 /**
  * 实际启动独立 Worker JVM 的 JSONL 协议回归；不调用模型、不访问外网。
@@ -57,6 +58,7 @@ public final class WorkerIpcSelfTest {
             checkEnvelope();
             checkCancellationGate();
             verifyPublishedJarDoesNotBundleRuntimeGson();
+            verifyPublishedJarWorkerDependencies();
             verifyRejectedHandshake(root.resolve("bad-token"), "token-ok", "token-bad", false);
             verifyRejectedHandshake(root.resolve("bad-version"), "token-version", "token-version", true);
             verifyRejectedCompatibilityHandshake(root.resolve("bad-baseline"));
@@ -161,6 +163,7 @@ public final class WorkerIpcSelfTest {
                 check(WorkerProtocol.isCurrentVersion(completed), "关闭响应应带当前协议版本");
                 check(harness.process.waitFor(START_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS),
                         "Worker 收到 shutdown 后应退出");
+                harness.assertWorkerDependencyDiagnostics();
                 harness.assertNoClientUiClasses();
                 System.out.println(
                         "Worker IPC latency " + formatLatency(latency)
@@ -202,6 +205,69 @@ public final class WorkerIpcSelfTest {
             check(!bundledSlf4j,
                     "发布 JAR 不应嵌入第二份 SLF4J API，否则会与整合包日志模块冲突");
         }
+    }
+
+    private static void verifyPublishedJarWorkerDependencies() throws IOException {
+        String value = System.getProperty("modpedia.worker.jar", "").strip();
+        if (value.isBlank() || !Files.isRegularFile(Path.of(value))) {
+            return;
+        }
+        String langchainVersion = System.getProperty("modpedia.langchain4j.version", "1.18.1");
+        String jtokkitVersion = System.getProperty("modpedia.jtokkit.version", "1.1.0");
+        try (ZipFile zip = new ZipFile(Path.of(value).toFile())) {
+            for (String artifact : List.of(
+                    "langchain4j",
+                    "langchain4j-core",
+                    "langchain4j-open-ai"
+            )) {
+                String expected = "META-INF/jarjar/" + artifact + "-" + langchainVersion + ".jar";
+                check(zip.getEntry(expected) != null, "发布 JAR 缺少统一版本依赖：" + expected);
+                long count = zip.stream()
+                        .filter(entry -> isEmbeddedArtifact(entry.getName(), artifact))
+                        .filter(entry -> entry.getName().endsWith(".jar"))
+                        .count();
+                check(count == 1, "发布 JAR 中存在重复或多版本依赖：" + artifact);
+            }
+            String jtokkitEntry = "META-INF/jarjar/jtokkit-" + jtokkitVersion + ".jar";
+            ZipEntry nested = zip.getEntry(jtokkitEntry);
+            check(nested != null, "发布 JAR 缺少统一版本 JTokkit：" + jtokkitEntry);
+            checkNestedTokenizerResources(zip, nested);
+        }
+    }
+
+    private static boolean isEmbeddedArtifact(String entryName, String artifact) {
+        String prefix = "META-INF/jarjar/" + artifact + "-";
+        if (!entryName.startsWith(prefix)) {
+            return false;
+        }
+        if ("langchain4j".equals(artifact)) {
+            return !entryName.startsWith("META-INF/jarjar/langchain4j-core-")
+                    && !entryName.startsWith("META-INF/jarjar/langchain4j-open-ai-")
+                    && !entryName.startsWith("META-INF/jarjar/langchain4j-community-")
+                    && !entryName.startsWith("META-INF/jarjar/langchain4j-http-");
+        }
+        return true;
+    }
+
+    private static void checkNestedTokenizerResources(ZipFile outer, ZipEntry nested) throws IOException {
+        List<String> required = List.of(
+                "com/knuddels/jtokkit/o200k_base.tiktoken",
+                "com/knuddels/jtokkit/cl100k_base.tiktoken",
+                "com/knuddels/jtokkit/p50k_base.tiktoken",
+                "com/knuddels/jtokkit/r50k_base.tiktoken"
+        );
+        List<String> found = new ArrayList<>();
+        try (var input = outer.getInputStream(nested); ZipInputStream jar = new ZipInputStream(input)) {
+            ZipEntry entry;
+            while ((entry = jar.getNextEntry()) != null) {
+                found.add(entry.getName());
+            }
+        }
+        for (String resource : required) {
+            check(found.contains(resource), "JTokkit 缺少 tokenizer 资源：" + resource);
+        }
+        check(found.stream().noneMatch(value -> value.endsWith("5.4k_base.tiktoken")),
+                "JTokkit 1.1.0 不应依赖旧版 5.4k tokenizer 资源");
     }
 
     private static void checkEnvelope() {
@@ -761,6 +827,7 @@ public final class WorkerIpcSelfTest {
         private final BufferedReader reader;
         private final BufferedWriter writer;
         private final Process process;
+        private final Path workerLog;
         private final Path classLog;
         private final Path knowledgeRoot;
         private final Path contentRoot;
@@ -772,6 +839,7 @@ public final class WorkerIpcSelfTest {
                 BufferedReader reader,
                 BufferedWriter writer,
                 Process process,
+                Path workerLog,
                 Path classLog,
                 Path knowledgeRoot,
                 Path contentRoot,
@@ -782,6 +850,7 @@ public final class WorkerIpcSelfTest {
             this.reader = reader;
             this.writer = writer;
             this.process = process;
+            this.workerLog = workerLog;
             this.classLog = classLog;
             this.knowledgeRoot = knowledgeRoot;
             this.contentRoot = contentRoot;
@@ -828,7 +897,7 @@ public final class WorkerIpcSelfTest {
                         socket.getInputStream(), StandardCharsets.UTF_8));
                 BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
                         socket.getOutputStream(), StandardCharsets.UTF_8));
-                return new Harness(listener, socket, reader, writer, process, classLog,
+                return new Harness(listener, socket, reader, writer, process, outputLog, classLog,
                         knowledge, content, mods);
             } catch (Throwable failure) {
                 if (process != null) {
@@ -970,6 +1039,25 @@ public final class WorkerIpcSelfTest {
             )) {
                 check(!log.contains(forbidden), "Worker 启动解析了客户端 UI 类：" + forbidden);
             }
+        }
+
+        private void assertWorkerDependencyDiagnostics() throws IOException {
+            if (!Files.isRegularFile(workerLog)) {
+                throw new IOException("Worker 依赖诊断日志未生成：" + workerLog);
+            }
+            String log = Files.readString(workerLog, StandardCharsets.UTF_8);
+            check(log.contains("WORKER_DEPENDENCY"), "Worker 应输出依赖 CodeSource 诊断");
+            check(log.contains("langchain_openai_version=1.18.1"),
+                    "Worker 实际加载的 LangChain4j OpenAI 版本不正确");
+            check(log.contains("jtokkit_version=1.1.0"),
+                    "Worker 实际加载的 JTokkit 版本不正确");
+            check(log.contains("tokenizer_o200k_base=true"),
+                    "Worker 运行时未找到 o200k tokenizer 资源");
+            check(log.contains("estimator_gpt5=true"),
+                    "Worker 启动时 OpenAiTokenCountEstimator 初始化失败");
+            check(!log.contains("fixture-key"), "Worker 诊断日志不得包含 API Key");
+            check(!log.contains("请通过本地工具查询 IPC 夹具"),
+                    "Worker 诊断日志不得包含请求正文");
         }
 
         @Override

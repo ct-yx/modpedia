@@ -17,6 +17,7 @@
 | SQLite JDBC | `3.53.2.1` |
 | LangChain4j | `1.18.1` |
 | LangChain4j Community SQL | `1.18.0-beta28` |
+| JTokkit | `1.1.0`，包含 `o200k_base`、`cl100k_base`、`p50k_base`、`r50k_base` |
 | Gson | `2.11.0`，由游戏运行时提供 |
 | SLF4J API | `2.0.9`，由 NeoForge 运行时提供 |
 | 客户端适配层 | `neoforge-1.21.1` |
@@ -99,6 +100,12 @@ io.ctyx.modpedia.client.*
 客户端只负责 Minecraft/NeoForge 适配、注册表和 UI；Worker 负责 AI 编排、SQLite/FTS、
 知识库构建、任务文件解析、会话和协议服务。跨边界只传 JSONL 和纯 Java DTO，避免
 把游戏对象、Screen、Level 或 ItemStack 传入 Worker JVM。
+
+Worker 启动时使用发布 JAR 和同一基线提取出的 Jar-in-Jar 依赖构造隔离 classpath；不继承
+游戏 JVM 的完整 `java.class.path`，只补充游戏运行时提供的 Gson 和 SLF4J API。这样游戏实例
+中残留的旧版 LangChain4j/JTokkit 不会抢先加载。Worker 会在启动日志中记录两个核心类的
+CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始化结果，但不记录 API Key、
+请求正文或会话正文。
 
 当前第一阶段先完成 API/DTO/协议边界，后续可以继续把纯 Java 的检索、知识库和任务
 解析类整理到 Worker Core 包；不能为了移动目录而复制出第二套实现。

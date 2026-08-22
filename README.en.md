@@ -6,91 +6,40 @@ indexes them in SQLite, and presents either direct search results or AI-assisted
 answers while preserving links back to the original manual pages.
 
 [![Build](https://github.com/ct-yx/modpedia/actions/workflows/build.yml/badge.svg)](https://github.com/ct-yx/modpedia/actions/workflows/build.yml)
-[![Release](https://img.shields.io/github/v/release/ct-yx/modpedia?include_prereleases&label=release)](https://github.com/ct-yx/modpedia/releases)
 
 简体中文版本: [README.md](README.md)
 
 专题后续计划（中文）: [AI context, database v8, and external encyclopedia](docs/NEXT_DEVELOPMENT_PLAN.md)
 
-## Current release
+## Development baseline
 
-| Item | Version / status |
+This is the Worker Core and client-adapter development branch. It does not own release
+assets, download pages, or external publishing configuration. Release versions, download
+links, changelogs, and site content are maintained only on the `main` branch.
+
+| Item | Development baseline |
 | --- | --- |
-| Mod | **v1.2.0-fix** |
-| Release status | Official GitHub release |
 | Minecraft | **1.21.1** |
 | NeoForge | **21.1.244** (compatible with **21.1.x**) |
 | Java | **21** |
 | Mod ID | **modpedia** |
+| Worker baseline | **worker-baseline-1** |
 | Client UI dependency | None; drawn with the native NeoForge GUI API |
 | Author | **ctyx** |
 
-The current JAR, checksum, installation guide, and known limitations are
-available in the [GitHub Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix).
-`v1.1.0` and earlier remain historical versions. `v1.2.0-fix` adds four AI API
-formats, a local calculation tool, staged JEI recipe queries, frozen item
-targets, and a Tooltip scan circuit breaker for large modpacks.
+## Branch validation
 
-## Quick installation
+Build and validate this branch from source:
 
-### Requirements
+```bash
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+./gradlew test
+./gradlew build
+git diff --check
+```
 
-1. Minecraft **1.21.1**.
-2. NeoForge **21.1.x**.
-3. Java **21**.
-
-### Installation
-
-1. Download **modpedia-1.2.0-fix.jar**.
-2. Put the ModPedia JAR in the instance's **mods/** directory.
-3. Start the game and enter a single-player world or server.
-4. Wait for the initial knowledge database and item catalog prefill to finish;
-   press **F9** when an immediate rebuild is needed.
-5. Press **K** in-game to open the assistant.
-
-ModPedia does not bundle Patchouli, GuideME, Modonomicon, or any content mod.
-They are optional manual adapters; searchable text comes from the content mods
-actually installed in the modpack.
-
-The following integrations are optional:
-
-- **FTB Quests**: The client no longer polls or serializes all quests on every
-  tick. When a task question invokes `search_tasks`, the current player runtime
-  progress is read first. In single-player, the Worker first reads
-  `saves/<world>/ftbquests/<team-uuid>.snbt`; multiplayer or unavailable local
-  files fall back to TeamData in the game JVM. The Worker then queries the
-  static task database and overlays the runtime result in memory. Each AI
-  request reads progress once, and runtime progress is never written to the
-  database. The runtime response also contains a task `timeline`: FTBQ
-  timestamps are used for started/completed events, while progress changes use
-  detection time. The model can therefore list new entries instead of only
-  comparing counts. Task Wiki content is imported as a separate
-  `content_kind=wiki` source and is not mixed with mod manuals.
-- **JEI**: Recipes are not imported into the database. Registered item IDs in
-  answers, including model-generated `namespace:path` values, are resolved to
-  localized names on demand. Hold Ctrl to show IDs, and Shift-click an item name
-  to try opening the JEI recipe screen. The model can also call
-  `query_item_recipes`: `WORKBENCH` and `FURNACE` directly query their recipe
-  classes, with furnace processing time; other processing first uses `OTHER` to
-  obtain a `method_id`, then `DETAIL` to read inputs, outputs, metadata, and a
-  machine list with tiers merged.
-- **Jade**: When Jade is installed, the block or item under the crosshair can be
-  recorded. After opening the assistant, one click inserts its item ID. Display
-  areas show the localized name by default and the ID while Ctrl is held.
-- **Item catalog**: After client registries are ready and before entering the
-  main menu, the client writes every item ID, localized name, and full Tooltip
-  description for the current language to the `item_catalog` table in the same
-  `knowledge.db`. Tens of thousands of records are written by an independent
-  I/O thread as an atomic JSONL payload; IPC transfers only the path and the
-  Worker performs a short batched transaction. The game tick never assembles a
-  large JSON payload. After an item is confirmed, AI and local-search modes
-  read this information before continuing with manual search. Language changes
-  trigger a new capture only after returning to the main menu; the catalog is
-  not continuously scanned in a world.
-
-Without these integrations, the assistant, manual scanner, SQLite search, and
-AI client still load normally. The assistant UI itself has no external UI mod
-dependency.
+Release JARs, installation instructions, checksums, changelogs, and site pages are not
+maintained here; the `main` branch owns the unified release process.
 
 ## First use
 
@@ -410,7 +359,6 @@ src/main/java/io/ctyx/modpedia/
 docs/
 ├── ARCHITECTURE.md
 ├── DEVELOPMENT.md
-├── DEVELOPMENT_LOG.md
 ├── KNOWLEDGE_BASE.md
 └── ROADMAP.md
 ~~~
@@ -471,27 +419,6 @@ optimize.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the Mod development checklist,
 manual regression, and release process. The maintenance, test, and delivery
-record is in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md).
-
-### CurseForge automated publishing
-
-The repository includes `.github/workflows/publish-curseforge.yml`. Pushing a
-`v*` version tag runs tests and builds again, extracts only the matching version
-section from `CHANGELOG.md`, and uploads the NeoForge 1.21.1 JAR. The workflow
-first reads the existing `MODPEDIA` variable and secret, and also supports the
-standard names below. Configure them under
-`Settings → Secrets and variables → Actions`:
-
-- Repository variable: `MODPEDIA`, set to the project ID;
-- Repository secret: `MODPEDIA`, set to the publishing API token.
-
-The standard names `CURSEFORGE_PROJECT_ID` and `CURSEFORGE_TOKEN` are also
-accepted.
-
-The token is read only from a GitHub Actions Secret and is not written to the
-repository, build artifacts, or logs. To retry a publication, run
-`Publish Mod Release` from Actions and enter an existing version tag such as
-`v1.2.0-fix`; this does not create another GitHub Release.
 
 ## Known limitations
 
@@ -524,17 +451,13 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 ## Related documents
 
 - [Mod development checklist](docs/DEVELOPMENT.md)
-- [Development log](docs/DEVELOPMENT_LOG.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Knowledge-base design](docs/KNOWLEDGE_BASE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Worker baseline and compatibility](docs/WORKER_BASELINE.md)
 - [Worker change and version-adaptation protocol](docs/WORKER_CHANGE_PROTOCOL.md)
 - [Worker verification matrix](docs/WORKER_VERIFICATION_MATRIX.md)
-- [Changelog](CHANGELOG.md)
-- [Installation guide](INSTALL.md)
 - [Known limitations](KNOWN_LIMITATIONS.md)
-- [Release](https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix)
 
 ## Author and license
 
