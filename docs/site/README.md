@@ -34,7 +34,7 @@ python3 -m http.server 8000
 
 ## 部署方式
 
-仓库内置 `.github/workflows/pages.yml`，推送 `main` 或 `release/publish-web` 后会自动部署 `docs/site/`。
+仓库内置 `.github/workflows/pages.yml`，推送 `main` 后会自动部署 `docs/site/`。
 
 也可以在 GitHub 仓库设置中选择：
 
@@ -42,4 +42,4 @@ python3 -m http.server 8000
 Settings → Pages → Source: GitHub Actions
 ```
 
-下载链接和项目链接目前指向 `ct-yx/modpedia` 的 `v1.2.0-fix` Release。发布新版本时同步修改 `index.html` 和 `index.en.html` 中的版本号、Release 地址和 JAR 文件名；发布分支推送后先检查 Pages 预览，再合并到 `main`。
+下载链接和项目链接目前指向 `ct-yx/modpedia` 的 `v1.2.0-fix` Release。发布新版本时同步修改 `index.html` 和 `index.en.html` 中的版本号、Release 地址和 JAR 文件名；合并到 `main` 后先检查 Pages 预览，再创建版本标签。

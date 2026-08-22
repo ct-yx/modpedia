@@ -1,7 +1,7 @@
 # 发布与 GitHub Pages 维护说明
 
-本分支固定为 `release/publish-web`，用于整理发布文件、维护 GitHub Pages 和准备
-版本发布；功能开发仍在对应的开发分支完成，不在本分支直接堆积临时代码。
+`main` 固定用于整理发布文件、维护 GitHub Pages 和准备版本发布；功能开发仍在对应的
+开发分支完成，不在 `main` 直接堆积临时代码。
 
 ## 目录职责
 
@@ -27,11 +27,11 @@ SHA256SUMS                    # 由 Release 工作流临时生成，不提交仓
 
 ## 发布流程
 
-1. 从 `main` 创建或更新 `release/publish-web`。
-2. 只在本分支整理发布说明、网页版本号、下载链接和工作流配置。
+1. 在功能或版本开发分支完成代码和测试。
+2. 将经过验证的改动合并到 `main`，只在 `main` 整理发布说明、网页版本号、下载链接和工作流配置。
 3. 在 `docs/site/` 本地预览中文和英文页面。
-4. 推送本分支，Pages 工作流会部署 `docs/site/`，先检查页面链接和下载地址。
-5. 合并到 `main` 后再创建版本标签，例如 `v1.2.1` 或 `v1.2.1-fix`。
+4. 推送 `main`，Pages 工作流会部署 `docs/site/`，先检查页面链接和下载地址。
+5. 在 `main` 创建版本标签，例如 `v1.2.1` 或 `v1.2.1-fix`。
 6. 标签工作流执行测试、构建、生成 `SHA256SUMS`、发布 GitHub Release，并按配置发布
    CurseForge。
 
@@ -46,6 +46,27 @@ Release 工作流只从当前标签读取 `CHANGELOG.md` 中同名的第一个 `
 - Release 资产由 GitHub Actions 在标签构建时生成；仓库不保存本地 JAR 和校验文件。
 - 页面中的版本号、Release 链接、JAR 下载链接必须同时更新中文和英文页面。
 - 发布配置只引用 GitHub Actions Variables/Secrets，不把 CurseForge Token 或其他密钥写入文件。
+
+## 给其他开发分支的清理 Prompt
+
+将下面内容发送给具体版本或 Worker 对话，要求它们只维护自身代码，不重复维护发布系统：
+
+```text
+请按仓库主分支的统一发布策略整理当前开发分支：
+
+1. 当前分支不负责 GitHub Pages、GitHub Release 或 CurseForge 发布，不修改发布网页和发布工作流。
+2. 删除当前分支中重复的发布管理文件：
+   - .github/workflows/pages.yml
+   - .github/workflows/release.yml
+   - .github/workflows/publish-curseforge.yml
+   - docs/site/**
+   - docs/RELEASE_AND_PAGES.md
+   只删除确认属于发布管理的重复文件；保留 build.yml、许可证、必要的开发文档和测试说明。
+3. README.md/README.en.md 与 docs/ 以 main 为唯一发布事实源。当前分支只保留代码开发所必需的 README 或 docs，
+   不复制版本号、下载链接、Release 说明和 Pages 内容；需要修改这些内容时，生成摘要和补丁交给 main 对话处理。
+4. 不修改 main 的发布版本号、CHANGELOG、网页下载地址或 GitHub Actions Secret 配置。
+5. 完成后执行本分支适用的测试和 git diff --check，并报告被删除的重复文件、保留的开发文档和仍需由 main 处理的内容。
+```
 
 ## 验收
 
