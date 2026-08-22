@@ -168,7 +168,11 @@ config/modpedia/
 `~/.modpedia/` 位于各游戏实例之外的当前操作系统用户目录，不属于整合包文件。不同 Minecraft
 版本和不同整合包会读取同一份用户级 `ai.json`；旧版本位于 `config/modpedia/ai.json` 或
 `config/modpedia/runtime/ai.json` 的配置会在启动时迁移到这里。移动位置可以避免把个人 AI 配置
-带入整合包发布包；API Key 仍只在当前用户进程内解密到内存，日志和会话不会记录明文。
+带入整合包发布包；API Key 仍只在当前用户进程内解密到内存，日志和会话不会记录明文。用户目录
+解析在 macOS/Linux 优先使用 `HOME`，Windows 优先使用 `USERPROFILE`，再按平台规则回退到
+`HOMEDRIVE` + `HOMEPATH`、`HOME`、`user.home` 和配置目录父级。旧启动器目录中的空 `ai.json`
+会清理，旧 Worker lib 会迁移到固定的 `worker-baseline-1` 目录；`runtime/worker/` 始终保留在
+当前游戏实例。
 
 `knowledge.db` 使用 Schema v7。模组手册、Wiki、FTBQ 静态任务定义和物品目录共用这个文件，但通过
 `content_kind`、`source_type`、`origin_type` 和 `collection_id` 分开检索；早期测试版发现
@@ -382,6 +386,7 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
 - [后续开发路线](docs/ROADMAP.md)
 - [Worker 基线与兼容层](docs/WORKER_BASELINE.md)
+- [发布与 GitHub Pages 维护说明](docs/RELEASE_AND_PAGES.md)
 - [Worker 验证矩阵](docs/WORKER_VERIFICATION_MATRIX.md)
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)

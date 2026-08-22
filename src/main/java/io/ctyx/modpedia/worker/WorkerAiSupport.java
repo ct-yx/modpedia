@@ -3,9 +3,11 @@ package io.ctyx.modpedia.worker;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
 import io.ctyx.modpedia.ai.AiToolRouter;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /** Worker 与客户端 AI 会话共用的预算和首轮工具调用规则。 */
 final class WorkerAiSupport {
@@ -52,6 +54,20 @@ final class WorkerAiSupport {
 
     static int toolCallingRoundTrips(int searchRounds) {
         return Math.max(4, Math.min(12, Math.max(1, searchRounds) + 3));
+    }
+
+    static TokenCountEstimator tokenCountEstimator(String model) {
+        return tokenCountEstimator(() -> new OpenAiTokenCountEstimator(model));
+    }
+
+    static TokenCountEstimator tokenCountEstimator(Supplier<TokenCountEstimator> exactEstimator) {
+        try {
+            return exactEstimator.get();
+        } catch (RuntimeException | LinkageError ignored) {
+            // tiktoken 词表属于共享 Worker lib。某个运行环境的类加载器只要无法
+            // 读取资源，就使用近似估算继续工作，避免一次初始化失败污染后续重试。
+            return new ApproximateTokenCountEstimator();
+        }
     }
 
     static final class ApproximateTokenCountEstimator implements TokenCountEstimator {

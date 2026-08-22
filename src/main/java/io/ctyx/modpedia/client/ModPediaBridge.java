@@ -35,6 +35,7 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -943,15 +944,18 @@ public final class ModPediaBridge {
         }
         Path sharedLibraryDirectory = paths.workerLibraryRoot();
         Files.createDirectories(sharedLibraryDirectory);
-        LinkedHashSet<String> entries = new LinkedHashSet<>();
+        // 游戏 JVM 的继承 classpath 可能包含同名但资源不完整的旧版依赖。
+        // 共享 Worker lib 必须优先，保证 jtokkit 的词表和其类来自同一套基线。
+        LinkedHashSet<String> inheritedEntries = new LinkedHashSet<>();
         String current = System.getProperty("java.class.path", "");
         if (!current.isBlank()) {
             for (String entry : current.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
                 if (!entry.isBlank()) {
-                    entries.add(entry);
+                    inheritedEntries.add(entry);
                 }
             }
         }
+        LinkedHashSet<String> entries = new LinkedHashSet<>();
         // SLF4J 由 NeoForge 的模块层提供，不能从 ModPedia JAR 再提取一份。
         // Worker 是普通 classpath JVM，需要显式加入游戏侧 API 的实际代码来源。
         addClassLocation(entries, "org.slf4j.LoggerFactory");
@@ -1000,7 +1004,27 @@ public final class ModPediaBridge {
         } catch (Exception exception) {
             ModPedia.LOGGER.warn("扫描 ModPedia Worker 发布 JAR 失败", exception);
         }
-        return String.join(File.pathSeparator, entries);
+        // 只把继承 classpath 作为缺失依赖的兜底，放在已校验的 Worker 基线之后。
+        return mergeWorkerClasspath(entries, inheritedEntries);
+    }
+
+    /** 共享 Worker 依赖优先于游戏 JVM 的继承 classpath，避免同名库抢先加载。 */
+    static String mergeWorkerClasspath(
+            Collection<String> preferredEntries,
+            Collection<String> inheritedEntries
+    ) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (preferredEntries != null) {
+            preferredEntries.stream()
+                    .filter(entry -> entry != null && !entry.isBlank())
+                    .forEach(merged::add);
+        }
+        if (inheritedEntries != null) {
+            inheritedEntries.stream()
+                    .filter(entry -> entry != null && !entry.isBlank())
+                    .forEach(merged::add);
+        }
+        return String.join(File.pathSeparator, merged);
     }
 
     /** 仅检查当前实例的模组归档，不解析模组类或启动客户端类。 */

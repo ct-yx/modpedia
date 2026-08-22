@@ -408,6 +408,12 @@ def workerConcurrencySelfTest = tasks.register('workerConcurrencySelfTest', Java
     mainClass = 'io.ctyx.modpedia.worker.WorkerConcurrencySelfTest'
 }
 
+def workerTokenEstimatorSelfTest = tasks.register('workerTokenEstimatorSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.WorkerTokenEstimatorSelfTest'
+}
+
 def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -652,6 +658,7 @@ tasks.named('test', Test) {
     dependsOn workerGuideScannerSelfTest
     dependsOn knowledgeOperationGateSelfTest
     dependsOn workerConcurrencySelfTest
+    dependsOn workerTokenEstimatorSelfTest
     dependsOn workerCoreBoundarySelfTest
     dependsOn workerCompatibilitySelfTest
     dependsOn workerLibraryVerifierSelfTest

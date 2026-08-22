@@ -65,6 +65,10 @@ config/modpedia/
 `custom/`、`sources/`、`media.json` 和覆盖文件不会被搬走或删除。旧版
 `config/modpedia/ai.json` 和 `config/modpedia/runtime/ai.json` 会迁移到
 `~/.modpedia/ai.json`，供不同游戏实例共享；用户级目录不属于整合包事实源。
+用户目录解析不依赖被启动器覆盖的 `user.home`：macOS/Linux 按 `HOME`、`USERPROFILE`、
+`user.home`、配置目录父级回退；Windows 按 `USERPROFILE`、`HOMEDRIVE` + `HOMEPATH`、
+`HOME`、`user.home`、配置目录父级回退。启动器错误目录中的空 `ai.json` 会清理，旧 Worker
+lib 会迁移到固定基线目录；`runtime/worker/` 的日志、IPC 状态和临时载荷仍属于当前实例。
 
 ## 2. 模块职责
 

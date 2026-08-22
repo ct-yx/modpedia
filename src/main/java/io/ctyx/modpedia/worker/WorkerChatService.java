@@ -10,7 +10,6 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
-import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.TokenStream;
@@ -812,12 +811,7 @@ public final class WorkerChatService {
     }
 
     private TokenWindowChatMemory createMemory(String id, AiSettings settings) {
-        TokenCountEstimator estimator;
-        try {
-            estimator = new OpenAiTokenCountEstimator(settings.model());
-        } catch (RuntimeException ignored) {
-            estimator = new WorkerAiSupport.ApproximateTokenCountEstimator();
-        }
+        TokenCountEstimator estimator = WorkerAiSupport.tokenCountEstimator(settings.model());
         return TokenWindowChatMemory.builder()
                 .id(id)
                 .maxTokens(WorkerAiSupport.memoryTokenBudget(settings.effectiveMaxContextChars()), estimator)

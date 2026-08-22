@@ -261,7 +261,13 @@ not to a modpack. Different Minecraft versions and modpacks read the same
 user-level `ai.json`. Older files at `config/modpedia/ai.json` or
 `config/modpedia/runtime/ai.json` are moved here on startup. This keeps personal
 AI settings out of modpack archives; the API key is decrypted only into the
-current process memory and is excluded from logs and conversation records.
+current process memory and is excluded from logs and conversation records. On
+macOS/Linux, user-directory resolution prefers `HOME`; on Windows it prefers
+`USERPROFILE`, then follows the platform fallback order through
+`HOMEDRIVE` + `HOMEPATH`, `HOME`, `user.home`, and the config parent. Empty
+`ai.json` files left by an old launcher are removed, old Worker libraries move
+to the fixed `worker-baseline-1` directory, and `runtime/worker/` remains
+instance-local.
 
 `knowledge.db` uses Schema v7. Mod manuals, Wiki content, static FTBQ task
 definitions, and the item catalog share this file but are separated by
@@ -521,6 +527,7 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Knowledge-base design](docs/KNOWLEDGE_BASE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Worker baseline and compatibility](docs/WORKER_BASELINE.md)
+- [Release and GitHub Pages maintenance](docs/RELEASE_AND_PAGES.md)
 - [Worker verification matrix](docs/WORKER_VERIFICATION_MATRIX.md)
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)
