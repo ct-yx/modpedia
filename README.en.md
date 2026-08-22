@@ -263,6 +263,17 @@ user-level `ai.json`. Older files at `config/modpedia/ai.json` or
 AI settings out of modpack archives; the API key is decrypted only into the
 current process memory and is excluded from logs and conversation records.
 
+User-directory resolution does not trust `user.home` alone. On macOS/Linux the
+fallback order is `HOME`, `USERPROFILE`, `user.home`; on Windows it is
+`USERPROFILE`, `HOMEDRIVE + HOMEPATH`, `HOME`, `user.home`. If none is usable,
+the parent of the instance config directory is used. This keeps launcher-overridden
+`user.home` from creating a second `.modpedia` directory. An empty `ai.json` in
+the old launcher directory is removed; a non-empty old configuration is migrated
+only when the user-level file does not exist, and the user-level file always wins.
+An old `runtime/worker/lib/` is moved to the fixed shared
+`~/.modpedia/worker/lib/worker-baseline-1/`; Worker logs, IPC state, and temporary
+payloads remain in the current instance at `config/modpedia/runtime/worker/`.
+
 `knowledge.db` uses Schema v7. Mod manuals, Wiki content, static FTBQ task
 definitions, and the item catalog share this file but are separated by
 `content_kind`, `source_type`, `origin_type`, and `collection_id`. In this early
@@ -518,6 +529,7 @@ See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the complete list.
 - [Knowledge-base design](docs/KNOWLEDGE_BASE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Worker baseline and compatibility](docs/WORKER_BASELINE.md)
+- [Worker change and version-adaptation protocol](docs/WORKER_CHANGE_PROTOCOL.md)
 - [Worker verification matrix](docs/WORKER_VERIFICATION_MATRIX.md)
 - [Changelog](CHANGELOG.md)
 - [Installation guide](INSTALL.md)

@@ -128,6 +128,10 @@ io.ctyx.modpedia.client.*
 
 ## 7. 验收命令
 
+Worker 变更必须先由具体游戏版本对话生成 `[WORKER_CHANGE_REQUEST]`，由本仓库完成
+Worker 修改和验证，再为每个游戏版本生成 `[WORKER_ADAPTER_UPDATE]`。详细字段和回传格式见
+[WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md)。
+
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
 ./gradlew workerCoreBoundarySelfTest

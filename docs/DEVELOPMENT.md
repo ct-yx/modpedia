@@ -27,7 +27,7 @@
 https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 ```
 
-后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。Worker 独立 JVM 的基线、握手字段和迁移矩阵见[Worker 基线与兼容层](WORKER_BASELINE.md)。
+后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。Worker 独立 JVM 的基线、握手字段和迁移矩阵见[Worker 基线与兼容层](WORKER_BASELINE.md)；需要修改 Worker 时遵循[Worker 变更与版本适配流程](WORKER_CHANGE_PROTOCOL.md)。
 
 运行目录、SQLite 数据库、测试日志和测试 JAR 均属于本地验证产物，不进入提交；交付记录统一写入
 `docs/DEVELOPMENT_LOG.md`。
@@ -68,7 +68,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 - [x] FTS5 使用 external-content，正文从 `segments` 事实表读取；Schema/索引创建后执行 `PRAGMA optimize`，全量/大批量变更执行 FTS5 optimize/merge，小增量跳过完整合并。
 - [x] FTS 查询按 `rank` 排序，避免 `bm25(...)` 的排序临时表；性能自测覆盖短语、删除、增量更新和事务回滚。
 - [x] 将 `config/modpedia/` 分为 `runtime/` 与 `knowledge/`：会话、Worker、生成 Markdown、索引和 SQLite 全部位于 `runtime/`；custom/Wiki/source-overrides 等整合包事实源位于 `knowledge/`；跨实例共享的 AI 配置位于用户目录 `~/.modpedia/ai.json`。
-- [x] 启动时迁移早期散落路径，且不搬移或删除 `knowledge/custom/`、`knowledge/sources/`、`media.json` 和来源覆盖文件。
+- [x] 启动时按平台优先级解析用户目录并迁移早期散落路径；清理旧启动器空 `ai.json`，合并旧 `runtime/worker/lib/`，且不搬移或删除 `knowledge/custom/`、`knowledge/sources/`、`media.json` 和来源覆盖文件。
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。

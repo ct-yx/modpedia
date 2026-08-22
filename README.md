@@ -170,6 +170,14 @@ config/modpedia/
 `config/modpedia/runtime/ai.json` 的配置会在启动时迁移到这里。移动位置可以避免把个人 AI 配置
 带入整合包发布包；API Key 仍只在当前用户进程内解密到内存，日志和会话不会记录明文。
 
+用户目录解析不会只信任 `user.home`：macOS/Linux 按 `HOME`、`USERPROFILE`、`user.home`
+依次回退，Windows 按 `USERPROFILE`、`HOMEDRIVE + HOMEPATH`、`HOME`、`user.home`
+依次回退，全部不可用时才回退到配置目录父级。这样启动器覆盖 `user.home` 时，仍能使用真实用户的
+`~/.modpedia/`。旧启动器目录中的空 `ai.json` 会清理；用户级配置不存在时才迁移旧配置，已有用户级
+配置始终优先。旧的 `runtime/worker/lib/` 也会迁移到固定的
+`~/.modpedia/worker/lib/worker-baseline-1/`，而日志、IPC 状态和临时 payload 仍留在当前实例的
+`config/modpedia/runtime/worker/`。
+
 `knowledge.db` 使用 Schema v7。模组手册、Wiki、FTBQ 静态任务定义和物品目录共用这个文件，但通过
 `content_kind`、`source_type`、`origin_type` 和 `collection_id` 分开检索；早期测试版发现
 旧 Schema 或缺少 `item_catalog` 时会在旁路数据库中全量重建，成功校验后再原子替换，失败时恢复上一份数据库；原始文件不会删除。
@@ -380,6 +388,7 @@ Token 只从 GitHub Actions Secret 读取，不写入仓库文件、构建产物
 - [知识库设计](docs/KNOWLEDGE_BASE.md)
 - [后续开发路线](docs/ROADMAP.md)
 - [Worker 基线与兼容层](docs/WORKER_BASELINE.md)
+- [Worker 变更与版本适配流程](docs/WORKER_CHANGE_PROTOCOL.md)
 - [Worker 验证矩阵](docs/WORKER_VERIFICATION_MATRIX.md)
 - [更新日志](CHANGELOG.md)
 - [安装说明](INSTALL.md)
