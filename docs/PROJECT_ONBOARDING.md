@@ -44,10 +44,14 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | Worker 日志 | `config/modpedia/runtime/worker/worker.log` |
 | Worker 共享依赖 | `~/.modpedia/worker/lib/worker-baseline-1/` |
 
+`main` 是发布、GitHub Pages、README 和 `docs/` 的维护分支；功能分支只负责代码和测试。
+需要修改 Worker 时，先阅读 [WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md)；需要发布
+版本或更新网页时，交给 [RELEASE_AND_PAGES.md](RELEASE_AND_PAGES.md) 规定的 `main` 流程。
+
 维护者进入项目后的第一项工作是确认当前分支、版本和工作区状态：
 
 ```bash
-cd /Users/chenhong/Documents/modpedia
+cd <repository-root>
 git status --short
 git log -1 --oneline --decorate
 ```
@@ -195,8 +199,8 @@ git diff --check
 运行日志：
 
 ```text
-/Users/chenhong/Documents/modpedia/run/logs/latest.log
-/Users/chenhong/Documents/modpedia/run/logs/debug.log
+<repository-root>/run/logs/latest.log
+<repository-root>/run/logs/debug.log
 ```
 
 ### Dedicated Server
@@ -236,8 +240,9 @@ git diff --check
 4. 阅读 docs/DEVELOPMENT.md 和 docs/ROADMAP.md
 5. 阅读 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)，了解 AI 上下文、数据库 v8 和外部百科的统一后续路线
 6. 阅读 [WORKER_BASELINE.md](WORKER_BASELINE.md) 和 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)，确认独立 Worker 基线、握手兼容和验证矩阵
-7. 运行 ./gradlew test
-8. 检查 ModPediaBridge、StartupKnowledgeBootstrap 和 ItemCatalogSyncService
-9. 按 docs/DEVELOPMENT.md、NEXT_DEVELOPMENT_PLAN.md 与 WORKER_BASELINE.md 的清单补充对应自测
-10. 再启动 runClient 或 runServer 做人工回归
+7. 阅读 [WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md)，确认 Worker 变更如何传递到具体版本
+8. 运行 ./gradlew test
+9. 检查 ModPediaBridge、StartupKnowledgeBootstrap 和 ItemCatalogSyncService
+10. 按 docs/DEVELOPMENT.md、NEXT_DEVELOPMENT_PLAN.md 与 WORKER_BASELINE.md 的清单补充对应自测
+11. 再启动 runClient 或 runServer 做人工回归
 ```

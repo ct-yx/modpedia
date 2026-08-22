@@ -662,7 +662,7 @@ Phase 3 可选导入 content_kind=external 的 FTS
 ### 验证命令
 
 ~~~bash
-cd /Users/chenhong/Documents/modpedia
+cd <repository-root>
 ./gradlew test
 ./gradlew build
 git diff --check
@@ -694,3 +694,9 @@ git diff --check
 - CHANGELOG.md：仅记录已经进入版本的变化，不把研究稿写入发布日志。
 
 提交前必须区分：已实现、已通过纯 Java/Worker 测试、已通过真实游戏回归和仍处于研究阶段的内容。数据库 v8 与外部百科只有完成对应人工验收后，才从计划状态进入版本路线。
+
+发布边界：`main` 统一维护 README、英文 README、`docs/`、`docs/site/`、CHANGELOG 和版本
+工作流；研究计划不会自动变成发布日志。Worker 变更按
+[WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md) 在独立 Worker 对话中完成，再由
+具体 Minecraft 版本补适配测试。版本发布、Pages 预览和标签流程见
+[RELEASE_AND_PAGES.md](RELEASE_AND_PAGES.md)。

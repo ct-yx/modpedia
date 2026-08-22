@@ -1,5 +1,9 @@
 # ModPedia 知识库设计
 
+当前发布基线为 `v1.2.0-fix`、Schema v7、SQLite FTS5 external-content 和
+`worker-baseline-1`。本文描述运行时事实源、派生库和导入边界；版本级路线见
+[ROADMAP.md](ROADMAP.md)，Worker 变更流程见 [WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md)。
+
 ## 1. 设计原则
 
 主 Mod 只内置以下内容：

@@ -140,6 +140,10 @@ io.ctyx.modpedia.client.*
 
 ## 7. 验收命令
 
+Worker 协议、依赖或核心业务发生修改时，先按
+[WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md) 生成请求和适配摘要；不要在具体
+Minecraft 版本分支复制 Worker 实现或单独维护发布网页。
+
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
 ./gradlew workerCoreBoundarySelfTest

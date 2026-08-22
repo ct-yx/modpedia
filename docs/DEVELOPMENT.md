@@ -5,6 +5,11 @@
 
 本次发布前的具体变更、命令输出和测试 JAR 记录见[开发日志](DEVELOPMENT_LOG.md)。
 
+发布与网页维护集中在 `main`：README、`docs/`、`docs/site/`、CHANGELOG 和 GitHub Actions
+发布配置不要在功能分支重复维护。Worker 协议、依赖或纯 Java 业务改动先按
+[Worker 修改与版本适配协议](WORKER_CHANGE_PROTOCOL.md) 交给 Worker 对话，再在本分支完成
+客户端适配和真实游戏回归。
+
 ## 0. 当前版本快照
 
 | 项目 | 当前值 |
@@ -160,6 +165,8 @@ git diff --check
 ./gradlew aiClientSelfTest
 # 四种 API 格式的普通请求、工具调用、模型列表和 SSE 夹具
 ./gradlew aiProtocolSelfTest
+# 精确 Token 词表缺失时的近似估算降级
+./gradlew workerTokenEstimatorSelfTest
 # 批量测试当前 API 的全部模型（不会打印或写入 API Key）
 ./gradlew aiModelCompatibility \
   -PaiSettingsFile="$HOME/.modpedia/ai.json" \

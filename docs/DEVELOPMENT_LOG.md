@@ -1,5 +1,12 @@
 # ModPedia 开发日志
 
+## 2026-08-23 · main 发布与文档集中维护
+
+- 确认 `main` 是 README、`docs/`、GitHub Pages、CHANGELOG 和 Release 工作流的唯一维护入口。
+- 增加 Worker 修改与版本适配协议，规定 Worker 变更摘要、基线编号、API level 和具体版本适配回传格式。
+- 同步补充两个 JVM、用户级共享 Worker 基线、Token 估算降级和文档入口说明；不改变当前公开版本 `v1.2.0-fix`。
+- 中英文 README、架构、开发清单、项目入门、路线、专题计划和 Pages 说明保持同一目录/发布事实。
+
 ## 2026-08-21 · v1.2.0-fix Worker 共享运行库修复
 
 - Worker 依赖库改为用户级固定基线目录 `~/.modpedia/worker/lib/worker-baseline-1/`。

@@ -26,6 +26,11 @@ AssistantScreen（非暂停客户端 Screen）
     └── SourceCard / SourceNavigator
 ```
 
+`main` 集中维护 README、`docs/`、静态网页、CHANGELOG 和版本发布工作流；具体版本分支只维护
+客户端适配、代码和测试。Worker 协议、依赖或纯 Java 业务发生变化时，先按
+[WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md) 生成跨对话变更摘要，再由具体版本适配层
+落地。这样可以避免不同 Minecraft 版本各自复制一套 Worker 实现。
+
 ## 1.1 实际文件布局
 
 `config/modpedia/` 分成“运行时目录”和“随整合包分发的事实源目录”。Worker 只把前者当作
@@ -136,6 +141,8 @@ ConversationStore → runtime/conversations/conversation-*.json
 本地工具负责数字计算；计算结果本身不生成手册来源引用。
 
 `AiClient` 负责统一构造四种 API 格式：Chat Completions 继续使用 LangChain4j 原生模型，原生 Messages、Responses 和 Gemini `generateContent` 使用 `ProtocolAiModel` 做协议转换。`AiSettings.apiFormat` 会随 Worker IPC 和 `ai.json` 的 `api_format` 字段往返；请求体、认证头、工具调用续接和 SSE 解析均按该字段选择。设置页连接测试和模型列表请求复用同一套端点归一化逻辑，Chat/原生 Messages/Responses 默认使用 `/v1`，Gemini 默认使用 `/v1beta`；没有 `/models` 的服务可以直接填写模型名称。全部模型批量兼容性测试仍只对 Chat Completions 开放，因为它的探测器使用该协议的四种工具链夹具。HTML 响应和 401 响应转换为不含密钥的用户提示。`AiTokenBudget` 将首轮工具参数限制为 384 tokens，并按搜索档位将最终回答限制为 1,024/2,048/3,072 tokens；GPT-5/o 系列额外改用 `max_completion_tokens`，避免 LangChain4j 的通用 `max_tokens` 字段被新模型网关拒绝。`PromptBuilder` 明确要求检索阶段静默，不发送过程性长文本。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，并在新问题进入时移除旧轮次的完整工具 JSON，只保留旧的用户/助手文本，避免上游返回 `No tool output found for function call` 和重复计费。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 或 `ProtocolAiModel` 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
+
+Token 预算依赖 `WorkerAiSupport.tokenCountEstimator`：优先使用精确词表估算，词表缺失或类加载失败时回退到 `ApproximateTokenCountEstimator`。回退只影响预算精度，不改变检索结果和协议，也不把错误扩散到游戏线程；`workerTokenEstimatorSelfTest` 和完整 `test` 覆盖这条路径。
 
 NeoForge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识构建、网络和 AI 工作由独立 Worker JVM 执行，双方通过带随机令牌的 localhost JSONL IPC 通信。Minecraft 的 UI、注册表/Tooltip 和可选运行时 API仍由客户端线程负责。任务问题的查询顺序固定为：`search_tasks` → 取得当前玩家运行时上下文 → Worker 得到临时快照 → Worker 查询 `knowledge.db` 中的静态任务定义 → 在内存中覆盖当前状态。单机优先只发送当前存档路径描述，由 Worker 直接读取很小的 `ftbquests/<team-uuid>.snbt`；多人服务器或本地文件不可用时，游戏 JVM 才读取已同步的 TeamData 并通过 IPC 返回。无论哪条路径，实时进度只在当前请求内存中存在，不写入数据库。
 

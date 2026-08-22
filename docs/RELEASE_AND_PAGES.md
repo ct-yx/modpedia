@@ -3,6 +3,10 @@
 `main` 固定用于整理发布文件、维护 GitHub Pages 和准备版本发布；功能开发仍在对应的
 开发分支完成，不在 `main` 直接堆积临时代码。
 
+Worker 协议、依赖和核心业务不在本文件中修改；相关变更先按
+[WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md) 交给 Worker 仓库，再由 `main`
+接收具体版本的适配摘要。
+
 ## 目录职责
 
 ```text

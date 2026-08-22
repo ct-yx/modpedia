@@ -184,6 +184,7 @@ Dedicated Server 启动通过
 
 ### 工作项
 
+- [x] 将 README、`docs/`、CHANGELOG、GitHub Pages 和 Release 工作流集中到 `main`，并删除发布分支的重复维护边界。
 - 增加 AI 配置、主题配置和知识库配置的导入/导出。
 - 增加知识库状态诊断、扫描覆盖率和构建报告导出。
 - 完善 GitHub Actions 的测试、构建、SHA-256 校验和发布资产流程。

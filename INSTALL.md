@@ -1,4 +1,4 @@
-# ModPedia v1.2.0 安装说明
+# ModPedia v1.2.0-fix 安装说明
 
 ## 运行环境
 
@@ -10,9 +10,9 @@
 ## 安装
 
 1. 安装目标整合包对应的 NeoForge 客户端。
-2. 将 `modpedia-1.2.0.jar` 放入该实例的 `mods/` 目录。
-3. 启动游戏并进入世界；ModPedia 会在后台扫描已安装模组的本地手册。
-4. 按 `K` 打开助手，按 `F9` 手动重建知识库。
+2. 将 `modpedia-1.2.0-fix.jar` 放入该实例的 `mods/` 目录。
+3. 启动游戏，等待加载屏幕完成手册和当前语言物品目录的预填充，再进入世界。
+4. 按 `K` 打开助手，按 `F9` 手动重建知识库；重建在独立 Worker JVM 中执行。
 
 ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。手册框架是可选适配对象，实际手册正文来自对应内容模组的 JAR。
 
@@ -28,7 +28,7 @@ FTB Quests、JEI、Jade 也是可选联动，不影响 ModPedia 基础加载：�
 在下载目录执行：
 
 ```bash
-shasum -a 256 modpedia-1.2.0.jar
+shasum -a 256 modpedia-1.2.0-fix.jar
 ```
 
 将结果与 `SHA256SUMS` 对比。

@@ -10,7 +10,14 @@ answers while preserving links back to the original manual pages.
 
 简体中文版本: [README.md](README.md)
 
-专题后续计划（中文）: [AI context, database v8, and external encyclopedia](docs/NEXT_DEVELOPMENT_PLAN.md)
+Focused follow-up plan (Chinese): [AI context, database v8, and external encyclopedia](docs/NEXT_DEVELOPMENT_PLAN.md)
+
+Maintenance boundary: `main` is the single source of truth for the README, `docs/`,
+GitHub Pages, `CHANGELOG.md`, and release workflows. Feature branches maintain code
+and tests only; send release or website changes back to `main`. When the Worker
+protocol, dependencies, database, or AI orchestration changes, follow the [Worker
+change and adapter protocol](docs/WORKER_CHANGE_PROTOCOL.md) instead of copying
+Worker implementation into each Minecraft version branch.
 
 ## Current release
 
@@ -92,6 +99,17 @@ Without these integrations, the assistant, manual scanner, SQLite search, and
 AI client still load normally. The assistant UI itself has no external UI mod
 dependency.
 
+### Two JVM responsibilities
+
+The game JVM handles UI, registries/Tooltips, optional Jade/JEI/FTB Quests client
+adapters, and lightweight IPC. A separate Worker JVM handles manual scanning,
+SQLite/FTS, AI requests, conversations, static task imports, and batched item
+catalog writes. Shared Worker libraries live at
+`~/.modpedia/worker/lib/worker-baseline-1/`; the instance-level
+`config/modpedia/runtime/worker/` contains only logs, IPC state, and temporary
+payloads. Different modpacks can therefore reuse compatible libraries without
+sharing their databases or conversations.
+
 ## First use
 
 ### Search-only mode
@@ -171,6 +189,13 @@ AI requests keep the first tool-call output short, cap the final answer by searc
 profile, and suppress process narration during retrieval. GPT-5/o-series models
 use `max_completion_tokens`; other Chat Completions models keep `max_tokens`, so
 the request never sends both mutually exclusive fields.
+
+Token estimation prefers the exact vocabulary resource. If the resource is
+missing, a class cannot load, or a test environment is incomplete, the Worker
+falls back to an approximate estimator instead of blocking search or AI. The
+fallback is covered by `workerTokenEstimatorSelfTest`; real-model regression
+should use the configured low-cost model and record token usage together with
+answer quality.
 
 ## Shortcuts and UI
 
@@ -400,17 +425,29 @@ Invalid Front Matter or a failed transaction keeps the previous valid record.
 ~~~text
 src/main/java/io/ctyx/modpedia/
 ├── ai/           # AI client, tool calls, context, and conversations
+├── api/          # Pure-Java DTOs shared across the JVM boundary
+├── compat/       # Worker baseline, capabilities, and library checks
 ├── knowledge/    # Manual scanning, conversion, incremental builds, custom import
+├── protocol/     # Worker JSONL IPC protocol
+├── recipe/       # JEI recipe query models and client adapter
 ├── search/       # SQLite, FTS, and rule-based retrieval
+├── storage/      # User/instance paths and configuration migration
 ├── task/         # Task snapshots, progress, dependencies, rewards, and queries
+├── worker/       # Independent Worker JVM service
 └── client/       # NeoForge client UI, source previews, and manual navigation
 
 docs/
 ├── ARCHITECTURE.md
 ├── DEVELOPMENT.md
 ├── DEVELOPMENT_LOG.md
+├── NEXT_DEVELOPMENT_PLAN.md
+├── PROJECT_ONBOARDING.md
+├── RELEASE_AND_PAGES.md
 ├── KNOWLEDGE_BASE.md
-└── ROADMAP.md
+├── ROADMAP.md
+├── WORKER_BASELINE.md
+├── WORKER_CHANGE_PROTOCOL.md
+└── WORKER_VERIFICATION_MATRIX.md
 ~~~
 
 Optional item and source protocols in model responses:
@@ -470,6 +507,9 @@ optimize.
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the Mod development checklist,
 manual regression, and release process. The maintenance, test, and delivery
 record is in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md).
+New maintainers should start with [docs/PROJECT_ONBOARDING.md](docs/PROJECT_ONBOARDING.md);
+release and Pages changes are performed on `main` according to
+[docs/RELEASE_AND_PAGES.md](docs/RELEASE_AND_PAGES.md).
 
 ### CurseForge automated publishing
 

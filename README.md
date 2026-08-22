@@ -9,6 +9,11 @@ English version: [README.en.md](README.en.md)
 
 专项后续计划：[AI 上下文、数据库 v8 与外部百科](docs/NEXT_DEVELOPMENT_PLAN.md)
 
+维护边界：`main` 是 README、`docs/`、GitHub Pages、CHANGELOG 和版本发布工作流的唯一
+事实源。功能分支只维护代码和测试；需要更新发布说明或网页时，把变更摘要交给 `main`。
+Worker 协议、依赖或数据库/AI 编排发生变化时，先按 [Worker 修改与版本适配协议](docs/WORKER_CHANGE_PROTOCOL.md)
+生成摘要，不在各 Minecraft 版本分支复制 Worker 实现。
+
 ## 当前版本
 
 | 项目 | 版本/状态 |
@@ -51,6 +56,14 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 
 缺少这些联动模组时，助手、手册扫描、SQLite 搜索和 AI 仍可正常加载。助手界面本身不依赖外部 UI 模组。
 
+### 两个 JVM 的职责
+
+游戏 JVM 只负责 UI、注册表/Tooltip、可选的 Jade/JEI/FTBQ 客户端适配和轻量 IPC；独立
+Worker JVM 负责手册扫描、SQLite/FTS、AI 请求、会话、任务静态导入和物品目录批量写入。
+Worker 的共享依赖库放在用户级 `~/.modpedia/worker/lib/worker-baseline-1/`，实例级
+`config/modpedia/runtime/worker/` 只保存日志、IPC 状态和临时载荷。这样多个整合包可以共享
+同一套兼容库，同时不共享实例知识库和会话。
+
 ## 第一次使用
 
 ### 仅搜索模式
@@ -90,6 +103,10 @@ ModPedia 不捆绑 Patchouli、GuideME、Modonomicon 或内容模组。它们作
 | 深入 | 5 | 12 | 28,000 字符 |
 
 AI 请求会把首轮工具调用限制为 1,536 tokens（GPT-5/o 为 3,072），最终回答按搜索强度使用 1,280/2,560/4,096 tokens，检索阶段不发送过程性文字。GPT-5/o 系列使用兼容接口要求的 `max_completion_tokens`，其他 Chat Completions 模型继续使用 `max_tokens`，避免发送两个互斥字段。
+
+Token 估算优先使用精确词表；词表资源缺失、类加载失败或测试环境不完整时自动降级为近似
+估算，不阻断搜索或 AI 请求。该降级路径由 `workerTokenEstimatorSelfTest` 覆盖，真实模型
+回归仍应使用用户配置的低成本模型并记录输入/输出 Token 和回答质量。
 
 ## 快捷键与界面
 
@@ -286,17 +303,29 @@ source_type: manual_annotation
 ~~~text
 src/main/java/io/ctyx/modpedia/
 ├── ai/           # AI 客户端、工具调用、上下文和会话
+├── api/          # 跨 JVM 的纯 Java DTO
+├── compat/       # Worker 基线、能力和共享库校验
 ├── knowledge/    # 手册扫描、转换、增量构建和自定义导入
+├── protocol/     # Worker IPC JSONL 协议
+├── recipe/       # JEI 配方查询模型与客户端适配
 ├── search/       # SQLite、FTS 和规则检索
+├── storage/      # 用户目录、实例目录和配置迁移
 ├── task/         # 任务快照、进度、依赖、奖励和查询
+├── worker/       # 独立 Worker JVM 服务
 └── client/       # NeoForge 客户端 UI、来源预览和手册跳转
 
 docs/
 ├── ARCHITECTURE.md
 ├── DEVELOPMENT.md
 ├── DEVELOPMENT_LOG.md
+├── NEXT_DEVELOPMENT_PLAN.md
+├── PROJECT_ONBOARDING.md
+├── RELEASE_AND_PAGES.md
 ├── KNOWLEDGE_BASE.md
-└── ROADMAP.md
+├── ROADMAP.md
+├── WORKER_BASELINE.md
+├── WORKER_CHANGE_PROTOCOL.md
+└── WORKER_VERIFICATION_MATRIX.md
 ~~~
 
 模型正文中的可选物品和来源协议为：
@@ -348,6 +377,8 @@ build/reports/modpedia/knowledge-benchmark.md
 
 详细的 Mod 开发清单、手动回归和发布流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 本轮合并前维护、测试记录和交付检查见 [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)。
+第一次接手项目可从 [docs/PROJECT_ONBOARDING.md](docs/PROJECT_ONBOARDING.md) 开始；发布与
+Pages 只按 [docs/RELEASE_AND_PAGES.md](docs/RELEASE_AND_PAGES.md) 在 `main` 上执行。
 
 ### CurseForge 自动发布
 
