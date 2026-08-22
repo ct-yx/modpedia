@@ -1,5 +1,6 @@
 package io.ctyx.modpedia.client;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import io.ctyx.modpedia.api.ChatMessage;
 import io.ctyx.modpedia.api.ConversationSummary;
 import io.ctyx.modpedia.api.MessageRole;
@@ -18,7 +19,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
-import net.neoforged.fml.ModList;
+import net.minecraftforge.fml.ModList;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -33,13 +34,8 @@ public final class AssistantScreen extends Screen {
     private static final int TEXT_COLOR = 0xFFF3F6FA;
     private static final int SUBTLE_TEXT_COLOR = 0xFFB8C3D3;
     private static final int ERROR_COLOR = 0xFFFFB4AB;
-    /**
-     * FTB Library 的侧边栏控件会在父 Screen 中使用 z=5000 绘制。助手先绘制
-     * 父 Screen，再绘制自己的内容，因此 600 仍会让侧边栏图标和文字穿过助手
-     * 表面。使用高于该层的统一前景深度，确保浮窗、二级页面和控件保持在所有
-     * 父页面快捷按钮之上。
-     */
-    private static final float TOP_LAYER_Z = 10_000.0F;
+    /** Forge 1.20.1 GUI 层使用的安全前景偏移，必须低于 GuiGraphics.MAX_GUI_Z。 */
+    private static final float ASSISTANT_LAYER_Z = 2_000.0F;
     private static final int TARGET_INSERT_WIDTH = 18;
     private static AssistantScreen pendingReturnAssistant;
     private static Screen pendingExternalScreen;
@@ -200,36 +196,50 @@ public final class AssistantScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         // AssistantScreen 是唯一的当前 Minecraft Screen，但保留并绘制打开它之前
-        // 的界面作为底层。这样助手可以叠加在 FTBQ、JEI、容器和其它任意 GUI 上，
-        // 关闭助手时仍由 onClose() 返回同一个 previousScreen。
+        // 的界面作为底层。助手自身延后到 ScreenEvent.Render.Post 绘制，避免和
+        // JEI/FTB 的 Post overlay 竞争绘制顺序，也避免每帧重复绘制整套消息布局。
         if (previousScreen != null && previousScreen != this) {
             previousScreen.render(graphics, mouseX, mouseY, partialTick);
+            graphics.flush();
         }
-        // 原版 GuiGraphics.renderItem 使用 z=150，且 RenderType.gui 开启深度测试；
-        // 仅靠调用顺序会让父页面物品继续压在 z=0 的助手背景上。把整个助手提升到
-        // 高于物品和 Tooltip 的统一层，确保窗口、文字和控件保持同一前景层级。
-        graphics.pose().pushPose();
-        graphics.pose().translate(0.0F, 0.0F, TOP_LAYER_Z);
-        try {
-            // 配置文件可能来自旧版本，或客户端窗口刚刚完成 GUI 缩放。
-            // 每帧先约束一次，避免旧实例把二级页面绘制成全视口页面。
-            constrainBounds();
-            renderWindow(graphics, mouseX, mouseY);
-            // 不调用 super.render，避免 Screen 的底层背景再次覆盖浮窗。
-            // 二级页面控件单独在自己的裁剪区域内绘制，避免脱离原窗口。
-            if (secondaryPanel == SecondaryPanel.SETTINGS) {
-                renderSettingsWidgets(graphics, mouseX, mouseY, partialTick);
-            } else if (secondaryPanel == SecondaryPanel.NONE) {
-                for (var renderable : renderables) {
-                    renderable.render(graphics, mouseX, mouseY, partialTick);
+    }
+
+    /**
+     * Forge 的 ScreenEvent.Render.Post 是当前 Screen 完整绘制后的最后一个扩展点。
+     * 一些 JEI/FTB 页面会在父 Screen 中追加物品层；这里再次绘制助手，确保这些
+     * 追加层也被窗口表面和正文覆盖。
+     */
+    public void renderFinalOverlay(
+            GuiGraphics graphics,
+            int mouseX,
+            int mouseY,
+            float partialTick
+    ) {
+        if (minecraft == null || minecraft.screen != this || bounds == null) {
+            return;
+        }
+        graphics.drawManaged(() -> {
+            RenderSystem.disableDepthTest();
+            graphics.pose().pushPose();
+            try {
+                // Forge 官方 GUI 层使用的 2000 级偏移能覆盖物品默认 z=150、
+                // Tooltip 和常规第三方 GUI，同时避开 10000 边界导致的裁剪。
+                graphics.pose().translate(0.0F, 0.0F, ASSISTANT_LAYER_Z);
+                constrainBounds();
+                renderWindow(graphics, mouseX, mouseY);
+                if (secondaryPanel == SecondaryPanel.SETTINGS) {
+                    renderSettingsWidgets(graphics, mouseX, mouseY, partialTick);
+                } else if (secondaryPanel == SecondaryPanel.NONE) {
+                    super.render(graphics, mouseX, mouseY, partialTick);
                 }
+                if (previewSource != null) {
+                    renderSourcePreview(graphics);
+                }
+            } finally {
+                graphics.pose().popPose();
+                RenderSystem.enableDepthTest();
             }
-            if (previewSource != null) {
-                renderSourcePreview(graphics);
-            }
-        } finally {
-            graphics.pose().popPose();
-        }
+        });
     }
 
     @Override
@@ -480,7 +490,7 @@ public final class AssistantScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         if (secondaryPanel == SecondaryPanel.SETTINGS && settingsPanel != null) {
             if (settingsPanel.contentContains(mouseX, mouseY)) {
                 settingsPanel.scrollBy(scrollY);
@@ -500,7 +510,7 @@ public final class AssistantScreen extends Screen {
             scrollToEnd = false;
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        return super.mouseScrolled(mouseX, mouseY, scrollY);
     }
 
     @Override
@@ -594,7 +604,9 @@ public final class AssistantScreen extends Screen {
      * 模式继续保留透明效果；存在 parent Screen 时，窗口自身成为完整遮挡层。</p>
      */
     private boolean usesOpaqueSurface() {
-        return previousScreen != null || FloatingAssistantWindow.prefersOpaqueSurface(minecraft);
+        return previousScreen != null
+                || minecraft.level != null
+                || FloatingAssistantWindow.prefersOpaqueSurface(minecraft);
     }
 
     private void drawInputChrome(GuiGraphics graphics, int mouseX, int mouseY) {

@@ -30,8 +30,8 @@ public final class CompletedQuestSnapshotSelfTest {
         )), "完成事件只应增量加入新的任务 ID");
         check(updated.add("") == updated, "空任务 ID 不应改变快照");
         check(updated.timeline().size() == 1
-                        && updated.timeline().getFirst().eventType() == TaskTimelineEventType.COMPLETED
-                        && updated.timeline().getFirst().timestampEpochMillis() == 1_786_436_182_827L,
+                        && updated.timeline().get(0).eventType() == TaskTimelineEventType.COMPLETED
+                        && updated.timeline().get(0).timestampEpochMillis() == 1_786_436_182_827L,
                 "完成事件应保留原始完成时间并按相同事件去重");
         check(updated.runtimeSnapshot(TaskQuery.search("")).timelineEntryCount() == 1,
                 "运行时快照应携带完成时间线，但仍只存在内存中");
@@ -47,10 +47,10 @@ public final class CompletedQuestSnapshotSelfTest {
         List<TaskTimelineEntry> changes = tracker.detect(
                 "player:p|world:save-a", java.util.Map.of("task:stone", 3D));
         check(changes.size() == 1
-                        && changes.getFirst().eventType() == TaskTimelineEventType.PROGRESS_CHANGED
-                        && changes.getFirst().previousProgress() == 1D
-                        && changes.getFirst().currentProgress() == 3D
-                        && changes.getFirst().hasKnownTimestamp(),
+                        && changes.get(0).eventType() == TaskTimelineEventType.PROGRESS_CHANGED
+                        && changes.get(0).previousProgress() == 1D
+                        && changes.get(0).currentProgress() == 3D
+                        && changes.get(0).hasKnownTimestamp(),
                 "两次同一存档进度变化应生成带检测时间的时间线事件");
         check(tracker.detect("player:p|world:save-b", java.util.Map.of("task:stone", 9D)).isEmpty(),
                 "切换存档时应重建基线，不能把旧存档进度当成变化");

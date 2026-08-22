@@ -1,7 +1,7 @@
 package io.ctyx.modpedia.client;
 
 import io.ctyx.modpedia.ModPedia;
-import net.neoforged.fml.ModList;
+import net.minecraftforge.fml.ModList;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;

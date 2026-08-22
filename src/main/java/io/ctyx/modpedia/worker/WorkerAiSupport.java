@@ -3,12 +3,19 @@ package io.ctyx.modpedia.worker;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
 import io.ctyx.modpedia.ai.AiToolRouter;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.function.Supplier;
 
 /** Worker 与客户端 AI 会话共用的预算和首轮工具调用规则。 */
 final class WorkerAiSupport {
+    private static final Logger LOG = Logger.getLogger("ModPediaWorker");
+    private static final AtomicBoolean TOKEN_ESTIMATOR_WARNING_LOGGED = new AtomicBoolean();
+
     private WorkerAiSupport() {
     }
 
@@ -52,6 +59,40 @@ final class WorkerAiSupport {
 
     static int toolCallingRoundTrips(int searchRounds) {
         return Math.max(4, Math.min(12, Math.max(1, searchRounds) + 3));
+    }
+
+    static TokenCountEstimator tokenCountEstimator(String model) {
+        return tokenCountEstimator(() -> new OpenAiTokenCountEstimator(model), model);
+    }
+
+    static TokenCountEstimator tokenCountEstimator(Supplier<TokenCountEstimator> exactEstimator) {
+        return tokenCountEstimator(exactEstimator, "<supplier>");
+    }
+
+    private static TokenCountEstimator tokenCountEstimator(
+            Supplier<TokenCountEstimator> exactEstimator,
+            String model
+    ) {
+        try {
+            return exactEstimator.get();
+        } catch (RuntimeException | LinkageError failure) {
+            // tiktoken 词表属于共享 Worker lib。某个运行环境的类加载器只要无法
+            // 读取资源，就使用近似估算继续工作，避免一次初始化失败污染后续重试。
+            if (TOKEN_ESTIMATOR_WARNING_LOGGED.compareAndSet(false, true)) {
+                LOG.log(Level.WARNING,
+                        "WORKER_TOKEN_ESTIMATOR_FALLBACK error_type={0} model={1}",
+                        new Object[]{failure.getClass().getSimpleName(), safeModel(model)});
+            }
+            return new ApproximateTokenCountEstimator();
+        }
+    }
+
+    private static String safeModel(String model) {
+        if (model == null || model.isBlank()) {
+            return "<blank>";
+        }
+        String normalized = model.strip().replaceAll("[\\r\\n\\t]", " ");
+        return normalized.length() <= 80 ? normalized : normalized.substring(0, 80);
     }
 
     static final class ApproximateTokenCountEstimator implements TokenCountEstimator {

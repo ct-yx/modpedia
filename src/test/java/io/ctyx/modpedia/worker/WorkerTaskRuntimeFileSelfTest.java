@@ -62,7 +62,7 @@ public final class WorkerTaskRuntimeFileSelfTest {
                             entry.eventType() == TaskTimelineEventType.COMPLETED
                                     && entry.timestampEpochMillis() == 99L),
                     "completed 时间线应保留 SNBT 中的 epoch millis");
-            check(snapshot.recentTimeline(1).getFirst().timestampEpochMillis() == 101L,
+            check(snapshot.recentTimeline(1).get(0).timestampEpochMillis() == 101L,
                     "最近时间线应按时间从新到旧返回");
             check(snapshot.scopeKey().contains(uuid), "运行时作用域应保留玩家标识");
             check(!Files.exists(root.resolve("knowledge.db")), "读取运行时文件不得创建数据库");

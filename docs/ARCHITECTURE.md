@@ -65,6 +65,11 @@ config/modpedia/
 `custom/`、`sources/`、`media.json` 和覆盖文件不会被搬走或删除。旧版
 `config/modpedia/ai.json` 和 `config/modpedia/runtime/ai.json` 会迁移到
 `~/.modpedia/ai.json`，供不同游戏实例共享；用户级目录不属于整合包事实源。
+用户目录按平台解析：macOS/Linux 使用 `HOME`、`USERPROFILE`、`user.home`，Windows 使用
+`USERPROFILE`、`HOMEDRIVE + HOMEPATH`、`HOME`、`user.home`；这些值都不可用时回退到配置目录父级。
+因此启动器覆盖 `user.home` 不会再产生第二份用户目录。旧启动器目录中的空 `ai.json` 会被清理，
+非空配置仅在用户级配置不存在时迁移；旧 `runtime/worker/lib/` 合并到固定基线目录，Worker 日志、
+IPC 状态和临时 payload 仍留在当前实例。
 
 ## 2. 模块职责
 
@@ -133,7 +138,7 @@ ConversationStore → runtime/conversations/conversation-*.json
 
 `AiClient` 负责统一构造四种 API 格式：Chat Completions 继续使用 LangChain4j 原生模型，原生 Messages、Responses 和 Gemini `generateContent` 使用 `ProtocolAiModel` 做协议转换。`AiSettings.apiFormat` 会随 Worker IPC 和 `ai.json` 的 `api_format` 字段往返；请求体、认证头、工具调用续接和 SSE 解析均按该字段选择。设置页连接测试和模型列表请求复用同一套端点归一化逻辑，Chat/原生 Messages/Responses 默认使用 `/v1`，Gemini 默认使用 `/v1beta`；没有 `/models` 的服务可以直接填写模型名称。全部模型批量兼容性测试仍只对 Chat Completions 开放，因为它的探测器使用该协议的四种工具链夹具。HTML 响应和 401 响应转换为不含密钥的用户提示。`AiTokenBudget` 将首轮工具参数限制为 384 tokens，并按搜索档位将最终回答限制为 1,024/2,048/3,072 tokens；GPT-5/o 系列额外改用 `max_completion_tokens`，避免 LangChain4j 的通用 `max_tokens` 字段被新模型网关拒绝。`PromptBuilder` 明确要求检索阶段静默，不发送过程性长文本。读写历史上下文时会丢弃没有对应 `ToolExecutionResultMessage` 的未完成工具调用及其后续消息，并在新问题进入时移除旧轮次的完整工具 JSON，只保留旧的用户/助手文本，避免上游返回 `No tool output found for function call` 和重复计费。503、429、网络超时和孤立工具调用会自动清理当前失败轮次并重试一次；明确的 400/401 配置错误不重复请求。上下文窗口、工具循环和流式协议由 LangChain4j 或 `ProtocolAiModel` 管理。网络请求在后台线程执行，界面线程只接收 `AssistantUiState` 快照。
 
-NeoForge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识构建、网络和 AI 工作由独立 Worker JVM 执行，双方通过带随机令牌的 localhost JSONL IPC 通信。Minecraft 的 UI、注册表/Tooltip 和可选运行时 API仍由客户端线程负责。任务问题的查询顺序固定为：`search_tasks` → 取得当前玩家运行时上下文 → Worker 得到临时快照 → Worker 查询 `knowledge.db` 中的静态任务定义 → 在内存中覆盖当前状态。单机优先只发送当前存档路径描述，由 Worker 直接读取很小的 `ftbquests/<team-uuid>.snbt`；多人服务器或本地文件不可用时，游戏 JVM 才读取已同步的 TeamData 并通过 IPC 返回。无论哪条路径，实时进度只在当前请求内存中存在，不写入数据库。
+Forge Mod 的入口装载在 Minecraft JVM 内；重型 SQLite、FTS、知识构建、网络和 AI 工作由独立 Worker JVM 执行，双方通过带随机令牌的 localhost JSONL IPC 通信。Minecraft 的 UI、注册表/Tooltip 和可选运行时 API仍由客户端线程负责。任务问题的查询顺序固定为：`search_tasks` → 取得当前玩家运行时上下文 → Worker 得到临时快照 → Worker 查询 `knowledge.db` 中的静态任务定义 → 在内存中覆盖当前状态。单机优先只发送当前存档路径描述，由 Worker 直接读取很小的 `ftbquests/<team-uuid>.snbt`；多人服务器或本地文件不可用时，游戏 JVM 才读取已同步的 TeamData 并通过 IPC 返回。无论哪条路径，实时进度只在当前请求内存中存在，不写入数据库。
 
 持久化读写实际由 Apache-2.0 的 LangChain4j Community SQL `SQLChatMemoryStore` 完成，ModPedia 只装配已有 SQLite 驱动、文件路径和四条 SQLite 方言 SQL。这样工具调用消息仍使用 LangChain4j 官方 JSON 序列化，原始 `tool_call_id` 不经过自研格式转换。旧版本会话中的 `memoryMessagesJson` 在首次读取时迁移到 `config/modpedia/runtime/conversations/memory.sqlite`，成功后清空旧字段；迁移失败则继续使用旧 JSON。
 
@@ -240,7 +245,7 @@ safeArea = viewport - 12px;
 
 ### 玻璃表面与透明度回退
 
-助手不在 Screen 底层复制或重绘主帧缓冲；游戏画面直接作为窗口后的背景。`AssistantScreen` 和 `FloatingAssistantWindow` 基于 NeoForge 原生 `GuiGraphics`、`Screen` 和控件 API 自绘一层可调色的蓝光半透明表面，再绘制标题、消息、输入框和边框，避免文字被底层效果污染。高对比度或减少透明度模式使用不透明调色板。客户端 UI 不依赖外部 UI 模组，客户端类也不会进入公共或 Dedicated Server 路径。
+助手不在 Screen 底层复制或重绘主帧缓冲；游戏画面直接作为窗口后的背景。`AssistantScreen` 和 `FloatingAssistantWindow` 基于 Forge 原生 `GuiGraphics`、`Screen` 和控件 API 自绘一层可调色的蓝光半透明表面，再绘制标题、消息、输入框和边框，避免文字被底层效果污染。高对比度或减少透明度模式使用不透明调色板。客户端 UI 不依赖外部 UI 模组，客户端类也不会进入公共或 Dedicated Server 路径。
 
 玻璃配置文件示例：
 
@@ -286,7 +291,7 @@ safeArea = viewport - 12px;
 
 ```text
 io.ctyx.modpedia.client/
-└── LocalGuideScanner              # NeoForge 资源扫描，只在客户端适配层
+└── LocalGuideScanner              # Forge 资源扫描，只在客户端适配层
 
 io.ctyx.modpedia.knowledge/
 ├── ScannedResource

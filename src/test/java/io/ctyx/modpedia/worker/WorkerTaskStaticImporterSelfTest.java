@@ -62,22 +62,22 @@ public final class WorkerTaskStaticImporterSelfTest {
                     .importDirectory(quests);
             check(imported.sourcePresent() && imported.complete(), "任务源应成功导入");
             check(imported.snapshots().size() == 1, "应生成一个章节快照");
-            TaskSnapshot.TaskQuest quest = imported.snapshots().getFirst().quests().getFirst();
+            TaskSnapshot.TaskQuest quest = imported.snapshots().get(0).quests().get(0);
             check(quest.title().equals("中文任务"), "中文标题应优先于英文回退");
             check(quest.descriptionMarkdown().equals("第一行\n第二行"), "数组式描述应保留为多行文本");
             check(quest.dependencies().equals(List.of("ROOT")), "依赖应被导入");
             check(!quest.started() && !quest.completed(), "静态导入不得写入运行时状态");
-            check(quest.tasks().getFirst().required() == 4D
-                            && quest.tasks().getFirst().targetId().equals("example:ore")
-                            && quest.tasks().getFirst().title().equals("收集材料"),
+            check(quest.tasks().get(0).required() == 4D
+                            && quest.tasks().get(0).targetId().equals("example:ore")
+                            && quest.tasks().get(0).title().equals("收集材料"),
                     "物品任务的目标、数量和本地化标题应正确");
-            check(quest.rewards().getFirst().candidates().equals(List.of("loot_table:123"))
-                            && !quest.rewards().getFirst().guaranteed(),
+            check(quest.rewards().get(0).candidates().equals(List.of("loot_table:123"))
+                            && !quest.rewards().get(0).guaranteed(),
                     "随机奖励应保留奖励表标识且不标记为保证获得");
             check(quest.rewards().get(1).candidates().equals(List.of("example:ingot"))
                             && quest.rewards().get(1).guaranteed(),
                     "物品奖励应保留物品 ID");
-            check(imported.snapshots().getFirst().rawJson().contains("example:textures/guide.png"),
+            check(imported.snapshots().get(0).rawJson().contains("example:textures/guide.png"),
                     "未知图片节点应继续保留在原始 SNBT 中");
             System.out.println("ModPedia Worker task static importer self-test passed");
         } finally {

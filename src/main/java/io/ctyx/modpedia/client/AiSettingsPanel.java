@@ -632,7 +632,7 @@ final class AiSettingsPanel {
                     String currentModel = value(model).strip();
                     boolean found = availableModels.stream().anyMatch(currentModel::equals);
                     if (!found) {
-                        model.setValue(availableModels.getFirst());
+                        model.setValue(availableModels.get(0));
                     }
                 }
             }

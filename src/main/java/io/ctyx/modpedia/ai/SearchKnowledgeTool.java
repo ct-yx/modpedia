@@ -543,7 +543,7 @@ public final class SearchKnowledgeTool {
             item.addProperty("timestamp_known", entry.hasKnownTimestamp());
             List<String> titles = timelineTitles.getOrDefault(entry.questId(), List.of());
             if (titles.size() == 1) {
-                item.addProperty("title", titles.getFirst());
+                item.addProperty("title", titles.get(0));
             } else if (!titles.isEmpty()) {
                 item.add("title_candidates", JSON.toJsonTree(titles));
             }

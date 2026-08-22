@@ -36,6 +36,12 @@ public final class ItemCatalogSchedulingSelfTest {
         check(!ItemCatalogSyncService.isConfigurationUnavailable(
                         new IllegalStateException("unrelated tooltip failure")),
                 "其它异常不得误判为配置未加载");
+        check(!ItemCatalogSyncService.shouldDisableTooltipCapture(1),
+                "单个 Tooltip 失败不得关闭整个目录扫描");
+        check(!ItemCatalogSyncService.shouldDisableTooltipCapture(7),
+                "连续失败未达到阈值时应继续尝试其它物品");
+        check(ItemCatalogSyncService.shouldDisableTooltipCapture(8),
+                "连续失败达到阈值后应暂停 Tooltip，避免异常放大");
         // FMLLoadComplete 本身不是第三方配置已就绪的证明；生产入口还必须等
         // TitleScreen 打开后才允许广播全量 Tooltip 事件。
         check(!ItemCatalogSyncService.isMainMenuReadyForTest(),

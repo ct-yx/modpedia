@@ -29,12 +29,14 @@ import java.util.concurrent.TimeUnit;
 /** 在客户端注册表冻结后，把当前语言的注册物品 Tooltip 同步到 knowledge.db。 */
 public final class ItemCatalogSyncService {
     private static final int CAPTURE_BATCH_SIZE = 64;
+    /** 单个 Tooltip 监听器持续失败时的保护阈值；单次失败不影响后续物品。 */
+    private static final int MAX_CONSECUTIVE_TOOLTIP_FAILURES = 8;
     /** 给第三方配置和 Tooltip 注册器一个稳定窗口，避免在 FML load complete 的
      * 同一时刻捕获到“配置尚未加载”的临时状态。 */
     private static final long INITIAL_CAPTURE_DELAY_MS = 3_000L;
-    /** 全量 Tooltip 仅用于补充简介；配置尚未完成时直接关闭，避免第三方
-     * Tooltip 监听器在每个物品上重复抛错并把启动日志放大到数 GB。名称和 ID
-     * 仍然通过本地化注册表捕获，不受该降级影响。 */
+    /** 全量 Tooltip 仅用于补充简介；单个物品失败时继续扫描，连续失败达到阈值
+     * 才暂停本轮 Tooltip，避免第三方监听器把同一个错误放大到整个注册表。名称
+     * 和 ID 始终通过本地化注册表捕获，不受该降级影响。 */
     private static final String CONFIG_NOT_LOADED_MESSAGE = "config value before config is loaded";
     private static final Object STATE_LOCK = new Object();
     private static final ExecutorService PERSIST_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
@@ -307,33 +309,32 @@ public final class ItemCatalogSyncService {
                 return;
             }
             int end = Math.min(job.items.size(), job.nextIndex + CAPTURE_BATCH_SIZE);
-            for (int index = job.nextIndex; index < end; index++) {
-                CaptureResult captured = capture(
-                        job.minecraft,
-                        job.language,
-                        job.items.get(index),
-                        !job.tooltipCaptureDisabled
-                );
-                job.entries.set(index, captured.entry());
-                if (!captured.tooltipAvailable()) {
-                    job.tooltipFallbacks++;
-                }
-                if (captured.tooltipFailure()) {
-                    job.tooltipFailures++;
-                    // ItemStack#getTooltipLines 会广播第三方 Tooltip 事件；某个
-                    // 监听器一旦抛错，继续对后续物品调用就会让 NeoForge 为每个
-                    // 物品重复打印完整堆栈。Tooltip 只是简介增强，ID 和名称仍
-                    // 然可以完整导入，因此对本次扫描立即熔断。
-                    job.tooltipCaptureDisabled = true;
-                } else if (!captured.entry().descriptionMarkdown().isBlank()) {
-                    job.tooltipSuccesses++;
-                }
-                // “config value before config is loaded” 是整合包启动阶段的
-                // 全局状态，不是单个物品坏了。保留这个字段用于诊断；实际
-                // 熔断条件覆盖所有第三方 Tooltip 异常，避免其它异常类型也
-                // 在大型注册表中造成重复日志。
-                if (captured.configurationUnavailable()) {
-                    job.tooltipCaptureDisabled = true;
+            try (TooltipEventIsolation ignored = TooltipEventIsolation.suspendJadeModName()) {
+                for (int index = job.nextIndex; index < end; index++) {
+                    CaptureResult captured = capture(
+                            job.minecraft,
+                            job.language,
+                            job.items.get(index),
+                            !job.tooltipCaptureDisabled
+                    );
+                    job.entries.set(index, captured.entry());
+                    if (!captured.tooltipAvailable()) {
+                        job.tooltipFallbacks++;
+                    }
+                    if (captured.tooltipFailure()) {
+                        job.tooltipFailures++;
+                        job.consecutiveTooltipFailures++;
+                        // 单个物品的 Tooltip 坏了只跳过该物品；只有监听器对连续
+                        // 多个物品都失败时才熔断，防止第三方异常把日志和帧时间放大。
+                        if (shouldDisableTooltipCapture(job.consecutiveTooltipFailures)) {
+                            job.tooltipCaptureDisabled = true;
+                        }
+                    } else if (!captured.entry().descriptionMarkdown().isBlank()) {
+                        job.consecutiveTooltipFailures = 0;
+                        job.tooltipSuccesses++;
+                    } else {
+                        job.consecutiveTooltipFailures = 0;
+                    }
                 }
             }
             job.nextIndex = end;
@@ -516,22 +517,32 @@ public final class ItemCatalogSyncService {
             RegistryItem registryItem,
             boolean includeTooltip
     ) {
-        ItemStack stack;
-        try {
-            stack = new ItemStack(registryItem.item());
-        } catch (Throwable exception) {
-            return fallbackCapture(language, registryItem);
+        ItemStack stack = null;
+        TooltipCapture tooltip = TooltipCapture.disabled();
+        if (includeTooltip) {
+            try {
+                stack = new ItemStack(registryItem.item());
+                tooltip = captureTooltip(minecraft, stack);
+            } catch (Throwable exception) {
+                tooltip = new TooltipCapture(
+                        "",
+                        false,
+                        true,
+                        isConfigurationUnavailable(exception)
+                );
+            }
         }
-        TooltipCapture tooltip = includeTooltip
-                ? captureTooltip(minecraft, registryItem.item())
-                : TooltipCapture.disabled();
         String displayName;
         try {
-            displayName = ItemNameResolver.localizedName(
+            displayName = (includeTooltip
+                    ? ItemNameResolver.localizedName(
                     stack,
                     registryItem.item(),
-                    registryItem.id().toString()
-            ).orElse("");
+                    registryItem.id().toString())
+                    : ItemNameResolver.localizedName(
+                    registryItem.item(),
+                    registryItem.id().toString()))
+                    .orElse("");
         } catch (Throwable exception) {
             displayName = "";
         }
@@ -555,11 +566,12 @@ public final class ItemCatalogSyncService {
         ), tooltip.available(), tooltip.failure(), tooltip.configurationUnavailable());
     }
 
-    private static TooltipCapture captureTooltip(Minecraft minecraft, Item item) {
+    private static TooltipCapture captureTooltip(Minecraft minecraft, ItemStack stack) {
         try {
-            ItemStack stack = new ItemStack(item);
+            // ItemStack#getTooltipLines 保留完整的 Forge/模组 Tooltip 内容。Jade
+            // 的 mod-name 装饰在批次外层被临时关闭，避免其在主菜单扫描时解析尚未
+            // 完成的模组信息；其它物品本体和 Tooltip 监听器仍按正常路径执行。
             List<Component> lines = stack.getTooltipLines(
-                    Item.TooltipContext.EMPTY,
                     minecraft == null ? null : minecraft.player,
                     TooltipFlag.NORMAL
             );
@@ -596,6 +608,53 @@ public final class ItemCatalogSyncService {
             current = current.getCause();
         }
         return false;
+    }
+
+    /** 只有连续失败达到保护阈值才暂停本轮 Tooltip 捕获。 */
+    static boolean shouldDisableTooltipCapture(int consecutiveFailures) {
+        return consecutiveFailures >= MAX_CONSECUTIVE_TOOLTIP_FAILURES;
+    }
+
+    /**
+     * Jade 会在 ItemTooltipEvent 中追加模组名。其配置或模组识别表尚未就绪时，
+     * 会自行记录一条完整错误，即使调用方随后捕获异常。通过可选反射只暂时关闭
+     * 这个装饰，保持 Jade 缺失时完全不触碰其类；批次结束后恢复用户设置。
+     */
+    private static final class TooltipEventIsolation implements AutoCloseable {
+        private final java.lang.reflect.Field jadeHideModName;
+        private final boolean previousValue;
+
+        private TooltipEventIsolation(
+                java.lang.reflect.Field jadeHideModName,
+                boolean previousValue
+        ) {
+            this.jadeHideModName = jadeHideModName;
+            this.previousValue = previousValue;
+        }
+
+        private static TooltipEventIsolation suspendJadeModName() {
+            try {
+                Class<?> jadeClient = Class.forName("snownee.jade.JadeClient");
+                java.lang.reflect.Field field = jadeClient.getField("hideModName");
+                boolean previous = field.getBoolean(null);
+                field.setBoolean(null, true);
+                return new TooltipEventIsolation(field, previous);
+            } catch (Throwable ignored) {
+                return new TooltipEventIsolation(null, false);
+            }
+        }
+
+        @Override
+        public void close() {
+            if (jadeHideModName == null) {
+                return;
+            }
+            try {
+                jadeHideModName.setBoolean(null, previousValue);
+            } catch (Throwable ignored) {
+                // 可选联动卸载或重载时字段可能已经失效，不影响目录捕获。
+            }
+        }
     }
 
     private static CaptureResult fallbackCapture(String language, RegistryItem registryItem) {
@@ -726,6 +785,7 @@ public final class ItemCatalogSyncService {
         private int tooltipFallbacks;
         private int tooltipFailures;
         private int tooltipSuccesses;
+        private int consecutiveTooltipFailures;
         private boolean tooltipCaptureDisabled;
 
         private CaptureJob(Minecraft minecraft, String language, List<RegistryItem> items) {

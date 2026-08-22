@@ -10,7 +10,7 @@ import io.ctyx.modpedia.search.SearchResult;
 import io.ctyx.modpedia.search.SearchStatus;
 import io.ctyx.modpedia.search.SearchLanguage;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.loading.FMLPaths;
+import net.minecraftforge.fml.loading.FMLPaths;
 import io.ctyx.modpedia.storage.ModPediaPaths;
 
 import java.nio.file.Path;

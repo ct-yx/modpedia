@@ -140,7 +140,7 @@ public final class AppGuideAdapterSelfTest {
                 "fingerprint-shape",
                 Map.of("entry.pressure", "压力容器", "item.pressure", "压力")
         );
-        KnowledgeDocument actualDocument = converter.convertAll(actualShape).getFirst();
+        KnowledgeDocument actualDocument = converter.convertAll(actualShape).get(0);
         check("content:app/book/basics/pressure_v2".equals(actualDocument.id()),
                 "实际书籍路径应生成稳定的书籍/分类/条目 ID");
         check(actualDocument.sourcePath().contains("entry=pressure_v2"),
@@ -155,7 +155,7 @@ public final class AppGuideAdapterSelfTest {
                 "data/content/modonomicon/books/book/book.json", "app_json",
                 "{\"name\":\"book.content.title\"}", "fingerprint-book",
                 Map.of("book.content.title", "内容手册")
-        )).getFirst();
+        )).get(0);
         check(bookDocument.id().endsWith("/general/__book"), "书籍资源应生成书籍概览文档");
         check(!bookDocument.sourcePath().contains("entry="), "书籍概览只能跳转到书籍根页面");
 
@@ -164,7 +164,7 @@ public final class AppGuideAdapterSelfTest {
                 "data/content/modonomicon/books/book/categories/basics.json", "app_json",
                 "{\"name\":\"category.basics\"}", "fingerprint-category",
                 Map.of("category.basics", "基础")
-        )).getFirst();
+        )).get(0);
         check(categoryDocument.id().endsWith("/basics/__category"), "分类资源应生成分类概览文档");
         check(!categoryDocument.sourcePath().contains("entry="), "分类概览不能伪造条目跳转");
 
@@ -180,7 +180,7 @@ public final class AppGuideAdapterSelfTest {
                 60,
                 "local_file",
                 "{\"content_kind\":\"wiki\"}"
-        )).getFirst();
+        )).get(0);
         check(wikiDocument.contentKind() == io.ctyx.modpedia.knowledge.KnowledgeContentKind.WIKI,
                 "APP 书籍被标记为 Wiki 时必须保留内容类型");
         check("pack-guide".equals(wikiDocument.sourceId())

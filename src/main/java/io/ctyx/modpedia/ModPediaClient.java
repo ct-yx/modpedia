@@ -13,6 +13,7 @@ import io.ctyx.modpedia.client.ManualSourceNavigator;
 import io.ctyx.modpedia.client.MockAssistantSession;
 import io.ctyx.modpedia.client.FloatingAssistantWindow;
 import io.ctyx.modpedia.client.ModPediaBridge;
+import io.ctyx.modpedia.client.PonderJsCompatibility;
 import io.ctyx.modpedia.client.StartupKnowledgeBootstrap;
 import io.ctyx.modpedia.client.TaskWikiSyncService;
 import io.ctyx.modpedia.client.WorkerAssistantSession;
@@ -20,24 +21,22 @@ import io.ctyx.modpedia.task.TaskRuntimeReadResult;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
-import net.neoforged.fml.event.lifecycle.FMLLoadCompleteEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.InputEvent;
-import net.neoforged.neoforge.client.event.RenderTooltipEvent;
-import net.neoforged.neoforge.client.event.ScreenEvent;
-import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
-import net.neoforged.neoforge.event.GameShuttingDownEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.eventbus.api.IEventBus;
+import net.minecraftforge.eventbus.api.EventPriority;
+import net.minecraftforge.fml.ModContainer;
+import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+import net.minecraftforge.fml.event.lifecycle.FMLLoadCompleteEvent;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.client.event.InputEvent;
+import net.minecraftforge.client.event.RenderTooltipEvent;
+import net.minecraftforge.client.event.ScreenEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.event.GameShuttingDownEvent;
 import org.lwjgl.glfw.GLFW;
 
 /** 客户端入口，负责启动知识库构建和注册手动重建入口。 */
-@Mod(value = ModPedia.MOD_ID, dist = Dist.CLIENT)
 public final class ModPediaClient {
     static final KeyMapping OPEN_ASSISTANT = new KeyMapping(
             "key.modpedia.open_assistant",
@@ -66,7 +65,7 @@ public final class ModPediaClient {
         modEventBus.addListener(ModPediaClient::onRegisterKeyMappings);
         modEventBus.addListener(ModPediaClient::onClientSetup);
         modEventBus.addListener(ModPediaClient::onLoadComplete);
-        NeoForge.EVENT_BUS.register(ModPediaClientEvents.class);
+        MinecraftForge.EVENT_BUS.register(ModPediaClientEvents.class);
     }
 
     static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
@@ -101,6 +100,7 @@ public final class ModPediaClient {
      */
     static void onLoadComplete(FMLLoadCompleteEvent event) {
         ItemCatalogSyncService.markClientLoadComplete();
+        PonderJsCompatibility.inspectAsync();
         event.enqueueWork(() -> {
             FTB_QUESTS.registerCompletionListener();
             TaskWikiSyncService.startAfter(StartupKnowledgeBootstrap.startAsync());
@@ -111,7 +111,6 @@ public final class ModPediaClient {
 /** 客户端游戏总线事件，处理手动重建按键。 */
 final class ModPediaClientEvents {
     private static int suppressQueuedAssistantClicks;
-    private static boolean rawAssistantKeyHandled;
 
     private ModPediaClientEvents() {
     }
@@ -131,20 +130,12 @@ final class ModPediaClientEvents {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.screen instanceof AssistantScreen) {
-            rawAssistantKeyHandled = true;
-            suppressQueuedAssistantClicks = 2;
-            toggleAssistant();
+        // Forge 1.20.1 的 InputEvent.Key 可能在 ScreenEvent.KeyPressed.Pre 之后
+        // 到达。屏幕存在时交给 ScreenEvent 统一处理，避免 ScreenEvent 已打开
+        // AssistantScreen 后，InputEvent.Key 又把它立即关闭。
+        if (!shouldHandleRawKey(minecraft.screen != null)) {
             return;
         }
-        if (AssistantInputPolicy.blocksAssistant(minecraft.screen)) {
-            // 原始 GLFW 事件早于 Screen 分发；先标记消费，避免同一个 K 又在
-            // ScreenEvent 或 ClientTick 的 KeyMapping 路径中打开助手。
-            rawAssistantKeyHandled = true;
-            suppressQueuedAssistantClicks = 2;
-            return;
-        }
-        rawAssistantKeyHandled = true;
         suppressQueuedAssistantClicks = 2;
         toggleAssistant();
     }
@@ -159,22 +150,25 @@ final class ModPediaClientEvents {
         if (!matchesAssistantKey(event.getKeyCode(), event.getScanCode())) {
             return;
         }
-        if (rawAssistantKeyHandled) {
-            rawAssistantKeyHandled = false;
-            event.setCanceled(true);
-            return;
-        }
         if (AssistantInputPolicy.blocksAssistant(event.getScreen())) {
             event.setCanceled(true);
             suppressQueuedAssistantClicks = 2;
             return;
         }
         if (event.getScreen() instanceof AssistantScreen) {
+            event.setCanceled(true);
+            suppressQueuedAssistantClicks = 2;
+            toggleAssistant();
             return;
         }
         event.setCanceled(true);
         suppressQueuedAssistantClicks = 2;
         toggleAssistant();
+    }
+
+    /** 原始输入只负责没有 Screen 的游戏画面；有 Screen 时由 ScreenEvent 处理。 */
+    static boolean shouldHandleRawKey(boolean hasScreen) {
+        return !hasScreen;
     }
 
     private static boolean matchesAssistantKey(int keyCode, int scanCode) {
@@ -196,8 +190,27 @@ final class ModPediaClientEvents {
         JadeTargetStore.updateFromTooltip(event.getItemStack());
     }
 
+    /**
+     * ScreenEvent.Render.Post 位于 ForgeHooksClient 的当前 Screen 绘制之后。
+     * 用最低优先级做最后一次助手覆盖，处理 JEI/FTB 在父 Screen 中追加的物品层。
+     */
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    static void onScreenRenderPost(ScreenEvent.Render.Post event) {
+        if (event.getScreen() instanceof AssistantScreen assistantScreen) {
+            assistantScreen.renderFinalOverlay(
+                    event.getGuiGraphics(),
+                    event.getMouseX(),
+                    event.getMouseY(),
+                    event.getPartialTick()
+            );
+        }
+    }
+
     @SubscribeEvent
-    static void onClientTick(ClientTickEvent.Post event) {
+    static void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) {
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         ModPediaClient.FTB_QUESTS.observeWorld(minecraft);
         ModPediaBridge.get().observeClientWorld(minecraft.level, minecraft.player);
@@ -269,6 +282,7 @@ final class ModPediaClientEvents {
         ModPediaClient.FTB_QUESTS.unregisterCompletionListener();
         ModPediaClient.FTB_QUESTS.clearRuntimeCache();
         ItemCatalogSyncService.shutdown();
+        PonderJsCompatibility.shutdown();
         StartupKnowledgeBootstrap.shutdown();
         ModPediaBridge.get().shutdown();
     }

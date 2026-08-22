@@ -175,6 +175,26 @@ public final class ItemNameResolver {
             hoverName = stack == null ? "" : stack.getHoverName().getString();
         } catch (RuntimeException ignored) {
         }
+        String name = cleanCandidate(hoverName, normalizedId, descriptionId);
+        if (name.isBlank()) {
+            return localizedName(item, normalizedId);
+        }
+        return Optional.of(name);
+    }
+
+    /**
+     * 只读取注册表/语言表名称，不创建 ItemStack。
+     *
+     * <p>Tooltip 捕获被熔断后，剩余物品只需要名称和 ID。这里必须保持轻量，
+     * 否则大型整合包会在数万物品上重复创建堆栈并触发 hover 文本计算。</p>
+     */
+    static Optional<String> localizedName(Item item, String itemId) {
+        String normalizedId = normalizeId(itemId);
+        String descriptionId = "";
+        try {
+            descriptionId = item == null ? "" : item.getDescriptionId();
+        } catch (RuntimeException ignored) {
+        }
         String languageName = "";
         if (!descriptionId.isBlank()) {
             try {
@@ -182,15 +202,8 @@ public final class ItemNameResolver {
             } catch (RuntimeException ignored) {
             }
         }
-        String name = cleanCandidate(hoverName, normalizedId, descriptionId);
-        if (name.isBlank()) {
-            name = cleanCandidate(languageName, normalizedId, descriptionId);
-        }
+        String name = cleanCandidate(languageName, normalizedId, descriptionId);
         return name.isBlank() ? Optional.empty() : Optional.of(name);
-    }
-
-    private static Optional<String> localizedName(Item item, String itemId) {
-        return localizedName(new ItemStack(item), item, itemId);
     }
 
     private static String normalizeId(String id) {

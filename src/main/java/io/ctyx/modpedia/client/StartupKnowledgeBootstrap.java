@@ -2,7 +2,7 @@ package io.ctyx.modpedia.client;
 
 import io.ctyx.modpedia.ModPedia;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.loading.FMLPaths;
+import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.IOException;
 import java.nio.file.Files;

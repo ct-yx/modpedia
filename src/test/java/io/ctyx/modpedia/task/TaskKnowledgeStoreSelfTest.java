@@ -106,19 +106,19 @@ public final class TaskKnowledgeStoreSelfTest {
             TaskResponse next = store.query(new TaskQuery(TaskQueryMode.NEXT, "", "", 8, List.of("pack-a")));
             check(next.status() == TaskStatus.READY && next.results().size() == 1,
                     "未同步完成任务不能作为下一步候选");
-            check("quest:start".equals(next.results().getFirst().questId()),
+            check("quest:start".equals(next.results().get(0).questId()),
                     "NEXT 应先返回没有未完成依赖的任务");
-            check("blocked_requirement".equals(next.results().getFirst().status()),
+            check("blocked_requirement".equals(next.results().get(0).status()),
                     "静态任务要求未完成时应明确标记阻塞原因");
 
             TaskResponse details = store.query(new TaskQuery(
                     TaskQueryMode.DETAILS, "开始", "", 8, List.of("pack-a")));
-            check(details.hasResults() && details.results().getFirst().requirements().size() == 1,
+            check(details.hasResults() && details.results().get(0).requirements().size() == 1,
                     "DETAILS 应返回完整任务要求");
-            check(details.results().getFirst().rewards().getFirst().candidates().size() == 2,
+            check(details.results().get(0).rewards().get(0).candidates().size() == 2,
                     "随机奖励必须保留候选列表");
-            check(!details.results().getFirst().progressAvailable()
-                            && !details.results().getFirst().requirements().getFirst().completed(),
+            check(!details.results().get(0).progressAvailable()
+                            && !details.results().get(0).requirements().get(0).completed(),
                     "没有运行时快照时只能返回静态默认进度");
 
             TaskRuntimeSnapshot runtime = new TaskRuntimeSnapshot(
@@ -145,11 +145,11 @@ public final class TaskKnowledgeStoreSelfTest {
                     "实时进度项数必须只统计实际携带的 progress 条目");
             TaskResponse progressed = store.query(new TaskQuery(
                     TaskQueryMode.DETAILS, "", "quest:start", 8, List.of("pack-a")), runtime);
-            TaskResult progressedResult = progressed.results().getFirst();
+            TaskResult progressedResult = progressed.results().get(0);
             check(progressedResult.progressAvailable(), "实时进度存在时应标记 progress_available");
-            check(progressedResult.requirements().getFirst().completed(),
+            check(progressedResult.requirements().get(0).completed(),
                     "实时进度应覆盖静态任务要求");
-            check(progressedResult.requirements().getFirst().current() == 3D,
+            check(progressedResult.requirements().get(0).current() == 3D,
                     "实时 current 值应覆盖静态默认值");
             check(count(root, "task_quests") == staticQuestCount
                             && count(root, "task_tasks") == staticTaskCount,
@@ -165,7 +165,7 @@ public final class TaskKnowledgeStoreSelfTest {
             TaskResponse secondCollection = store.query(new TaskQuery(
                     TaskQueryMode.SEARCH, "第二来源", "", 8, List.of("pack-b")));
             check(secondCollection.hasResults()
-                            && "pack-b".equals(secondCollection.results().getFirst().scopeKey()),
+                            && "pack-b".equals(secondCollection.results().get(0).scopeKey()),
                     "多个任务来源应按 scope_key 隔离且允许相同任务 ID");
 
             // 手册/Wiki 同步不能删除任务运行表。
@@ -369,11 +369,11 @@ public final class TaskKnowledgeStoreSelfTest {
                     TaskQueryMode.DETAILS, "", "quest:start", 8, List.of()), scopedRuntime);
             check(scoped.results().stream()
                             .filter(result -> "pack-b".equals(result.scopeKey()))
-                            .allMatch(result -> result.requirements().getFirst().current() == 3D),
+                            .allMatch(result -> result.requirements().get(0).current() == 3D),
                     "运行时 scope 命中静态章节时应只覆盖该章节");
             check(scoped.results().stream()
                             .filter(result -> "pack-a".equals(result.scopeKey()))
-                            .allMatch(result -> result.requirements().getFirst().current() == 0D),
+                            .allMatch(result -> result.requirements().get(0).current() == 0D),
                     "运行时 scope 不得覆盖其它同 ID 任务来源");
 
             // 即使运行时 source_key 精确命中 pack-a，查询范围也必须优先约束
@@ -387,7 +387,7 @@ public final class TaskKnowledgeStoreSelfTest {
                     exactSourceWrongCollection);
             check(wrongCollection.results().stream()
                             .filter(result -> "pack-b".equals(result.scopeKey()))
-                            .allMatch(result -> result.requirements().getFirst().current() == 0D),
+                            .allMatch(result -> result.requirements().get(0).current() == 0D),
                     "运行时 source_key 命中其它 collection 时不得覆盖当前查询来源");
 
             // BLOCKED 允许模型只给出模式而不传 query/quest_id；这个分支也不能

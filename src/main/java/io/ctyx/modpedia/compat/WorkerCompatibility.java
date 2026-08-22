@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * Worker 与客户端适配层之间的兼容性边界。
  *
- * <p>这里不引用 Minecraft、NeoForge 或任何客户端类。Minecraft 版本变化时，
+ * <p>这里不引用 Minecraft、Forge 或任何客户端类。Minecraft 版本变化时，
  * 只要 Worker API、协议和运行库不变，就可以继续使用同一套 Worker 基线。</p>
  */
 public final class WorkerCompatibility {
@@ -19,7 +19,7 @@ public final class WorkerCompatibility {
     /** 运行库发生变化时递增；必须与用户级共享 lib 目录一致。 */
     public static final String WORKER_LIBRARY_BASELINE = "worker-baseline-1";
     /** 当前客户端适配层标识，仅用于诊断，不决定 Worker 核心是否可复用。 */
-    public static final String CLIENT_ADAPTER = "neoforge-1.21.1";
+    public static final String CLIENT_ADAPTER = "forge-1.20.1";
 
     /**
      * 当前 Worker 能力的稳定顺序。新增能力可以追加；删除或改变既有能力时应递增

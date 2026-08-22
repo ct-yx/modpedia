@@ -3,7 +3,7 @@ package io.ctyx.modpedia.client;
 import java.util.List;
 import java.util.Optional;
 
-/** JEI 当前 Internal 入口和旧入口的纯 Java 反射回归测试。 */
+/** JEI 当前 Internal 入口和通用运行时形态的纯 Java 反射回归测试。 */
 public final class JeiRecipeNavigatorSelfTest {
     private JeiRecipeNavigatorSelfTest() {
     }
@@ -13,7 +13,7 @@ public final class JeiRecipeNavigatorSelfTest {
         CurrentInternal.runtime = currentRuntime;
         CurrentInternal.optionalRuntime = Optional.empty();
         check(
-                JeiRecipeNavigator.runtimeFrom(List.of(CurrentInternal.class, LegacyApi.class)) == currentRuntime,
+                JeiRecipeNavigator.runtimeFrom(List.of(CurrentInternal.class, LegacyRuntimeOwner.class)) == currentRuntime,
                 "JEI 当前 Internal.getJeiRuntime() 应优先解析"
         );
 
@@ -26,10 +26,10 @@ public final class JeiRecipeNavigatorSelfTest {
         );
 
         Object legacyRuntime = new Object();
-        LegacyApi.runtime = legacyRuntime;
+        LegacyRuntimeOwner.runtime = legacyRuntime;
         check(
-                JeiRecipeNavigator.runtimeFrom(List.of(LegacyApi.class)) == legacyRuntime,
-                "旧 JEI runtime 入口应继续兼容"
+                JeiRecipeNavigator.runtimeFrom(List.of(LegacyRuntimeOwner.class)) == legacyRuntime,
+                "通用 runtime owner 入口应继续兼容"
         );
 
         check(
@@ -55,10 +55,10 @@ public final class JeiRecipeNavigatorSelfTest {
         }
     }
 
-    public static final class LegacyApi {
+    public static final class LegacyRuntimeOwner {
         private static Object runtime;
 
-        private LegacyApi() {
+        private LegacyRuntimeOwner() {
         }
 
         public static Object getRuntime() {

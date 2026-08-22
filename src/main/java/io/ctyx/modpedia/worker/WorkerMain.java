@@ -41,6 +41,9 @@ public final class WorkerMain {
                 "settings", paths.aiSettings().toString()
         ));
 
+        // 只输出类来源、版本和词表存在性，不读取或记录 API 配置内容。
+        WorkerRuntimeDiagnostics.logStartup();
+
         try (Socket socket = new Socket(host, port)) {
             socket.setTcpNoDelay(true);
             WorkerServer server = new WorkerServer(

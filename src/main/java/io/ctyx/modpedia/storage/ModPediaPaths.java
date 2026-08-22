@@ -12,6 +12,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -78,6 +79,7 @@ public final class ModPediaPaths {
 
         List<String> moved = new ArrayList<>();
         migrateAiSettings(moved);
+        migrateLauncherUserRoot(moved);
         moveIfPresent(root.resolve("conversations"), conversationsRoot(), moved);
         moveIfPresent(root.resolve("diagnostics"), diagnosticsRoot(), moved);
         moveIfPresent(root.resolve("worker"), workerRoot(), moved);
@@ -165,6 +167,79 @@ public final class ModPediaPaths {
                 }
             }
         }
+    }
+
+    /**
+     * 某些启动器会把 {@code user.home} 改成启动器的工作目录。旧版本因此会
+     * 在启动器目录旁生成第二份 {@code .modpedia}。迁移可重建的 Worker lib，
+     * 并在用户级配置尚不存在时迁移旧配置；当前用户级配置优先保留。
+     */
+    private void migrateLauncherUserRoot(List<String> moved) throws IOException {
+        Path legacyRoot = launcherUserRoot();
+        if (legacyRoot == null || legacyRoot.equals(userRoot) || !Files.isDirectory(legacyRoot)) {
+            return;
+        }
+
+        Path legacySettings = legacyRoot.resolve("ai.json");
+        Path sharedSettings = aiSettings();
+        if (Files.isRegularFile(legacySettings) && !Files.exists(sharedSettings)) {
+            Files.createDirectories(sharedSettings.getParent());
+            movePath(legacySettings, sharedSettings);
+            restrictSharedSettings(sharedSettings);
+            moved.add(legacySettings + " -> " + sharedSettings);
+        } else if (Files.isRegularFile(legacySettings) && isBlankSettings(legacySettings)) {
+            // 旧版本在错误目录生成的空配置不再作为第二份配置保留；已有用户级
+            // 配置始终是唯一事实源。
+            Files.deleteIfExists(legacySettings);
+            moved.add(legacySettings + " -> removed as stale launcher config");
+        }
+
+        Path legacyLibrary = legacyRoot.resolve("worker").resolve("lib");
+        if (Files.isDirectory(legacyLibrary)) {
+            copyDirectoryContents(legacyLibrary, workerLibraryRoot());
+            deleteTree(legacyLibrary);
+            moved.add(legacyLibrary + " -> " + workerLibraryRoot());
+        }
+    }
+
+    private Path launcherUserRoot() {
+        String overriddenHome = System.getProperty("user.home", "").strip();
+        if (overriddenHome.isBlank()) {
+            return null;
+        }
+        try {
+            Path legacyHome = Path.of(overriddenHome).toAbsolutePath().normalize();
+            Path legacyRoot = legacyHome.resolve(".modpedia");
+            return legacyRoot.equals(userRoot) ? null : legacyRoot;
+        } catch (java.nio.file.InvalidPathException exception) {
+            return null;
+        }
+    }
+
+    private boolean isBlankSettings(Path settings) {
+        try {
+            String json = Files.readString(settings);
+            return !json.contains("api_key_encrypted")
+                    && !hasNonBlankJsonValue(json, "endpoint")
+                    && !hasNonBlankJsonValue(json, "model");
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
+    private boolean hasNonBlankJsonValue(String json, String key) {
+        String marker = "\"" + key + "\"";
+        int keyIndex = json.indexOf(marker);
+        if (keyIndex < 0) {
+            return false;
+        }
+        int colon = json.indexOf(':', keyIndex + marker.length());
+        if (colon < 0) {
+            return false;
+        }
+        int firstQuote = json.indexOf('"', colon + 1);
+        int secondQuote = firstQuote < 0 ? -1 : json.indexOf('"', firstQuote + 1);
+        return secondQuote > firstQuote && !json.substring(firstQuote + 1, secondQuote).isBlank();
     }
 
     /** 启动入口使用的容错迁移；迁移失败由后续服务报告具体读写错误。 */
@@ -319,11 +394,56 @@ public final class ModPediaPaths {
     }
 
     private static Path defaultUserHome(Path configDirectory) {
-        String value = System.getProperty("user.home", "").strip();
-        if (!value.isBlank()) {
-            return Path.of(value);
+        return resolveUserHome(
+                configDirectory,
+                System.getenv(),
+                System.getProperty("user.home", ""),
+                System.getProperty("os.name", "")
+        );
+    }
+
+    /** 供自测试验证启动器覆盖 user.home 时仍使用真实用户目录。 */
+    static Path resolveUserHome(
+            Path configDirectory,
+            Map<String, String> environment,
+            String systemUserHome,
+            String operatingSystem
+    ) {
+        boolean windows = operatingSystem != null
+                && operatingSystem.toLowerCase(java.util.Locale.ROOT).contains("win");
+        String[] candidates = windows
+                ? new String[]{
+                environment.get("USERPROFILE"),
+                joinWindowsHome(environment.get("HOMEDRIVE"), environment.get("HOMEPATH")),
+                environment.get("HOME"),
+                systemUserHome
+        }
+                : new String[]{
+                environment.get("HOME"),
+                environment.get("USERPROFILE"),
+                systemUserHome
+        };
+        for (String candidate : candidates) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            try {
+                Path path = Path.of(candidate.strip());
+                if (path.isAbsolute()) {
+                    return path.normalize();
+                }
+            } catch (java.nio.file.InvalidPathException ignored) {
+                // 继续尝试下一个系统用户目录来源。
+            }
         }
         Path absoluteConfig = configDirectory.toAbsolutePath().normalize();
         return absoluteConfig.getParent() == null ? Path.of(".") : absoluteConfig.getParent();
+    }
+
+    private static String joinWindowsHome(String drive, String path) {
+        if (drive == null || drive.isBlank() || path == null || path.isBlank()) {
+            return "";
+        }
+        return drive.strip() + path.strip();
     }
 }

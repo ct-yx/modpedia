@@ -16,14 +16,14 @@
 
 | ID | 目标 | Worker 基线 | Java | 必须证据 | 当前状态 |
 | --- | --- | --- | --- | --- | --- |
-| W1 | Worker Core 纯 Java 边界 | `worker-baseline-1` | 21 | 源码边界、协议版本、共享 lib 常量 | `[x]` |
-| W2 | 独立 Worker 启动与 IPC 握手 | `worker-baseline-1` | 21 | Jar-in-Jar 启动、正确握手、错误 Token/协议/基线拒绝 | `[x]` |
-| W3 | SQLite/FTS 与本地 AI Mock | `worker-baseline-1` | 21 | 知识库重建、FTS 查询、Mock 请求和会话重启 | `[x]` |
-| W4 | Worker 知识扫描 | `worker-baseline-1` | 21 | JAR 扫描、语言回退、文档导入和来源统计 | `[x]` |
-| W5 | 任务存档读取 | `worker-baseline-1` | 21 | FTBQ 静态导入、运行时文件读取、p50/p95/p99 | `[x]` |
-| C1 | NeoForge 1.21.1 客户端适配层 | `worker-baseline-1` | 21 | `build`、`runClient`、UI/注册表/可选联动回归 | `[~]` |
-| C2 | NeoForge 1.21.1 Dedicated Server | `worker-baseline-1` | 21 | `build`、`runServer`、不解析客户端类 | `[~]` |
-| F1 | 未来 Minecraft 版本的新客户端适配层 | `worker-baseline-1` 或递增 | 21 | 新适配层编译、握手、客户端/服务端组合回归 | `[ ]` |
+| W1 | Worker Core 纯 Java 边界 | `worker-baseline-1` | 17 | 源码边界、协议版本、共享 lib 常量 | `[x]` |
+| W2 | 独立 Worker 启动与 IPC 握手 | `worker-baseline-1` | 17 | Jar-in-Jar 启动、正确握手、错误 Token/协议/基线拒绝 | `[x]` |
+| W3 | SQLite/FTS 与本地 AI Mock | `worker-baseline-1` | 17 | 知识库重建、FTS 查询、Mock 请求和会话重启 | `[x]` |
+| W4 | Worker 知识扫描 | `worker-baseline-1` | 17 | JAR 扫描、语言回退、文档导入和来源统计 | `[x]` |
+| W5 | 任务存档读取 | `worker-baseline-1` | 17 | FTBQ 静态导入、运行时文件读取、p50/p95/p99 | `[x]` |
+| C1 | Forge 1.20.1 客户端适配层 | `worker-baseline-1` | 17 | `build`、`runClient`、UI/注册表/可选联动回归 | `[~]` |
+| C2 | Forge 1.20.1 Dedicated Server | `worker-baseline-1` | 17 | `build`、`runServer`、不解析客户端类 | `[~]` |
+| F1 | 未来 Minecraft 版本的新客户端适配层 | `worker-baseline-1` 或递增 | 17 | 新适配层编译、握手、客户端/服务端组合回归 | `[ ]` |
 
 W1–W5 可以在无真实模型、无外网的环境完成；C1/C2 不得用纯 Java 自测代替真实游戏
 证据。F1 只有在目标版本明确后建立独立分支和矩阵行。
@@ -71,7 +71,7 @@ Worker API 或协议不兼容
 Worker 嵌入依赖增删/升级
     → 递增 worker-baseline-2+
 
-只有 Minecraft/NeoForge 客户端 API 变化
+只有 Minecraft/Forge 客户端 API 变化
     → 新增 client_adapter，Worker 基线不变
 ```
 

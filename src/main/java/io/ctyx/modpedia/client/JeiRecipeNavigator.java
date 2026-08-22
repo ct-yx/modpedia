@@ -11,7 +11,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.neoforged.fml.ModList;
+import net.minecraftforge.fml.ModList;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -580,14 +580,13 @@ public final class JeiRecipeNavigator {
     }
 
     private static Object runtime() {
-        List<Class<?>> owners = new ArrayList<>(2);
-        // JEI 19.x exposes the runtime through Internal. The old public entry
-        // point is kept as a fallback for older JEI builds.
-        for (String className : List.of("mezz.jei.common.Internal", "mezz.jei.api.JeiApi")) {
-            try {
-                owners.add(Class.forName(className));
-            } catch (ClassNotFoundException | LinkageError ignored) {
-            }
+        List<Class<?>> owners = new ArrayList<>(1);
+        // JEI 15.x/19.x exposes the runtime through the common Internal owner.
+        // Keep all version tolerance inside runtimeFrom; do not probe the
+        // removed legacy public owner on the Forge 1.20.1 path.
+        try {
+            owners.add(Class.forName("mezz.jei.common.Internal"));
+        } catch (ClassNotFoundException | LinkageError ignored) {
         }
         return runtimeFrom(owners);
     }
@@ -623,7 +622,7 @@ public final class JeiRecipeNavigator {
      * Resolves a JEI runtime from the candidate owner classes.
      *
      * Package-private so the pure Java regression test can exercise the
-     * current and legacy reflection contracts without loading Minecraft.
+     * current reflection contract without loading Minecraft.
      */
     static Object runtimeFrom(List<Class<?>> owners) {
         for (Class<?> owner : owners) {

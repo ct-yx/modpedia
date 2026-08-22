@@ -72,8 +72,8 @@ public final class WorkerAssistantSession implements AssistantSession {
         }
 
         List<ChatMessage> messages = new ArrayList<>(state.messages());
-        if (retry && !messages.isEmpty() && messages.getLast().role() == MessageRole.USER) {
-            messages.removeLast();
+        if (retry && !messages.isEmpty() && messages.get(messages.size() - 1).role() == MessageRole.USER) {
+            messages.remove(messages.size() - 1);
         }
         messages.add(new ChatMessage(MessageRole.USER, normalized, List.of()));
         String requestId = UUID.randomUUID().toString();

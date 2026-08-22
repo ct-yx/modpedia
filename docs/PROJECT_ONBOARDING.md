@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-ModPedia 是 Minecraft 1.21.1 + NeoForge 1.21.1 的本地知识助手：
+ModPedia 是 Minecraft 1.20.1 + Forge 1.20.1 的本地知识助手：
 
 ```text
 已安装模组手册 / Wiki / 自定义 Markdown
@@ -24,31 +24,31 @@ SQLite + FTS5
 - JEI：解析物品 ID，并尝试打开配方界面；配方正文暂不导入数据库。
 - Jade：读取视线目标并插入物品令牌。
 
-Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联动对象。ModPedia 核心加载路径只依赖 NeoForge 和自身内置依赖。
+Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联动对象。ModPedia 核心加载路径只依赖 Forge 和自身内置依赖。
 
 ## 2. 当前基线
 
 | 项目 | 值 |
 | --- | --- |
-| Minecraft | 1.21.1 |
-| NeoForge | 21.1.244 |
+| Minecraft | 1.20.1 |
+| Forge | 47.4.16 |
 | Java | 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
-| 当前发布版本 | `v1.2.0-fix` |
-| 当前检查分支 | `main` |
-| 当前检查 HEAD | 以 `git log -1` 为准 |
+| Worker 基线 | `worker-baseline-1` |
 | 主配置目录 | `config/modpedia/` |
 | 知识库 | `config/modpedia/runtime/knowledge/knowledge.db` |
 | 会话目录 | `config/modpedia/runtime/conversations/` |
 | Worker 日志 | `config/modpedia/runtime/worker/worker.log` |
 | Worker 共享依赖 | `~/.modpedia/worker/lib/worker-baseline-1/` |
 
-维护者进入项目后的第一项工作是确认当前分支、版本和工作区状态：
+本分支的发布版本、下载资产、更新日志和网页内容不作为事实源；需要查看或修改这些内容时交给 `main` 分支。
+
+维护者进入项目后的第一项工作是确认当前分支和工作区状态：
 
 ```bash
-cd /Users/chenhong/Documents/modpedia
-git status --short
+cd /Users/chenhong/Documents/modpedia-worker
+git status --short --branch
 git log -1 --oneline --decorate
 ```
 
@@ -157,10 +157,10 @@ config/modpedia/
 
 ## 6. 开发环境
 
-建议固定 Java 21：
+建议固定 Java 17：
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home
 export PATH="$JAVA_HOME/bin:$PATH"
 java -version
 ```
@@ -221,7 +221,7 @@ git diff --check
 
 - 先查看 `git status`，只暂存当前功能相关文件。
 - 优先修改最小文件集合，先补纯 Java 回归，再启动真实客户端。
-- Worker 代码不得引入 Minecraft、NeoForge、ModernUI 或其他客户端 API。
+- Worker 代码不得引入 Minecraft、Forge、ModernUI 或其他客户端 API。
 - 客户端只读取 UI 所需快照，数据库和网络工作交给 Worker。
 - API Key、请求头和完整请求体禁止写入日志或诊断报告。
 - 真实模型测试使用配置好的低成本模型；纯 Java 测试默认使用本地夹具。

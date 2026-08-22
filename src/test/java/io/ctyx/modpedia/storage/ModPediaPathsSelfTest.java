@@ -27,6 +27,39 @@ public final class ModPediaPathsSelfTest {
         try {
             Path config = temporary.resolve("config");
             Path userHome = temporary.resolve("user-home");
+            Path launcherHome = temporary.resolve("launcher-home");
+            check(ModPediaPaths.resolveUserHome(
+                            config,
+                            Map.of("HOME", userHome.toString()),
+                            launcherHome.toString(),
+                            "Mac OS X"
+                    ).equals(userHome),
+                    "启动器覆盖 user.home 时应优先使用 HOME");
+            check(ModPediaPaths.resolveUserHome(
+                            config,
+                            Map.of("USERPROFILE", userHome.toString()),
+                            launcherHome.toString(),
+                            "Windows 11"
+                    ).equals(userHome),
+                    "Windows 应优先使用 USERPROFILE");
+            Path windowsHome = temporary.resolve("windows-home");
+            check(ModPediaPaths.resolveUserHome(
+                            config,
+                            Map.of(
+                                    "HOMEDRIVE", temporary.toString(),
+                                    "HOMEPATH", "/windows-home"
+                            ),
+                            launcherHome.toString(),
+                            "Windows 11"
+                    ).equals(windowsHome),
+                    "Windows 缺少 USERPROFILE 时应使用 HOMEDRIVE + HOMEPATH");
+            check(ModPediaPaths.resolveUserHome(
+                            config,
+                            Map.of(),
+                            "",
+                            "Linux"
+                    ).equals(config.toAbsolutePath().normalize().getParent()),
+                    "缺少用户目录环境变量时应回退到配置目录父级");
             Path legacyRoot = config.resolve("modpedia");
             write(legacyRoot.resolve("ai.json"), "{\"mode\":\"ai\"}");
             write(legacyRoot.resolve("conversations/conversation.json"), "history");
@@ -106,6 +139,66 @@ public final class ModPediaPathsSelfTest {
                     "已有用户级 Worker 基线时也应合并旧实例 lib");
             check(!Files.exists(secondLegacyLibrary),
                     "合并成功后第二个实例不应继续保留 Worker lib");
+
+            // 启动器覆盖 user.home 的旧实例：用户级配置不存在时迁移配置和共享库，
+            // 迁移结果只记录路径，不得把 API Key 内容带入诊断或日志。
+            Path migratedUserHome = temporary.resolve("migrated-user-home");
+            Path launcherLegacyRoot = launcherHome.resolve(".modpedia");
+            String migratedApiKey = "legacy-api-key-must-not-be-logged";
+            write(launcherLegacyRoot.resolve("ai.json"),
+                    "{\"api_key_encrypted\":\"" + migratedApiKey + "\"}");
+            write(launcherLegacyRoot.resolve("worker/lib/launcher.jar"), "launcher-worker-library");
+            Path launcherConfig = temporary.resolve("launcher-instance/config");
+            String previousUserHome = System.getProperty("user.home");
+            try {
+                System.setProperty("user.home", launcherHome.toString());
+                ModPediaPaths launcherPaths = ModPediaPaths.forConfig(launcherConfig, migratedUserHome);
+                ModPediaPaths.MigrationResult launcherMigration = launcherPaths.migrateLegacy();
+                check(Files.readString(launcherPaths.aiSettings()).contains(migratedApiKey),
+                        "旧启动器配置迁移后 API Key 密文应保留");
+                check(!Files.exists(launcherLegacyRoot.resolve("ai.json")),
+                        "迁移成功后旧启动器 ai.json 不应继续作为配置源");
+                check(Files.isRegularFile(launcherPaths.workerLibraryRoot().resolve("launcher.jar")),
+                        "旧启动器 Worker lib 应迁移到固定基线目录");
+                check(!Files.exists(launcherLegacyRoot.resolve("worker/lib")),
+                        "旧启动器 Worker lib 迁移后不应继续重复占用空间");
+                check(!launcherMigration.moved().toString().contains(migratedApiKey),
+                        "迁移日志和结果不得包含 API Key");
+            } finally {
+                if (previousUserHome == null) {
+                    System.clearProperty("user.home");
+                } else {
+                    System.setProperty("user.home", previousUserHome);
+                }
+            }
+
+            // 用户级配置优先：旧启动器目录中的空配置自动清理，用户级内容保持不变。
+            Path preferredUserHome = temporary.resolve("preferred-user-home");
+            Path preferredLauncherHome = temporary.resolve("preferred-launcher-home");
+            Path preferredUserRoot = preferredUserHome.resolve(".modpedia");
+            Path preferredLauncherRoot = preferredLauncherHome.resolve(".modpedia");
+            String preferredApiKey = "preferred-api-key";
+            write(preferredUserRoot.resolve("ai.json"),
+                    "{\"api_key_encrypted\":\"" + preferredApiKey + "\"}");
+            write(preferredLauncherRoot.resolve("ai.json"), "{}\n");
+            String previousPreferredHome = System.getProperty("user.home");
+            try {
+                System.setProperty("user.home", preferredLauncherHome.toString());
+                ModPediaPaths preferredPaths = ModPediaPaths.forConfig(
+                        temporary.resolve("preferred-instance/config"), preferredUserHome
+                );
+                preferredPaths.migrateLegacy();
+                check(Files.readString(preferredPaths.aiSettings()).contains(preferredApiKey),
+                        "用户级 ai.json 应优先于旧启动器配置");
+                check(!Files.exists(preferredLauncherRoot.resolve("ai.json")),
+                        "用户级配置存在时旧启动器空 ai.json 应自动清理");
+            } finally {
+                if (previousPreferredHome == null) {
+                    System.clearProperty("user.home");
+                } else {
+                    System.setProperty("user.home", previousPreferredHome);
+                }
+            }
 
             Path generated = paths.runtimeKnowledgeRoot().resolve("generated/fixture.md");
             ScannedResource scanned = new ScannedResource(

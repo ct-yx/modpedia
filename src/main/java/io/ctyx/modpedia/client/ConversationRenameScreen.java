@@ -65,7 +65,7 @@ public final class ConversationRenameScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderTransparentBackground(graphics);
+        graphics.fill(0, 0, width, height, 0xA0000000);
         int left = (width - PANEL_WIDTH) / 2;
         int top = Math.max(8, (height - PANEL_HEIGHT) / 2);
         graphics.fill(left, top, left + PANEL_WIDTH, top + PANEL_HEIGHT, PANEL_COLOR);

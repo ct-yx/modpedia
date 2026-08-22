@@ -7,10 +7,10 @@ import io.ctyx.modpedia.knowledge.GuideLocaleSelector;
 import io.ctyx.modpedia.knowledge.KnowledgeContentKind;
 import io.ctyx.modpedia.knowledge.KnowledgeScanResult;
 import io.ctyx.modpedia.knowledge.ScannedResource;
-import net.neoforged.fml.ModList;
-import net.neoforged.neoforgespi.language.IModFileInfo;
-import net.neoforged.neoforgespi.language.IModInfo;
-import net.neoforged.neoforgespi.locating.IModFile;
+import net.minecraftforge.fml.ModList;
+import net.minecraftforge.forgespi.language.IModFileInfo;
+import net.minecraftforge.forgespi.language.IModInfo;
+import net.minecraftforge.forgespi.locating.IModFile;
 
 import java.io.IOException;
 import java.io.ByteArrayOutputStream;

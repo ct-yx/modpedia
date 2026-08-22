@@ -66,7 +66,7 @@ public final class AiRequestLifecycleSelfTest {
         check(forced.toolChoice() == ToolChoice.REQUIRED,
                 "AI 新问题的第一次模型请求必须强制调用 search_knowledge");
         check(forced.toolSpecifications().size() == 1
-                        && "search_knowledge".equals(forced.toolSpecifications().getFirst().name()),
+                        && "search_knowledge".equals(forced.toolSpecifications().get(0).name()),
                 "普通问题首轮只能暴露 search_knowledge，不能被计算/配方工具抢走");
         ChatRequest followUp = AiAssistantSession.requireSearchOnFirstRequest(original, first);
         check(followUp == original,
@@ -87,7 +87,7 @@ public final class AiRequestLifecycleSelfTest {
         check(forced.toolChoice() == ToolChoice.REQUIRED,
                 "任务问题首轮必须要求工具调用");
         check(forced.toolSpecifications().size() == 1
-                        && "search_tasks".equals(forced.toolSpecifications().getFirst().name()),
+                        && "search_tasks".equals(forced.toolSpecifications().get(0).name()),
                 "任务问题首轮只能暴露 search_tasks 工具");
         ChatRequest followUp = AiAssistantSession.requireSearchOnFirstRequest(original, first, true);
         check(followUp == original,

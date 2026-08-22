@@ -39,7 +39,7 @@ import io.ctyx.modpedia.task.TaskSearchSummary;
 import io.ctyx.modpedia.recipe.RecipeQuery;
 import io.ctyx.modpedia.recipe.RecipeQueryTrace;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.loading.FMLPaths;
+import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

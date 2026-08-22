@@ -3,44 +3,30 @@
 > 这份文档同时是 ModPedia 的 Mod 开发清单。每完成一项就勾选对应复选框；
 > `[~]` 表示代码已具备但仍需要真实游戏或整合包人工回归，`[ ]` 表示后续工作。
 
-本次发布前的具体变更、命令输出和测试 JAR 记录见[开发日志](DEVELOPMENT_LOG.md)。
+本分支只记录开发、测试和迁移边界；发布版本、下载资产和发布说明由 `main` 分支统一维护。
 
-## 0. 当前版本快照
+## 0. Worker 分支快照
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.2.0-fix` |
-| GitHub 发布状态 | 正式发布，自动化门槛已完成 |
-| Minecraft | `1.21.1` |
-| NeoForge | `21.1.244` |
+| Minecraft | `1.20.1` |
+| Forge | `47.4.16` |
 | Java | `21` |
-| Mod ID | `modpedia` |
-| 包名 | `io.ctyx.modpedia` |
-| 作者 | `ctyx` |
-| 客户端 UI 依赖 | 无外部 UI 依赖；基于 NeoForge 原生 GUI API 自绘 |
-| 默认快捷键 | `K` 助手、`F9` 重建；`F8` 保留原版电影视角 |
-| 当前发布分支 | `main` |
+| Mod ID / 包名 | `modpedia` / `io.ctyx.modpedia` |
+| Worker 基线 | `worker-baseline-1` |
+| 当前分支 | 以 `git status --short --branch` 为准 |
 
-发布资产与校验文件位于：
-
-```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
-```
-
-后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。Worker 独立 JVM 的基线、握手字段和迁移矩阵见[Worker 基线与兼容层](WORKER_BASELINE.md)。
-
-运行目录、SQLite 数据库、测试日志和测试 JAR 均属于本地验证产物，不进入提交；交付记录统一写入
-`docs/DEVELOPMENT_LOG.md`。
+本分支负责 Worker Core、客户端适配层、协议兼容、测试和迁移文档；不维护发布版本号、下载链接、更新日志或网页内容。
 
 ## 1. Mod 工程基础清单
 
 - [x] `mod_id=modpedia`、显示名 `ModPedia · 模组百科`、作者 `ctyx` 全部一致。
 - [x] 基础包名固定为 `io.ctyx.modpedia`，技术标识不随显示名调整。
-- [x] Minecraft、NeoForge 和 Java 版本写入 `gradle.properties` 并锁定。
-- [x] `neoforge.mods.toml` 只声明 Minecraft、NeoForge 等实际必需依赖；客户端 UI 使用原生 GUI API。
+- [x] Minecraft、Forge 和 Java 版本写入 `gradle.properties` 并锁定。
+- [x] `mods.toml` 只声明 Minecraft、Forge 等实际必需依赖；客户端 UI 使用原生 GUI API。
 - [x] 客户端入口与服务端入口隔离；Dedicated Server 不解析 `client/` UI 类。
 - [x] `./gradlew build` 能生成独立的 Mod JAR。
-- [ ] 每次升级 Minecraft/NeoForge 后重新核对对应版本官方 API 和映射。
+- [ ] 每次升级 Minecraft/Forge 后重新核对对应版本官方 API 和映射。
 
 ## 2. 手册适配清单
 
@@ -68,7 +54,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 - [x] FTS5 使用 external-content，正文从 `segments` 事实表读取；Schema/索引创建后执行 `PRAGMA optimize`，全量/大批量变更执行 FTS5 optimize/merge，小增量跳过完整合并。
 - [x] FTS 查询按 `rank` 排序，避免 `bm25(...)` 的排序临时表；性能自测覆盖短语、删除、增量更新和事务回滚。
 - [x] 将 `config/modpedia/` 分为 `runtime/` 与 `knowledge/`：会话、Worker、生成 Markdown、索引和 SQLite 全部位于 `runtime/`；custom/Wiki/source-overrides 等整合包事实源位于 `knowledge/`；跨实例共享的 AI 配置位于用户目录 `~/.modpedia/ai.json`。
-- [x] 启动时迁移早期散落路径，且不搬移或删除 `knowledge/custom/`、`knowledge/sources/`、`media.json` 和来源覆盖文件。
+- [x] 启动时按平台优先级解析用户目录并迁移早期散落路径；清理旧启动器空 `ai.json`，合并旧 `runtime/worker/lib/`，且不搬移或删除 `knowledge/custom/`、`knowledge/sources/`、`media.json` 和来源覆盖文件。
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
@@ -149,7 +135,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 ## 6. 每次修改后的自动检查
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home
 ./gradlew test
 ./gradlew build
 git diff --check
@@ -183,41 +169,13 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v1.2.0-fix 发布清单
+## 7. 分支交付边界
 
-- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.2.0-fix`。
-- [x] 对比 `v1.1.0` 整理四种 AI API 格式、模型列表/连接测试、分阶段 JEI 配方查询和本地 `calculate` 工具。
-- [x] 修复物品目标冻结、显式插入、原生选项页 `K` 拦截和 Tooltip 异常导致的扫描日志膨胀。
-- [x] 调整 Token 与历史证据压缩，保留当前检索事实、来源字段和标题路径。
-- [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
-- [x] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
-- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.2.0-fix`。
-- [~] 真实模型兼容性和不同大型整合包的持续回归按 `KNOWN_LIMITATIONS.md` 单独记录。
-
-## 7.1 历史：v1.2.0 发布清单
-
-- [x] `v1.2.0` 已作为历史正式版本保留。
-
-## 7.2 历史：v1.1.0 发布清单
-
-- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.1.0`。
-- [x] `./gradlew test`、`./gradlew build`、严格 Worker 性能自测和 `git diff --check` 通过。
-- [x] 发布 JAR、`SHA256SUMS`、`CHANGELOG.md`、`INSTALL.md` 和 `KNOWN_LIMITATIONS.md` 由标签流水线生成。
-- [x] `main` 使用 GitHub 登录账号 `ct-yx` 提交并推送，版本标签为 `v1.1.0`。
-- [x] API Key 密文存储、旧配置迁移、系统标识变化清除和 Worker 启动缓存已通过自动化测试。
-- [x] Mod 列表图标和 Mod 介绍已写入元数据并进入构建 JAR。
-- [~] 图形客户端、第三方手册跳转、可选联动和 Dedicated Server 的持续回归仍按已知限制记录。
-
-## 7.3 历史：v0.2.0 发布清单
-
-- [x] 版本号、Mod ID、显示名、作者和 NeoForge 元数据一致。
-- [x] `./gradlew test`、`./gradlew build`、`git diff --check` 通过。
-- [x] 构建产物 `build/libs/modpedia-0.2.0.jar` 已生成。
-- [x] `SHA256SUMS` 与发布 JAR 校验一致。
-- [x] GitHub `main` 已推送，标签 `v0.2.0` 已推送。
-- [x] GitHub 发布资产包含 JAR、校验、更新日志、安装说明和已知限制。
-- [~] 在真实图形客户端完成小窗口 UI、三种手册跳转和完整整合包回归。
-- [~] GUI Scale 4、Dedicated Server、三种手册真实跳转和大型整合包仍需目标实例人工回归。
+- [x] Worker Core 与客户端适配层保持独立边界。
+- [x] Worker 依赖、协议和基线变更通过 `WORKER_CHANGE_PROTOCOL.md` 传递。
+- [x] 自动化测试、构建和 `git diff --check` 在本分支执行。
+- [ ] 发布版本、下载资产、更新日志和网页由 `main` 分支统一整理。
+- [ ] 需要同步到 `main` 的 README/docs 变更先生成简短变更摘要和补丁说明。
 
 ## 8. 后续开发入口
 
@@ -235,7 +193,7 @@ M0 Beta 稳定性收尾
 
 ## 9. 分支、提交与评审规范
 
-- 功能分支使用 `codex/<feature-name>`；发布提交可以直接合并到 `main`。
+- 功能分支使用 `codex/<feature-name>`；发布提交和发布资产由 `main` 分支统一处理。
 - 提交作者使用登录的 GitHub 账号 `ct-yx`，不要使用本地电脑用户名。
 - 提交信息保持简短并说明实际变化：
 
@@ -253,7 +211,7 @@ docs: update mod development checklist
 
 新增 Patchouli、GuideME、Modonomicon 或其它手册格式时，按以下顺序完成：
 
-- [ ] 先确认 Minecraft/NeoForge 版本和实际资源目录，不凭框架名称猜正文位置。
+- [ ] 先确认 Minecraft/Forge 版本和实际资源目录，不凭框架名称猜正文位置。
 - [ ] 在扫描器中只匹配该格式的专用目录，避免普通 JSON/Markdown 被误收录。
 - [ ] 记录稳定 `documentId`、`sourceType`、`sourcePath`、内容模组 namespace 和版本。
 - [ ] 实现 `zh_cn → en_us → neutral` 回退，并对多语言页面去重。
@@ -296,61 +254,15 @@ docs: update mod development checklist
 - [ ] 检查日志和会话文件中没有 API Key。
 - [x] 启动 Dedicated Server，确认 ModPedia 不解析 `AssistantScreen` 和第三方客户端反射类。
 
-## 12. 发布流程
+## 12. 开发分支交付检查
 
-发布前执行：
+本分支只执行代码验证，不创建发布资产，也不配置发布 Secret 或发布工作流：
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home
 ./gradlew test
 ./gradlew build
 git diff --check
-jar_file="$(find build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' \
-  ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort | head -n 1)"
-printf '%s  %s\n' "$(shasum -a 256 "$jar_file" | awk '{print $1}')" "$(basename "$jar_file")" > SHA256SUMS
 ```
 
-发布资产至少包含：
-
-```text
-modpedia-<version>.jar
-SHA256SUMS
-CHANGELOG.md
-INSTALL.md
-KNOWN_LIMITATIONS.md
-```
-
-推送版本标签后，`.github/workflows/release.yml` 会在 GitHub Actions 中重新测试、构建、生成校验并创建发布。发布完成后从远端下载 JAR，执行：
-
-```bash
-shasum -a 256 -c SHA256SUMS
-```
-
-最后确认：
-
-- [ ] 发布页为正式发布状态，版本号与 JAR 文件名一致。
-- [ ] 发布资产可下载，SHA-256 校验通过。
-- [ ] 安装说明与当前最小尺寸、依赖版本和快捷键一致。
-- [ ] 已知限制明确说明手册覆盖率、AI API 和图形客户端回归范围。
-
-### 12.1 CurseForge 自动发布
-
-`.github/workflows/publish-curseforge.yml` 与版本标签发布流程分开：推送 `v*` 标签时自动执行，
-需要重试时也可以通过 `workflow_dispatch` 输入已有标签。它会重新测试、构建并从当前版本的
-`CHANGELOG.md` 只提取一个版本段落，然后上传 NeoForge 1.21.1 的 Mod JAR。
-
-首次启用前，在仓库的 `Settings → Secrets and variables → Actions` 添加：
-
-```text
-Repository variable: MODPEDIA=<项目 ID>
-Repository secret:   MODPEDIA=<发布 API Token>
-```
-
-工作流也兼容 `CURSEFORGE_PROJECT_ID` 和 `CURSEFORGE_TOKEN` 这组标准名称。Token 只通过 Secret 注入
-`mc-publish` Action，不进入源码、JAR、更新日志或普通日志。发布前检查：
-
-- [ ] `MODPEDIA` Repository variable 与目标项目匹配。
-- [ ] `MODPEDIA` Repository secret 具有上传/发布权限且未写入任何文件。
-- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.2.0-fix`。
-- [ ] Action 的 `loaders` 为 `neoforge`、`game-versions` 为 `1.21.1`。
-- [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。
+需要进入正式交付时，将本分支的代码变更、测试结果和文档补丁摘要交给 `main` 分支处理。

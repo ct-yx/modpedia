@@ -13,7 +13,7 @@ import io.ctyx.modpedia.task.TaskTimelineEntry;
 import io.ctyx.modpedia.task.TaskTimelineEventType;
 import io.ctyx.modpedia.task.TaskTimelineTracker;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.ModList;
+import net.minecraftforge.fml.ModList;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;

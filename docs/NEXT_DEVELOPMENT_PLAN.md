@@ -11,8 +11,8 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | **v1.2.0-fix** |
-| Minecraft / NeoForge | **1.21.1 / 21.1.x** |
+| 当前技术基线 | **worker-baseline-1 / knowledge.db Schema v7** |
+| Minecraft / Forge | **1.20.1 / 21.1.x** |
 | Java | **21** |
 | 知识库 | knowledge.db Schema v7 |
 | FTS | SQLite FTS5 external-content |
@@ -400,7 +400,7 @@ source_type = external_markdown | external_json | external_runtime
 在进入实现前完成：
 
 1. 固定可验证的 commit/tag，而不是跟随默认分支。
-2. 确认仓库许可证、再发布权限和 Minecraft/NeoForge 兼容矩阵。
+2. 确认仓库许可证、再发布权限和 Minecraft/Forge 兼容矩阵。
 3. 列出实际公开入口：导航、页面定位、canonical URL 或 API。
 4. 没有稳定公开 API 或许可证依据时，只保留独立 adapter 或运行时软依赖，不复制源码。
 5. 第三方更新只替换 locator/adapter，不改变 ModPedia 的 Markdown、来源和搜索契约。
@@ -597,7 +597,7 @@ Phase 3 可选导入 content_kind=external 的 FTS
 
 | 阶段 | 工作内容 | 状态 |
 | --- | --- | --- |
-| P0 | 固定当前 v1.2.0-fix/v7 基线、补齐指标和失败恢复夹具 | [~] |
+| P0 | 固定当前 worker-baseline-1/v7 基线、补齐指标和失败恢复夹具 | [~] |
 | P1 | 完成 Community SQL 的 SQLite 方言、会话迁移和同会话串行 | [~] |
 | P2 | 实现 v8 来源版本、构建批次、别名和内容类型预留 | [ ] |
 | P3 | 在真实整合包上做 v7/v8 staged 对照；证据充分后再启用 LZ4 | [ ] |
@@ -689,8 +689,8 @@ git diff --check
 - README.md / README.en.md：用户可见行为、配置和已知限制；
 - [ARCHITECTURE.md](ARCHITECTURE.md)：线程、IPC、数据库和外部来源边界；
 - [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md)：Schema、来源、缓存和检索契约；
-- [DEVELOPMENT.md](DEVELOPMENT.md)：自测和发布门槛；
+- [DEVELOPMENT.md](DEVELOPMENT.md)：自测和开发分支交付边界；
 - ROADMAP.md：版本级优先级和状态；
-- CHANGELOG.md：仅记录已经进入版本的变化，不把研究稿写入发布日志。
+- 发布版本和更新日志不在本分支维护，交给 `main` 分支作为唯一事实源。
 
 提交前必须区分：已实现、已通过纯 Java/Worker 测试、已通过真实游戏回归和仍处于研究阶段的内容。数据库 v8 与外部百科只有完成对应人工验收后，才从计划状态进入版本路线。
