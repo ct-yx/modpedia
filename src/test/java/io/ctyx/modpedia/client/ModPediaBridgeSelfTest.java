@@ -3,6 +3,7 @@ package io.ctyx.modpedia.client;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Comparator;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -32,6 +33,17 @@ public final class ModPediaBridgeSelfTest {
             writeArchive(second, WORKER_ENTRY);
             check(ModPediaBridge.findWorkerArchive(mods) != null,
                     "多个候选 JAR 时仍应返回有效 Worker JAR");
+
+            String classpath = ModPediaBridge.mergeWorkerClasspath(
+                    List.of("/shared/worker/jtokkit-1.1.0.jar", "/modpedia.jar"),
+                    List.of("/game/old-jtokkit.jar", "/shared/worker/jtokkit-1.1.0.jar")
+            );
+            check(classpath.indexOf("/shared/worker/jtokkit-1.1.0.jar")
+                            < classpath.indexOf("/game/old-jtokkit.jar"),
+                    "共享 Worker lib 必须优先于游戏继承 classpath");
+            check(classpath.indexOf("/shared/worker/jtokkit-1.1.0.jar")
+                            == classpath.lastIndexOf("/shared/worker/jtokkit-1.1.0.jar"),
+                    "共享 Worker lib 不应重复加入 classpath");
             System.out.println("ModPedia Worker archive self-test passed");
         } finally {
             try (var paths = Files.walk(root)) {

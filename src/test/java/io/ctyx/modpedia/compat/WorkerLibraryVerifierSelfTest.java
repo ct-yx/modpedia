@@ -19,10 +19,14 @@ public final class WorkerLibraryVerifierSelfTest {
             Path archive = root.resolve("modpedia.jar");
             Path libraries = root.resolve("user/.modpedia/worker/lib/worker-baseline-1");
             createArchive(archive, "META-INF/jarjar/fixture.jar", "fixture-v1");
+            Files.createDirectories(libraries);
+            Files.writeString(libraries.resolve("legacy-core-1.18.0.jar"), "stale-library", StandardCharsets.UTF_8);
 
             WorkerLibraryVerifier.SyncResult first = WorkerLibraryVerifier.synchronize(archive, libraries);
             check(first.changed(), "首次同步应安装 Worker 依赖");
             check(first.classpath().size() == 1, "应返回全部嵌入依赖");
+            check(!Files.exists(libraries.resolve("legacy-core-1.18.0.jar")),
+                    "没有旧清单时也应清理旧版本 Worker 依赖");
             check(WorkerLibraryVerifier.verifyManifest(
                     libraries,
                     WorkerCompatibility.WORKER_LIBRARY_BASELINE

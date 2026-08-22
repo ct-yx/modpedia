@@ -75,6 +75,20 @@ public final class WorkerLibraryVerifier {
                     }
                 }
             }
+            // 早期版本没有 manifest，或不同版本曾经使用过不同的依赖文件名。
+            // 仅依据旧清单清理会留下重复库，并让继承 classpath 选中错误资源。
+            try (var files = Files.list(libraryDirectory)) {
+                for (Path actual : files.toList()) {
+                    if (!Files.isRegularFile(actual)
+                            || !actual.getFileName().toString().endsWith(".jar")) {
+                        continue;
+                    }
+                    String name = actual.getFileName().toString();
+                    if (!expectedNames.contains(name) && Files.deleteIfExists(actual)) {
+                        repaired.add("removed:" + name);
+                    }
+                }
+            }
             writeManifest(libraryDirectory.resolve(MANIFEST_FILE), expected);
         }
 

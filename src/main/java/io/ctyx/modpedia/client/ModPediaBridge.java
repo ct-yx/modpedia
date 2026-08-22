@@ -35,6 +35,7 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -944,27 +945,20 @@ public final class ModPediaBridge {
         Path sharedLibraryDirectory = paths.workerLibraryRoot();
         Files.createDirectories(sharedLibraryDirectory);
         LinkedHashSet<String> entries = new LinkedHashSet<>();
-        String current = System.getProperty("java.class.path", "");
-        if (!current.isBlank()) {
-            for (String entry : current.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
-                if (!entry.isBlank()) {
-                    entries.add(entry);
-                }
-            }
-        }
-        // SLF4J 由 NeoForge 的模块层提供，不能从 ModPedia JAR 再提取一份。
-        // Worker 是普通 classpath JVM，需要显式加入游戏侧 API 的实际代码来源。
-        addClassLocation(entries, "org.slf4j.LoggerFactory");
-        // Gson 同样由 Minecraft/NeoForge 提供；这里只把游戏侧代码来源加入
-        // Worker classpath，不从 ModPedia JAR 提取第二份模块。
-        addClassLocation(entries, "com.google.gson.Gson");
+        boolean packagedArchiveFound = false;
         try {
             Path codeSource = Path.of(ModPediaBridge.class.getProtectionDomain()
                     .getCodeSource().getLocation().toURI());
-            entries.add(codeSource.toString());
-            if (Files.isRegularFile(codeSource) && codeSource.toString().endsWith(".jar")) {
+            if (Files.isRegularFile(codeSource) && containsWorkerMain(codeSource)) {
+                packagedArchiveFound = true;
+                entries.add(codeSource.toString());
                 entries.addAll(WorkerLibraryVerifier.synchronize(codeSource, sharedLibraryDirectory).classpath()
                         .stream().map(Path::toString).toList());
+            } else if (Files.isDirectory(codeSource)
+                    && Files.isRegularFile(codeSource.resolve(WORKER_MAIN_ENTRY))) {
+                // 开发环境通常以 classes 目录作为代码来源；只加入 Worker 自身
+                // classes，不把整个游戏 JVM 的 classpath 继承给子 JVM。
+                entries.add(codeSource.toString());
             }
         } catch (IOException exception) {
             throw exception;
@@ -979,6 +973,7 @@ public final class ModPediaBridge {
                     FMLPaths.GAMEDIR.get().toAbsolutePath().normalize().resolve("mods")
             );
             if (installedArchive != null) {
+                packagedArchiveFound = true;
                 entries.add(installedArchive.toString());
                 WorkerLibraryVerifier.SyncResult libraries = WorkerLibraryVerifier.synchronize(
                         installedArchive,
@@ -1000,7 +995,49 @@ public final class ModPediaBridge {
         } catch (Exception exception) {
             ModPedia.LOGGER.warn("扫描 ModPedia Worker 发布 JAR 失败", exception);
         }
-        return String.join(File.pathSeparator, entries);
+        if (!packagedArchiveFound) {
+            // 开发环境没有可提取的发布 JAR 时，仅按类的实际 CodeSource 加入当前
+            // 构建解析出的 Worker 依赖。生产环境绝不回退到父 JVM 的完整 classpath，
+            // 避免旧版 LangChain4j/JTokkit 抢先加载。
+            for (String className : List.of(
+                    "dev.langchain4j.service.AiServices",
+                    "dev.langchain4j.data.message.ChatMessage",
+                    "dev.langchain4j.model.openai.OpenAiTokenCountEstimator",
+                    "com.knuddels.jtokkit.Encodings",
+                    "com.fasterxml.jackson.databind.ObjectMapper",
+                    "org.apache.opennlp.tools.tokenizer.Tokenizer",
+                    "org.xerial.sqlite.JDBC",
+                    "org.slf4j.LoggerFactory",
+                    "com.google.gson.Gson"
+            )) {
+                addClassLocation(entries, className);
+            }
+        } else {
+            // SLF4J 和 Gson 由游戏运行时提供；只加入这两个明确需要的 API，不能
+            // 把游戏 JVM 的全部依赖传给 Worker。
+            addClassLocation(entries, "org.slf4j.LoggerFactory");
+            addClassLocation(entries, "com.google.gson.Gson");
+        }
+        return mergeWorkerClasspath(entries, List.of());
+    }
+
+    /** 共享 Worker 依赖优先于游戏继承 classpath，并去除重复条目。 */
+    static String mergeWorkerClasspath(
+            Collection<String> preferredEntries,
+            Collection<String> inheritedEntries
+    ) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (preferredEntries != null) {
+            preferredEntries.stream()
+                    .filter(entry -> entry != null && !entry.isBlank())
+                    .forEach(merged::add);
+        }
+        if (inheritedEntries != null) {
+            inheritedEntries.stream()
+                    .filter(entry -> entry != null && !entry.isBlank())
+                    .forEach(merged::add);
+        }
+        return String.join(File.pathSeparator, merged);
     }
 
     /** 仅检查当前实例的模组归档，不解析模组类或启动客户端类。 */
@@ -1043,7 +1080,7 @@ public final class ModPediaBridge {
             if (Files.isRegularFile(location)) {
                 entries.add(location.toString());
             }
-        } catch (Exception exception) {
+        } catch (Throwable exception) {
             ModPedia.LOGGER.debug("Worker 侧运行时 API 路径不可用：{}", className, exception);
         }
     }
