@@ -158,7 +158,18 @@ public final class ModPediaPathsSelfTest {
             check(!Files.exists(legacyRoot.resolve("knowledge/knowledge.db")),
                     "旧 knowledge.db 不应继续散落在事实源目录");
 
-            ModPediaPaths.MigrationResult second = paths.migrateLegacy();
+            String beforeSecondMigrationHome = System.getProperty("user.home");
+            ModPediaPaths.MigrationResult second;
+            System.setProperty("user.home", launcherHome.toString());
+            try {
+                second = paths.migrateLegacy();
+            } finally {
+                if (beforeSecondMigrationHome == null) {
+                    System.clearProperty("user.home");
+                } else {
+                    System.setProperty("user.home", beforeSecondMigrationHome);
+                }
+            }
             check(!second.changed(), "重复启动不应重复迁移文件");
             ModPediaPaths anotherInstance = ModPediaPaths.forConfig(
                     temporary.resolve("other-instance/config"), userHome
