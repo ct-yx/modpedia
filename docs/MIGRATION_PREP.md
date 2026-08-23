@@ -90,6 +90,9 @@ Worker 依赖发生不兼容变化时才递增基线。
 启动 Worker 前将两类隔离依赖提取到用户级基线目录；后者用于 Worker 专用 Gson，不能
 交给游戏 JVM 的 Mod 类加载器解析。
 
+当前共享 Worker 构建来自 `modpedia-worker` 提交 `26ec327`。该提交修复了 JSONL
+在 Windows `CRLF` 换行下的连续消息读取；协议版本、API level 和基线编号保持原值。
+
 ## 当前启动顺序
 
 1. Forge/目标加载器完成公共生命周期初始化；Dedicated Server 只加载 `CommonProxy`。
