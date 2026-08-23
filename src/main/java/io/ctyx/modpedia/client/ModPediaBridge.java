@@ -944,17 +944,6 @@ public final class ModPediaBridge {
         }
         Path sharedLibraryDirectory = paths.workerLibraryRoot();
         Files.createDirectories(sharedLibraryDirectory);
-        // 游戏 JVM 可能通过模块层提供 Gson/SLF4J，CodeSource 未必能直接转换为文件路径。
-        // 继承 classpath 只作为兜底，并放在已校验 Worker 基线之后，避免旧版依赖抢先加载。
-        LinkedHashSet<String> inheritedEntries = new LinkedHashSet<>();
-        String current = System.getProperty("java.class.path", "");
-        if (!current.isBlank()) {
-            for (String entry : current.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
-                if (!entry.isBlank()) {
-                    inheritedEntries.add(entry);
-                }
-            }
-        }
         LinkedHashSet<String> entries = new LinkedHashSet<>();
         boolean packagedArchiveFound = false;
         try {
@@ -1029,7 +1018,7 @@ public final class ModPediaBridge {
             addClassLocation(entries, "org.slf4j.LoggerFactory");
             addClassLocation(entries, "com.google.gson.Gson");
         }
-        return mergeWorkerClasspath(entries, inheritedEntries);
+        return mergeWorkerClasspath(entries, List.of());
     }
 
     /** 共享 Worker 依赖优先于游戏继承 classpath，并去除重复条目。 */
