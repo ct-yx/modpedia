@@ -14,6 +14,7 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.InetAddress;
@@ -46,17 +47,18 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
 
 /**
  * 1.12.2 客户端与 Java 21 Worker 的最小 JSONL 桥接。
  *
  * <p>游戏 JVM 只负责生命周期、UI 和可选 Mod 适配；SQLite、FTS、Markdown
  * 导入后的数据库、会话和 AI 请求都在独立 Worker 进程执行。没有安装同一
- * {@code worker-baseline-2} 时，桥接保持不可用，客户端仍可使用本地搜索回退。</p>
+ * {@code worker-baseline-3} 时，桥接保持不可用，客户端仍可使用本地搜索回退。</p>
  */
 public final class LegacyWorkerBridge {
     private static final int PROTOCOL_VERSION = 1;
-    private static final String BASELINE = "worker-baseline-2";
+    private static final String BASELINE = "worker-baseline-3";
     private static final String WORKER_ONLY_DEPENDENCY_PREFIX = "META-INF/modpedia-worker/";
     private static final String MAIN_ENTRY = "io/ctyx/modpedia/worker/WorkerMain.class";
     private static final String HOST = "127.0.0.1";
@@ -346,9 +348,9 @@ public final class LegacyWorkerBridge {
     }
 
     private Process launchWorker(int port, String token, Path instanceRoot) throws IOException {
-        String classpath = workerClasspath();
+        String classpath = workerClasspath(instanceRoot);
         if (classpath.length() == 0) {
-            throw new IOException("未找到 worker-baseline-2");
+            throw new IOException("未找到 worker-baseline-3");
         }
         List<String> command = new ArrayList<String>();
         command.add(workerJava());
@@ -380,15 +382,27 @@ public final class LegacyWorkerBridge {
         return builder.start();
     }
 
-    private String workerClasspath() throws IOException {
+    private String workerClasspath(Path instanceRoot) throws IOException {
         String override = System.getProperty("modpedia.worker.classpath", "").trim();
         if (!override.isEmpty()) {
             return override;
         }
         Path root = paths.workerLibraryRoot();
-        if (!Files.isDirectory(root)) {
-            return "";
+        Files.createDirectories(root);
+
+        LinkedHashSet<String> entries = new LinkedHashSet<String>();
+        Path packaged = findWorkerArchive(
+                instanceRoot == null ? null : instanceRoot.resolve("mods")
+        );
+        if (packaged != null) {
+            if (containsEntry(packaged, MAIN_ENTRY)) {
+                entries.add(packaged.toString());
+            }
+            // 发布 Mod 的外层 JAR 只保存 Worker 包；Worker 包内部再保存
+            // META-INF/jarjar 与 META-INF/modpedia-worker 依赖，因此这里递归提取。
+            entries.addAll(extractNested(packaged, root));
         }
+
         List<Path> archives = new ArrayList<Path>();
         try (java.util.stream.Stream<Path> stream = Files.list(root)) {
             for (Path path : stream.filter(Files::isRegularFile).collect(Collectors.toList())) {
@@ -398,23 +412,35 @@ public final class LegacyWorkerBridge {
                 }
             }
         }
-        Path main = null;
-        for (Path archive : archives) {
-            if (containsEntry(archive, MAIN_ENTRY)) {
-                main = archive;
-                break;
-            }
-        }
-        if (main == null) {
-            return "";
-        }
-        LinkedHashSet<String> entries = new LinkedHashSet<String>();
-        entries.add(main.toString());
-        entries.addAll(extractNested(main, root));
+
         for (Path archive : archives) {
             entries.add(archive.toString());
         }
         return join(entries);
+    }
+
+    static Path findWorkerArchive(Path modsDirectory) {
+        if (modsDirectory == null || !Files.isDirectory(modsDirectory)) {
+            return null;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.list(modsDirectory)) {
+            List<Path> candidates = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                        return name.endsWith(".jar") || name.endsWith(".zip");
+                    })
+                    .sorted()
+                    .collect(Collectors.toList());
+            for (Path candidate : candidates) {
+                if (containsEntry(candidate, MAIN_ENTRY) || containsWorkerBundle(candidate)) {
+                    return candidate;
+                }
+            }
+        } catch (IOException ignored) {
+            return null;
+        }
+        return null;
     }
 
     private List<String> extractNested(Path archive, Path output) throws IOException {
@@ -428,7 +454,7 @@ public final class LegacyWorkerBridge {
                 }
                 Path target = output.resolve(new File(entry.getName()).getName());
                 if (!Files.exists(target) || Files.size(target) != entry.getSize()) {
-                    java.io.InputStream input = zip.getInputStream(entry);
+                    InputStream input = zip.getInputStream(entry);
                     try {
                         Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
                     } finally {
@@ -436,6 +462,9 @@ public final class LegacyWorkerBridge {
                     }
                 }
                 result.add(target.toString());
+                if (containsEntry(target, MAIN_ENTRY)) {
+                    result.addAll(extractNested(target, output));
+                }
             }
         }
         return result;
@@ -445,6 +474,43 @@ public final class LegacyWorkerBridge {
         return (name.startsWith("META-INF/jarjar/")
                 || name.startsWith(WORKER_ONLY_DEPENDENCY_PREFIX))
                 && name.endsWith(".jar");
+    }
+
+    private static boolean containsWorkerBundle(Path archive) {
+        try (ZipFile zip = new ZipFile(archive.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (!entry.isDirectory() && isWorkerDependencyEntry(entry.getName())
+                        && containsEntry(zip, entry, MAIN_ENTRY)) {
+                    return true;
+                }
+            }
+        } catch (IOException ignored) {
+            return false;
+        }
+        return false;
+    }
+
+    private static boolean containsEntry(ZipFile outer, ZipEntry nested, String expected)
+            throws IOException {
+        InputStream input = outer.getInputStream(nested);
+        try {
+            ZipInputStream jar = new ZipInputStream(input);
+            try {
+                ZipEntry entry;
+                while ((entry = jar.getNextEntry()) != null) {
+                    if (expected.equals(entry.getName())) {
+                        return true;
+                    }
+                }
+            } finally {
+                jar.close();
+            }
+        } finally {
+            input.close();
+        }
+        return false;
     }
 
     private void readLoop(BufferedReader reader) {
@@ -680,7 +746,7 @@ public final class LegacyWorkerBridge {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private boolean containsEntry(Path archive, String entry) {
+    private static boolean containsEntry(Path archive, String entry) {
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             return zip.getEntry(entry) != null;
         } catch (IOException exception) {

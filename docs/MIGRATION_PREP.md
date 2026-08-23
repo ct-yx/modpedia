@@ -8,7 +8,7 @@
 | 编译/API 基线 | Forge `14.23.5.2847` |
 | 运行时目标 | 目标加载器 `0.3+` |
 | Java 客户端 | Java 8 |
-| Worker | `worker-baseline-2`，独立 Java 21 JVM |
+| Worker | `worker-baseline-3`，独立 Java 21 JVM |
 | 当前阶段 | 第一版兼容层已完成，等待真实 Cleanroom 客户端回归 |
 
 真实大型整合包的手册与知识来源扫描见
@@ -60,7 +60,7 @@ src/main/resources/pack.mcmeta
   NBT，只把 `Tasks` 作为临时进度发送，不写知识库；两次读取之间生成内存时间线。
   服务端安装本 Mod 且存在 FTBQ 时，进入世界/换维度/重生捕获一次快照，任务完成事件只
   增量追加已完成任务和时间线，再通过客户端包同步；快照仍只保存在两侧 JVM 内存；
-- `LegacyWorkerBridge` 通过 JSONL 启动固定 `worker-baseline-2` 的 Java 21 Worker；
+- `LegacyWorkerBridge` 通过 JSONL 启动固定 `worker-baseline-3` 的 Java 21 Worker；
   Markdown、SQLite/FTS、AI、会话和任务静态导入都在 Worker JVM 执行；
 - `LegacyAssistantScreen` 提供单一 Screen、输入/发送/插入/关闭、取消、重试、超时
   状态、流式事件和本地 Markdown 回退；设置页支持 AI/仅搜索、API 地址/模型/密钥、
@@ -82,16 +82,16 @@ src/main/resources/pack.mcmeta
 
 1.12.2 客户端使用 Java 8，而当前 Worker 基线使用 Java 21。后续适配层必须通过
 独立的 Java 21 可执行文件启动 Worker，不能把 Worker Java 21 类加载进客户端 Java 8
-进程。IPC、JSONL 协议、`worker-baseline-2` 和用户级共享 lib保持不变；只有协议或
+进程。IPC、JSONL 协议、`worker-baseline-3` 和用户级共享 lib保持不变；只有协议或
 Worker 依赖发生不兼容变化时才递增基线。
 
-`worker-baseline-2` 的发布 JAR 同时可能包含
+`worker-baseline-3` 的发布 JAR 同时可能包含
 `META-INF/jarjar/*.jar` 与 `META-INF/modpedia-worker/*.jar`。1.12.2 适配层会在
-启动 Worker 前将两类隔离依赖提取到用户级基线目录；后者用于 Worker 专用 Gson，不能
-交给游戏 JVM 的 Mod 类加载器解析。
+发布 Mod JAR 内嵌 Worker 包，启动 Worker 前会将 Worker 包及两类隔离依赖提取到用户级
+基线目录；后者用于 Worker 专用 Gson，保持在 Worker 类路径中。
 
-当前共享 Worker 构建来自 `modpedia-worker` 提交 `26ec327`。该提交修复了 JSONL
-在 Windows `CRLF` 换行下的连续消息读取；协议版本、API level 和基线编号保持原值。
+当前共享 Worker 构建来自 `modpedia-worker` 提交 `3e77dd0`。该提交修复了独立
+Worker 的 SLF4J 隔离；协议版本、API level 保持原值，基线更新为 `worker-baseline-3`。
 
 ## 当前启动顺序
 
@@ -107,7 +107,7 @@ Worker 依赖发生不兼容变化时才递增基线。
 
 - 目标加载器 `0.3+` 的真实客户端/服务端启动；当前只保证公共 Forge 1.12.2 API
   编译和无专用 API 设计。
-- 用户级 `~/.modpedia/worker/lib/worker-baseline-2/` 中实际放置 Java 21 Worker
+- 用户级 `~/.modpedia/worker/lib/worker-baseline-3/` 中实际放置 Java 21 Worker
   后的握手、SQLite/FTS、AI 请求、会话和重建耗时。
 - 真实大型整合包中的来源跳转、旧页型完整度、物品 Tooltip 数量和配方布局。
 - 多人服务器：1.12.2 客户端不能读取远程服务器磁盘；服务端安装本 Mod 时，登录、换维度、

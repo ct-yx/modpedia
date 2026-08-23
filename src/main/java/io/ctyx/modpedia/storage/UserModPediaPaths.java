@@ -52,7 +52,7 @@ public final class UserModPediaPaths {
     }
 
     public Path workerLibraryRoot() {
-        return userRoot.resolve("worker").resolve("lib").resolve("worker-baseline-2");
+        return userRoot.resolve("worker").resolve("lib").resolve("worker-baseline-3");
     }
 
     public Path workerJar() {
