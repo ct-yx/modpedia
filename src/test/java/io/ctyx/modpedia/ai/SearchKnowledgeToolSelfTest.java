@@ -1,6 +1,7 @@
 package io.ctyx.modpedia.ai;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonParser;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
@@ -11,6 +12,9 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
+import io.ctyx.modpedia.api.RuntimeItemContext;
+import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
+import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.KnowledgeDatabase;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
 import io.ctyx.modpedia.search.RetrievalService;
@@ -23,6 +27,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** search_knowledge 工具参数、来源去重、has_more 和上下文限制回归测试。 */
 public final class SearchKnowledgeToolSelfTest {
@@ -313,6 +319,7 @@ public final class SearchKnowledgeToolSelfTest {
                     "中文多实体查询应拆开召回压力容器和控制器，而不是要求同一段同时出现两者");
             testChineseItemNameToEnglishManual(root);
             testItemContextBudget(root);
+            testRuntimeItemContext();
             testIncompleteToolTurnCleanup();
             testPersistentContextRepair(conversationsRoot);
             System.out.println("ModPedia search knowledge tool self-test passed");
@@ -403,6 +410,173 @@ public final class SearchKnowledgeToolSelfTest {
                 "超出物品上下文预算时必须标记截断");
         check(output.get("context_chars").getAsInt() <= 4_000,
                 "物品简介和手册段落必须共用上下文预算");
+    }
+
+    private static void testRuntimeItemContext() throws Exception {
+        Path root = Files.createTempDirectory("modpedia-runtime-item-context-");
+        try {
+            KnowledgeDatabase.sync(
+                    root,
+                    List.of(input(
+                            "fixture:dynamic-guide",
+                            "动态物品指南",
+                            "当前世界中的动态物品需要先检查环境。"
+                    )),
+                    true
+            );
+            KnowledgeDatabase.syncItemCatalog(
+                    root,
+                    "zh_cn",
+                    List.of(
+                            new ItemCatalogEntry(
+                                    "fixture:dynamic",
+                                    "zh_cn",
+                                    "动态物品",
+                                    "",
+                                    "fixture",
+                                    "dynamic-static-v1"
+                            ),
+                            new ItemCatalogEntry(
+                                    "fixture:static",
+                                    "zh_cn",
+                                    "静态物品",
+                                    "- 启动阶段已经捕获的简介",
+                                    "fixture",
+                                    "static-v1"
+                            )
+                    )
+            );
+
+            AtomicInteger calls = new AtomicInteger();
+            List<List<String>> requested = new ArrayList<>();
+            SearchKnowledgeTool tool = new SearchKnowledgeTool(
+                    new RetrievalService(root),
+                    SearchLanguage.ZH_CN,
+                    8,
+                    8_000,
+                    1,
+                    3,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(root),
+                    null,
+                    "runtime-item-self-test",
+                    (language, itemIds) -> {
+                        calls.incrementAndGet();
+                        requested.add(List.copyOf(itemIds));
+                        return List.of(new RuntimeItemContext(
+                                "fixture:dynamic",
+                                language,
+                                "动态物品",
+                                "- 仅在当前世界可见的 Tooltip",
+                                true,
+                                1234L
+                        ));
+                    },
+                    ignored -> { }
+            );
+            JsonObject first = parse(tool.search(
+                    "[[item:fixture:dynamic|动态物品]] [[item:fixture:dynamic|动态物品]] 如何使用",
+                    "zh_cn",
+                    8,
+                    "steps",
+                    List.of()
+            ));
+            check(calls.get() == 1, "同一次工具会话内相同物品只能请求一次运行时 Tooltip");
+            check(requested.size() == 1 && requested.get(0).equals(List.of("fixture:dynamic")),
+                    "运行时请求应按确认 ID 去重并限制为单个物品");
+            check(first.get("runtime_item_context_count").getAsInt() == 1,
+                    "世界就绪时应返回 runtime_item_context");
+            check(first.get("runtime_item_context").toString().contains("当前世界可见"),
+                    "运行时 Tooltip 正文应进入当前工具结果");
+
+            JsonObject second = parse(tool.search(
+                    "[[item:fixture:dynamic|动态物品]] 还有什么注意事项",
+                    "zh_cn",
+                    8,
+                    "related",
+                    List.of()
+            ));
+            check(calls.get() == 1, "同一聊天请求的后续补搜不得再次读取相同物品");
+            check(second.get("runtime_item_context_count").getAsInt() == 1,
+                    "缓存的运行时 Tooltip 应可供同一请求后续工具轮次使用");
+
+            SearchKnowledgeTool unavailable = new SearchKnowledgeTool(
+                    new RetrievalService(root), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(root), null,
+                    "runtime-item-world-not-ready",
+                    (language, itemIds) -> List.of(new RuntimeItemContext(
+                            itemIds.getFirst(), language, "动态物品", "- 世界未就绪",
+                            false, 1234L
+                    )),
+                    ignored -> { }
+            );
+            JsonObject worldNotReady = parse(unavailable.search(
+                    "[[item:fixture:dynamic|动态物品]] 查询当前状态",
+                    "zh_cn", 8, "identify", List.of()
+            ));
+            check(worldNotReady.get("runtime_item_context_count").getAsInt() == 0,
+                    "世界未就绪时必须降级到静态目录");
+
+            SearchKnowledgeTool timeout = new SearchKnowledgeTool(
+                    new RetrievalService(root), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(root), null,
+                    "runtime-item-timeout",
+                    (language, itemIds) -> {
+                        throw new RuntimeException(new TimeoutException("mock timeout"));
+                    },
+                    ignored -> { }
+            );
+            JsonObject timedOut = parse(timeout.search(
+                    "[[item:fixture:dynamic|动态物品]] 查询 Tooltip",
+                    "zh_cn", 8, "identify", List.of()
+            ));
+            check(timedOut.get("runtime_item_context_count").getAsInt() == 0,
+                    "运行时读取超时必须立即降级到静态目录");
+
+            AtomicInteger staticCalls = new AtomicInteger();
+            SearchKnowledgeTool staticOnly = new SearchKnowledgeTool(
+                    new RetrievalService(root), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(root), null,
+                    "runtime-item-static-enough",
+                    (language, itemIds) -> {
+                        staticCalls.incrementAndGet();
+                        return List.of();
+                    },
+                    ignored -> { }
+            );
+            JsonObject staticResult = parse(staticOnly.search(
+                    "[[item:fixture:static|静态物品]] 介绍",
+                    "zh_cn", 8, "identify", List.of()
+            ));
+            check(staticCalls.get() == 0,
+                    "静态目录简介完整时不应触发运行时 Tooltip 读取");
+            check(staticResult.get("item_context_count").getAsInt() == 1
+                            && staticResult.get("runtime_item_context_count").getAsInt() == 0,
+                    "静态 item_context 和运行时上下文必须分开返回");
+
+            try (KnowledgeDatabase.Reader reader = KnowledgeDatabase.openReader(
+                    KnowledgeDatabase.path(root))) {
+                check(reader.lookupItems(List.of("fixture:dynamic"), SearchLanguage.ZH_CN)
+                                .getFirst().descriptionMarkdown().isBlank(),
+                        "运行时 Tooltip 不得写入 knowledge.db 的 item_catalog");
+            }
+
+            RuntimeItemContext context = new RuntimeItemContext(
+                    "fixture:dynamic", "zh_cn", "动态物品", "- mock tooltip", true, 12L);
+            JsonObject response = WorkerProtocol.message(
+                    WorkerProtocol.RUNTIME_CONTEXT_RESPONSE, "runtime-response");
+            response.addProperty("request_kind", WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND);
+            JsonArray values = new JsonArray();
+            values.add(WorkerPayloadCodec.runtimeItemContext(context));
+            response.add("runtime_item_context", values);
+            check(WorkerPayloadCodec.runtimeItemContexts(response).size() == 1,
+                    "运行时 Tooltip 协议字段应可往返编解码");
+            String raw = "{\"runtime_item_context\":[{\"tooltip_markdown\":\"secret tooltip\"}],"
+                    + "\"results\":[]}";
+            check(!PersistentChatMemoryStore.stripRuntimeItemContext(raw).contains("secret tooltip"),
+                    "运行时 Tooltip 不得写入持久化会话内容");
+        } finally {
+            deleteTree(root);
+        }
     }
 
     private static KnowledgeDatabase.DocumentInput input(String id, String title, String body) {

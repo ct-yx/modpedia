@@ -339,6 +339,16 @@ public final class ModPediaPaths {
         return runtimeKnowledgeRoot;
     }
 
+    /** 客户端静态物品目录缓存；只保存可从注册表重建的派生 JSONL。 */
+    public Path itemCatalogCache() {
+        return runtimeKnowledgeRoot.resolve("cache").resolve("item-catalog.jsonl");
+    }
+
+    /** 客户端静态物品目录缓存的注册表指纹和语言标记。 */
+    public Path itemCatalogCacheState() {
+        return runtimeKnowledgeRoot.resolve("cache").resolve("item-catalog-state.json");
+    }
+
     public Path aiSettings() {
         return userRoot.resolve("ai.json");
     }

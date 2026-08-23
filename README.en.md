@@ -215,7 +215,7 @@ macOS/Linux, user-directory resolution prefers `HOME`; on Windows it prefers
 `USERPROFILE`, then follows the platform fallback order through
 `HOMEDRIVE` + `HOMEPATH`, `HOME`, `user.home`, and the config parent. Empty
 `ai.json` files left by an old launcher are removed, old Worker libraries move
-to the fixed `worker-baseline-2` directory, and `runtime/worker/` remains
+to the fixed `worker-baseline-3` directory, and `runtime/worker/` remains
 instance-local.
 
 User-directory resolution does not trust `user.home` alone. On macOS/Linux the
@@ -244,10 +244,19 @@ run FTS5 optimize/merge; small incremental updates run only `PRAGMA optimize`.
 Queries are ordered by `rank` to avoid an additional temporary sort.
 
 The `item_catalog` table is separate from manual FTS and stores the item ID,
-current language, localized name, complete Tooltip Markdown, source mod, and
-SHA-256 fingerprint. It keeps only the current game language and is replaced
-after a language change. Item context is never presented as a manual source,
-but can be supplied to the AI as name and Tooltip facts.
+current language, localized name, static LORE/translation descriptions, source
+mod, and SHA-256 fingerprint. The first startup imports only static data that
+does not execute mod logic; it does not call dynamic Tooltip generation. After
+a successful sync, `runtime/knowledge/cache/` stores the JSONL catalog plus a
+registry/language fingerprint. Later startups reuse that cache and perform only
+an incremental Worker validation when the registry and translations are
+unchanged. A corrupt cache or registry/language change triggers a fresh capture.
+The catalog keeps only the current game language and is rebuilt after a language change.
+When a player-confirmed item has no static description, the Worker may request
+up to three current-world Tooltips on demand through `runtime_item_context`.
+That runtime data is used only in the current AI tool result and is not written
+to `knowledge.db`, sessions, logs, or diagnostics. Item context is never
+presented as a manual source.
 
 Generic Wiki sources live under `sources/<source-id>/` and require at least
 `source.json` and `documents/**/*.md`. `source.json` declares the source

@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import io.ctyx.modpedia.api.ChatMessage;
 import io.ctyx.modpedia.api.ConversationSummary;
 import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ai.AiApiFormat;
@@ -183,6 +184,64 @@ public final class WorkerPayloadCodec {
                 WorkerProtocol.string(value, "source_mod"),
                 WorkerProtocol.string(value, "fingerprint")
         );
+    }
+
+    public static JsonObject runtimeItemContext(RuntimeItemContext context) {
+        JsonObject value = new JsonObject();
+        if (context == null) {
+            return value;
+        }
+        value.addProperty("item_id", context.itemId());
+        value.addProperty("language", context.language());
+        value.addProperty("display_name", context.displayName());
+        value.addProperty("tooltip_markdown", context.tooltipMarkdown());
+        value.addProperty("world_ready", context.worldReady());
+        value.addProperty("captured_at", context.capturedAt());
+        return value;
+    }
+
+    /**
+     * 解码客户端临时 Tooltip。长度限制在 Worker 边界执行，避免错误客户端把
+     * 大段文本带入模型上下文；原始 Tooltip 不进入日志。
+     */
+    public static RuntimeItemContext runtimeItemContext(JsonObject value) {
+        return new RuntimeItemContext(
+                boundedString(value, "item_id", WorkerProtocol.MAX_RUNTIME_ITEM_ID_CHARS),
+                boundedString(value, "language", 32),
+                boundedString(value, "display_name", WorkerProtocol.MAX_RUNTIME_ITEM_ID_CHARS),
+                boundedString(value, "tooltip_markdown", WorkerProtocol.MAX_RUNTIME_ITEM_TEXT_CHARS),
+                WorkerProtocol.bool(value, "world_ready", false),
+                WorkerProtocol.longValue(value, "captured_at", 0L)
+        );
+    }
+
+    /** 只读取协议约定的最多三个临时 Tooltip，重复 ID 只保留第一项。 */
+    public static List<RuntimeItemContext> runtimeItemContexts(JsonObject value) {
+        List<RuntimeItemContext> result = new ArrayList<>();
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (JsonElement element : array(value, "runtime_item_context")) {
+            if (result.size() >= WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS
+                    || element == null || !element.isJsonObject()) {
+                break;
+            }
+            try {
+                RuntimeItemContext context = runtimeItemContext(element.getAsJsonObject());
+                if (seen.add(context.itemId())) {
+                    result.add(context);
+                }
+            } catch (RuntimeException ignored) {
+                // 单个损坏的运行时 Tooltip 不应阻断静态 item_catalog 回退。
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static String boundedString(JsonObject value, String name, int limit) {
+        String text = WorkerProtocol.string(value, name);
+        if (text.length() <= limit) {
+            return text;
+        }
+        return text.substring(0, Math.max(0, limit));
     }
 
     /** AI 设置通过本地 IPC 传输；API Key 只存在于请求/设置数据，不写入日志。 */

@@ -34,6 +34,10 @@ public final class WorkerCompatibility {
             "conversations",
             "ai_settings"
     );
+    /** 可选能力不参与旧客户端的握手拒绝；缺失时 Worker 自动回退静态目录。 */
+    public static final List<String> OPTIONAL_CAPABILITIES = List.of(
+            WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+    );
 
     private WorkerCompatibility() {
     }
@@ -47,12 +51,35 @@ public final class WorkerCompatibility {
         hello.add("client_capabilities", array(CAPABILITIES));
     }
 
+    /** 由已实现客户端适配器显式声明可选能力，避免旧适配层虚报能力。 */
+    public static void addClientOptionalCapability(JsonObject hello, String capability) {
+        if (hello == null || capability == null || capability.isBlank()) {
+            return;
+        }
+        JsonArray values = hello.has("client_optional_capabilities")
+                && hello.get("client_optional_capabilities").isJsonArray()
+                ? hello.getAsJsonArray("client_optional_capabilities")
+                : new JsonArray();
+        boolean exists = false;
+        for (JsonElement value : values) {
+            if (value.isJsonPrimitive() && capability.equals(value.getAsString())) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            values.add(capability);
+        }
+        hello.add("client_optional_capabilities", values);
+    }
+
     /** 在 Worker hello_ack 中写入实际运行的基线、Java 和能力集合。 */
     public static void addWorkerAck(JsonObject ack) {
         ack.addProperty("worker_api_level", API_LEVEL);
         ack.addProperty("worker_baseline", WORKER_LIBRARY_BASELINE);
         ack.addProperty("worker_java", javaVersion());
         ack.add("worker_capabilities", array(CAPABILITIES));
+        ack.add("worker_optional_capabilities", array(OPTIONAL_CAPABILITIES));
     }
 
     /** 检查客户端声明的 Worker API 和运行库基线是否与当前 Worker 一致。 */
@@ -69,6 +96,17 @@ public final class WorkerCompatibility {
                 && WORKER_LIBRARY_BASELINE.equals(WorkerProtocol.string(ack, "worker_baseline"))
                 && !WorkerProtocol.string(ack, "worker_java").isBlank()
                 && hasCapabilities(ack, "worker_capabilities");
+    }
+
+    /** 读取新版本的可选能力；旧客户端没有该字段时返回 false。 */
+    public static boolean supportsOptionalCapability(JsonObject message, String capability) {
+        if (message == null || capability == null || capability.isBlank()) {
+            return false;
+        }
+        return containsCapability(message.get("client_optional_capabilities"), capability)
+                || containsCapability(message.get("worker_optional_capabilities"), capability)
+                || containsCapability(message.get("client_capabilities"), capability)
+                || containsCapability(message.get("worker_capabilities"), capability);
     }
 
     /** 只返回不含 Token、密钥或请求正文的握手诊断信息。 */
@@ -97,6 +135,18 @@ public final class WorkerCompatibility {
             }
         }
         return true;
+    }
+
+    private static boolean containsCapability(JsonElement value, String capability) {
+        if (value == null || !value.isJsonArray()) {
+            return false;
+        }
+        for (JsonElement item : value.getAsJsonArray()) {
+            if (item.isJsonPrimitive() && capability.equals(item.getAsString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static JsonArray array(List<String> values) {

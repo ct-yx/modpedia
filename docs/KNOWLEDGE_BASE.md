@@ -71,13 +71,17 @@ item_catalog(
 )
 ```
 
-客户端注册表完成后，当前语言的 Tooltip 第一行作为名称，后续行转换为完整 Markdown 无序列表。
-物品目录按 `(item_id, language)` 增量同步，当前策略只保留当前游戏语言；它供 AI 和仅搜索模式
-直接读取，内容不进入 `documents`、`segments` 或 `segments_fts`。游戏 JVM 不把数万条记录直接
+客户端注册表完成后，首次启动阶段只读取当前语言的静态名称、`ItemLore` 和已知静态翻译描述，不调用
+动态 Tooltip。成功同步后，`runtime/knowledge/cache/item-catalog.jsonl` 与
+`item-catalog-state.json` 保存目录和注册表/语言指纹；后续启动只做轻量注册表指纹检查，命中时从
+缓存恢复名称索引并把完整目录交给 Worker 做增量校验，不再重复执行全量静态捕获。缓存损坏、
+注册表或语言资源变化时才重新捕获。物品目录按 `(item_id, language)` 增量同步，当前策略只保留当前游戏语言；它供 AI 和
+仅搜索模式直接读取，内容不进入 `documents`、`segments` 或 `segments_fts`。游戏 JVM 不把数万条记录直接
 拼成一条 IPC JSON 消息，而是在独立 I/O 线程写入 `config/modpedia/runtime/worker/payloads/` 下的原子
 JSONL 载荷，IPC 只传递载荷路径；Worker 读取完成载荷后使用一条预编译 UPSERT、一个事务和批量
 绑定完成写入。这样 Tooltip JSON 序列化、文件读取、SQLite 写入都不占用游戏 Tick，也不会因为
-逐条提交产生卡顿。相同指纹的再次启动只做顺序指纹比较，不复制或替换整个 `knowledge.db`；
+逐条提交产生卡顿。相同注册表/语言指纹的再次启动只读取目录缓存并做增量校验，不复制或替换整个
+`knowledge.db`；
 20,000 条夹具的 Worker 文件载荷同步、首次写入和相同指纹复用均保持在毫秒级，实际整合包仍以
 客户端加载日志和 `worker.log` 中的 `payload_read_ms` / `database_write_ms` 为准。
 
@@ -177,14 +181,16 @@ source_version: 1.0.0
   ↓
 RetrievalService.reload()
   ↓
-客户端注册表物品 Tooltip 导入 item_catalog
+客户端注册表静态物品目录导入 item_catalog
   ↓
 预填充完成，进入主菜单
 ```
 
-首次预填充在加载屏幕阶段同步完成，避免进入世界后继续占用客户端帧时间；其中游戏线程只做
-Minecraft 注册表允许的 Tooltip 捕获，批量载荷序列化和数据库写入分别由 I/O 线程与 Worker
-完成。F9 重建和语言切换刷新仍可使用后台任务，并向界面报告进度。
+首次预填充在加载屏幕阶段同步完成，避免进入世界后继续占用客户端帧时间；其中游戏线程只读取
+注册表允许的静态名称和静态描述，批量载荷序列化和数据库写入分别由 I/O 线程与 Worker 完成。
+动态 Tooltip 只在玩家确认物品、且静态简介缺失时由 Worker 通过 `runtime_item_context` 请求，
+一次最多 3 个，结果只保留在当前 AI 工具调用内存中。F9 重建和语言切换刷新仍可使用后台任务，
+并向界面报告进度。
 
 ## 6. 更新方式
 

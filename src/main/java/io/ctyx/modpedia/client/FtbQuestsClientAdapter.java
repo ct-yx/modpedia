@@ -17,6 +17,7 @@ import net.neoforged.fml.ModList;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
@@ -54,7 +55,8 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
     // 不按 TeamData Map 的迭代顺序截断状态；查询级 quest_id 过滤在读取时执行。
     private static final long CLIENT_THREAD_TIMEOUT_SECONDS = 5L;
     private static final long RUNTIME_SNAPSHOT_CACHE_MILLIS = 750L;
-    private static final long COMPLETED_SNAPSHOT_RETRY_MILLIS = 1000L;
+    private static final long COMPLETED_SNAPSHOT_RETRY_INITIAL_MILLIS = 1000L;
+    private static final long COMPLETED_SNAPSHOT_RETRY_MAX_MILLIS = 5000L;
     private final Object completionListenerLock = new Object();
     private boolean warnedUnavailable;
     private boolean warnedCompletionListener;
@@ -65,8 +67,11 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
     private volatile Object observedWorldPlayer;
     private volatile String observedWorldSaveKey = "";
     private volatile long nextCompletedSnapshotAttemptNanos;
+    private volatile int completedSnapshotRetryAttempt;
     private volatile CompletedQuestSnapshot completedQuestSnapshot;
     private volatile boolean completedSnapshotInitialised;
+    private volatile boolean loggedQuestFileNotReady;
+    private volatile boolean loggedCompletedSnapshotFailure;
     /** 只用于比较两次按需读取的 TeamData；不会落盘。 */
     private final TaskTimelineTracker progressTimelineTracker = new TaskTimelineTracker();
     private volatile Object completedEvent;
@@ -195,6 +200,9 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
             completedQuestSnapshot = null;
             completedSnapshotInitialised = false;
             nextCompletedSnapshotAttemptNanos = 0L;
+            completedSnapshotRetryAttempt = 0;
+            loggedQuestFileNotReady = false;
+            loggedCompletedSnapshotFailure = false;
             clearRuntimeQueryCache();
         }
         if (!completedSnapshotInitialised && System.nanoTime() >= nextCompletedSnapshotAttemptNanos) {
@@ -243,7 +251,9 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
         try {
             TaskRuntimeSnapshot snapshot = readOnClientThread(minecraft, actual);
             if (snapshot == null) {
-                result = new TaskRuntimeReadResult(true, true, 0, "没有读取到当前玩家的任务进度", snapshot);
+                result = TaskRuntimeReadResult.unavailable(
+                        "FTB Quests 当前进度尚未同步，稍后再试"
+                );
             } else {
                 result = TaskRuntimeReadResult.read(snapshot);
                 ModPedia.LOGGER.info(
@@ -274,6 +284,10 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
         clearRuntimeQueryCache();
         completedQuestSnapshot = null;
         completedSnapshotInitialised = false;
+        nextCompletedSnapshotAttemptNanos = 0L;
+        completedSnapshotRetryAttempt = 0;
+        loggedQuestFileNotReady = false;
+        loggedCompletedSnapshotFailure = false;
         progressTimelineTracker.clear();
     }
 
@@ -308,8 +322,10 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
     }
 
     private void captureCompletedSnapshot(Minecraft minecraft) {
+        long retryDelay = completedSnapshotRetryDelayMillis();
         nextCompletedSnapshotAttemptNanos = System.nanoTime()
-                + TimeUnit.MILLISECONDS.toNanos(COMPLETED_SNAPSHOT_RETRY_MILLIS);
+                + TimeUnit.MILLISECONDS.toNanos(retryDelay);
+        completedSnapshotRetryAttempt = Math.min(completedSnapshotRetryAttempt + 1, 8);
         if (!minecraft.isSameThread()) {
             minecraft.execute(() -> captureCompletedSnapshot(minecraft));
             return;
@@ -332,14 +348,44 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
             }
             completedQuestSnapshot = captured;
             completedSnapshotInitialised = true;
+            completedSnapshotRetryAttempt = 0;
+            loggedQuestFileNotReady = false;
+            loggedCompletedSnapshotFailure = false;
             ModPedia.LOGGER.info(
                     "进入世界已加载 FTB Quests 完成快照：completed={}, scope={}",
                     completedQuestSnapshot.completedQuestIds().size(),
                     completedQuestSnapshot.scopeKey()
             );
         } catch (Throwable failure) {
-            ModPedia.LOGGER.debug("进入世界加载 FTB Quests 完成快照失败，稍后重试", failure);
+            if (isQuestFileNotReady(failure)) {
+                // FTBQ 的 getQuestFile() 在其客户端同步完成前会抛出包装后的
+                // NullPointerException，而不是返回 null。这个状态是正常的
+                // 启动竞态，不应每秒把完整反射堆栈刷进 debug.log。
+                if (!loggedQuestFileNotReady) {
+                    loggedQuestFileNotReady = true;
+                    ModPedia.LOGGER.debug(
+                            "FTB Quests 任务文件尚未就绪，{} ms 后重试",
+                            retryDelay
+                    );
+                }
+            } else if (!loggedCompletedSnapshotFailure) {
+                loggedCompletedSnapshotFailure = true;
+                ModPedia.LOGGER.debug(
+                        "进入世界加载 FTB Quests 完成快照失败，{} ms 后重试：{}",
+                        retryDelay,
+                        messageOf(failure)
+                );
+            }
         }
+    }
+
+    private long completedSnapshotRetryDelayMillis() {
+        int attempt = Math.max(0, completedSnapshotRetryAttempt);
+        long delay = COMPLETED_SNAPSHOT_RETRY_INITIAL_MILLIS;
+        for (int index = 0; index < attempt; index++) {
+            delay = Math.min(COMPLETED_SNAPSHOT_RETRY_MAX_MILLIS, delay * 2L);
+        }
+        return delay;
     }
 
     private void onQuestCompletedEvent(Object event) {
@@ -516,7 +562,7 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
     private TaskRuntimeSnapshot readCompletedSnapshotOnClientThread(Minecraft minecraft) throws Exception {
         Class<?> apiClass = Class.forName("dev.ftb.mods.ftbquests.api.FTBQuestsAPI");
         Object api = invokeStatic(apiClass, "api");
-        Object questFile = invoke(api, "getQuestFile", true);
+        Object questFile = invokeQuestFile(api);
         if (questFile == null) {
             return null;
         }
@@ -542,12 +588,18 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
     private TaskRuntimeSnapshot readSnapshotForQuery(Minecraft minecraft, TaskQuery query) throws Exception {
         Class<?> apiClass = Class.forName("dev.ftb.mods.ftbquests.api.FTBQuestsAPI");
         Object api = invokeStatic(apiClass, "api");
-        Object questFile = invoke(api, "getQuestFile", true);
+        Object questFile = invokeQuestFile(api);
         if (questFile == null) {
             return null;
         }
 
         Object teamData = findTeamData(questFile, minecraft.player.getUUID(), minecraft.player);
+        if (teamData == null) {
+            // QuestFile 已经存在但 TeamData 仍在服务器/客户端同步中时，空值不等于
+            // “玩家没有任务”。返回 null 让调用方保留未就绪状态，下一次任务查询再
+            // 读取，而不是把空快照缓存成有效进度。
+            return null;
+        }
         String sourceKey = "ftbquests:" + worldSaveKey(minecraft);
         String scopeKey = runtimeScope(minecraft);
         CompletedQuestSnapshot completed = completedQuestSnapshot;
@@ -829,6 +881,46 @@ public final class FtbQuestsClientAdapter implements TaskRuntimeReader {
         }
         method.setAccessible(true);
         return method.invoke(null, arguments);
+    }
+
+    /**
+     * FTBQ 在客户端任务文件尚未完成同步时会从 getQuestFile() 抛出包装后的
+     * NullPointerException。将这个短暂状态统一转换为 null，调用方即可按退避
+     * 计划重试；真正的反射/API 错误仍然向上传递。
+     */
+    private Object invokeQuestFile(Object api) throws Exception {
+        try {
+            return invoke(api, "getQuestFile", true);
+        } catch (InvocationTargetException failure) {
+            if (isQuestFileNotReady(failure)) {
+                return null;
+            }
+            throw failure;
+        }
+    }
+
+    static boolean isQuestFileNotReady(Throwable failure) {
+        Throwable current = failure;
+        int depth = 0;
+        while (current != null && depth++ < 8) {
+            if (current instanceof NullPointerException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(java.util.Locale.ROOT);
+                if (normalized.contains("quest file")
+                        && (normalized.contains("not")
+                        || normalized.contains("null")
+                        || normalized.contains("load"))) {
+                    return true;
+                }
+            }
+            current = current instanceof InvocationTargetException invocation
+                    ? invocation.getTargetException()
+                    : current.getCause();
+        }
+        return false;
     }
 
     private Object invoke(Object target, String name, Object... arguments) throws Exception {

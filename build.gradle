@@ -306,6 +306,19 @@ def itemCatalogSchedulingSelfTest = tasks.register('itemCatalogSchedulingSelfTes
     mainClass = 'io.ctyx.modpedia.client.ItemCatalogSchedulingSelfTest'
 }
 
+def itemCatalogStaticSafetySelfTest = tasks.register('itemCatalogStaticSafetySelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.ItemCatalogStaticSafetySelfTest'
+    workingDir project.projectDir
+}
+
+def ftbQuestReadinessSelfTest = tasks.register('ftbQuestReadinessSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.FtbQuestReadinessSelfTest'
+}
+
 def modPediaBridgeSelfTest = tasks.register('modPediaBridgeSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -316,6 +329,18 @@ def runtimeContextCoordinatorSelfTest = tasks.register('runtimeContextCoordinato
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.client.RuntimeContextCoordinatorSelfTest'
+}
+
+def runtimeItemContextReaderSelfTest = tasks.register('runtimeItemContextReaderSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.RuntimeItemContextReaderSelfTest'
+}
+
+def runtimeItemContextSelfTest = tasks.register('runtimeItemContextSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.client.RuntimeItemContextSelfTest'
 }
 
 def knowledgeStatusSelfTest = tasks.register('knowledgeStatusSelfTest', JavaExec) {
@@ -465,6 +490,7 @@ def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     systemProperty 'modpedia.langchain4j.version', langchain4j_version
     systemProperty 'modpedia.jtokkit.version', jtokkit_version
     systemProperty 'modpedia.gson.version', gson_version
+    systemProperty 'modpedia.slf4j.version', slf4j_version
 }
 
 def modPediaPathsSelfTest = tasks.register('modPediaPathsSelfTest', JavaExec) {
@@ -662,8 +688,12 @@ tasks.named('test', Test) {
     dependsOn jeiRecipeNavigatorSelfTest
     dependsOn jadeTargetStoreSelfTest
     dependsOn itemCatalogSchedulingSelfTest
+    dependsOn itemCatalogStaticSafetySelfTest
+    dependsOn ftbQuestReadinessSelfTest
     dependsOn modPediaBridgeSelfTest
     dependsOn runtimeContextCoordinatorSelfTest
+    dependsOn runtimeItemContextReaderSelfTest
+    dependsOn runtimeItemContextSelfTest
     dependsOn knowledgeStatusSelfTest
     dependsOn aiResponseSanitizerSelfTest
     dependsOn assistantSecondaryLayoutSelfTest

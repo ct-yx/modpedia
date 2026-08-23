@@ -79,9 +79,9 @@ IPC 状态和临时 payload 仍留在当前实例。
 
 ### `search`
 
-`KnowledgeDatabase` 将自动手册、Wiki、`custom/` 文档和物品目录写入同一个 SQLite：文档表保存元数据、指纹和完整 Markdown，段落表保存完整段落与标题路径，FTS5 表保存检索字段，`item_catalog` 保存当前语言的注册物品 Tooltip。FTBQ 静态任务定义也在同一个文件中，但只使用 `task_*` 表；玩家实时进度不落库。`RetrievalService` 优先使用 SQLite，并保留旧版 `manifest.json`/`keyword-index.json`/Markdown 回退路径。查询先由 FTS 和元数据筛选候选，再按完整段落计算规则分数并返回每篇文档的最高分段落；确认物品时先读取 `item_catalog`，再继续手册搜索。
+`KnowledgeDatabase` 将自动手册、Wiki、`custom/` 文档和物品目录写入同一个 SQLite：文档表保存元数据、指纹和完整 Markdown，段落表保存完整段落与标题路径，FTS5 表保存检索字段，`item_catalog` 保存当前语言的静态物品名称与静态简介。FTBQ 静态任务定义也在同一个文件中，但只使用 `task_*` 表；玩家实时进度不落库。`RetrievalService` 优先使用 SQLite，并保留旧版 `manifest.json`/`keyword-index.json`/Markdown 回退路径。查询先由 FTS 和元数据筛选候选，再按完整段落计算规则分数并返回每篇文档的最高分段落；确认物品时先读取 `item_catalog`，再继续手册搜索。静态简介缺失时，Worker 可按需请求当前世界 Tooltip，该数据只存在于当前工具结果内存中。
 
-物品目录是启动阶段的高频批量路径：游戏 JVM 只负责读取注册表和 Tooltip，数万条记录先在独立 I/O 线程写成同机原子 JSONL 载荷，IPC 只传载荷路径，不在游戏线程构造超大的 JSON 数组；Worker 读取完整载荷后使用单条预编译 UPSERT 和单事务写入 `knowledge.db`。因此数据库写入、JSON 解析和提交都不占用游戏 Tick，也不会因为每条物品单独提交而产生卡顿。载荷处理完成后自动删除，异常时旧目录由 SQLite 回滚保留。
+物品目录是启动阶段的高频批量路径：游戏 JVM 只负责读取注册表中的静态名称和静态简介，数万条记录先在独立 I/O 线程写成同机原子 JSONL 载荷，IPC 只传载荷路径，不在游戏线程构造超大的 JSON 数组；Worker 读取完整载荷后使用单条预编译 UPSERT 和单事务写入 `knowledge.db`。因此数据库写入、JSON 解析和提交都不占用游戏 Tick，也不会因为每条物品单独提交而产生卡顿。动态 Tooltip 是玩家确认物品后的单物品/少量物品请求，不参与启动扫描；载荷处理完成后自动删除，异常时旧目录由 SQLite 回滚保留。
 
 公开接口保持纯 Java：
 
@@ -261,7 +261,7 @@ safeArea = viewport - 12px;
 
 ## 3. 首次启动策略
 
-首次启动在客户端加载屏幕期间读取当前实例中已安装模组的本地资源，扫描 `custom/` 和 `sources/` 导入 SQLite，保证手册正文与玩家实际使用的模组版本一致。随后在同一加载阶段，`ItemCatalogSyncService` 读取当前语言的全部物品 Tooltip 并写入 `item_catalog`；这一步不再等到进入世界后通过 Tick 继续扫描。只有任务 Wiki 的远程更新会在进入主菜单后后台尝试，网络失败继续使用内置或上次缓存，不阻塞基础知识库。
+首次启动在客户端加载屏幕期间读取当前实例中已安装模组的本地资源，扫描 `custom/` 和 `sources/` 导入 SQLite，保证手册正文与玩家实际使用的模组版本一致。随后在同一加载阶段，`ItemCatalogSyncService` 读取当前语言的静态物品名称和静态简介并写入 `item_catalog`；这一步不再等到进入世界后通过 Tick 继续扫描，也不触发动态 Tooltip。只有在玩家确认物品且静态简介缺失时，Worker 才通过 `runtime_item_context` 请求当前世界 Tooltip。任务 Wiki 的远程更新会在进入主菜单后后台尝试，网络失败继续使用内置或上次缓存，不阻塞基础知识库。
 
 ## 4. 更新策略
 
@@ -379,7 +379,7 @@ task_snapshots / task_quests / task_dependencies / task_tasks / task_rewards
 metadata(schema_version, updated_at, document_count)
 ```
 
-当前派生库为 Schema v7，早期测试阶段不做旧库迁移；检测到版本、FTS 形态或 `item_catalog` 缺失时，把新结构写入 staged 数据库，校验成功后再替换正式库，失败时恢复旧库。`documents.markdown` 和 `segments.markdown` 仍然保存完整 Markdown，FTS5 使用 `content='segments'` 的 external-content 形态，不再创建 `segments_fts_content` 正文副本；`segments.normalized_text` 同时供 Java 二次评分和 FTS 中文双字词召回使用。`item_catalog` 保存完整 Tooltip Markdown，但不参与手册 FTS。物品目录同步不复制整个 `knowledge.db`，而是在 Worker 内使用单事务、预编译 UPSERT 和批量绑定，SQLite 回滚保证失败时保留旧目录。`task_*` 只保存静态任务定义，实时玩家进度只存在于 `TaskRuntimeSnapshot` 内存对象。`knowledge.db` 不替代 `custom/*.md` 或 JAR 资源；它可以随时从事实源重建。`Reader` 复用只读连接，FTS 候选先批量加载文档元数据，避免大规模语料下的连接初始化和 N+1 查询。
+当前派生库为 Schema v7，早期测试阶段不做旧库迁移；检测到版本、FTS 形态或 `item_catalog` 缺失时，把新结构写入 staged 数据库，校验成功后再替换正式库，失败时恢复旧库。`documents.markdown` 和 `segments.markdown` 仍然保存完整 Markdown，FTS5 使用 `content='segments'` 的 external-content 形态，不再创建 `segments_fts_content` 正文副本；`segments.normalized_text` 同时供 Java 二次评分和 FTS 中文双字词召回使用。`item_catalog` 保存静态名称和静态简介，但不参与手册 FTS；运行时 Tooltip 不写入该表。物品目录同步不复制整个 `knowledge.db`，而是在 Worker 内使用单事务、预编译 UPSERT 和批量绑定，SQLite 回滚保证失败时保留旧目录。`task_*` 只保存静态任务定义，实时玩家进度只存在于 `TaskRuntimeSnapshot` 内存对象。`knowledge.db` 不替代 `custom/*.md` 或 JAR 资源；它可以随时从事实源重建。`Reader` 复用只读连接，FTS 候选先批量加载文档元数据，避免大规模语料下的连接初始化和 N+1 查询。
 
 写入完成后执行 `PRAGMA optimize`；全量构建或达到自适应大批量阈值时额外执行 FTS5 `optimize`/merge，小规模增量更新不重复合并整个 FTS B-tree。查询按 FTS5 隐藏 `rank` 列排序，避免 `bm25(...)` 触发额外的排序临时表。性能基准由 `knowledgeBenchmark` 记录冷/热查询 p50/p95/p99、`dbstat` 对象大小和 `EXPLAIN QUERY PLAN`，不把操作系统页缓存清空称为冷查询。
 

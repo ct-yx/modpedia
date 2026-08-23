@@ -172,9 +172,13 @@ FTS5 使用 `content='segments'` 的 external-content 结构：完整 Markdown �
 导入后执行 FTS5 optimize/merge，小规模增量更新只执行 `PRAGMA optimize`；查询按 `rank` 排序，
 避免额外的排序临时表。
 
-`item_catalog` 与手册 FTS 分表保存：`item_id`、当前语言、显示名称、完整 Tooltip Markdown、
-来源模组和 SHA-256 指纹。物品目录只保留当前游戏语言；切换语言后重新扫描并替换对应目录。
-物品上下文不会伪装成手册来源，但可以直接作为 AI 的名称和 Tooltip 事实。
+`item_catalog` 与手册 FTS 分表保存：`item_id`、当前语言、显示名称、静态 LORE/翻译描述、
+来源模组和 SHA-256 指纹。首次启动前只读取不会执行模组逻辑的静态信息，不调用动态 Tooltip；成功
+同步后会把注册表指纹、语言和目录 JSONL 缓存到 `runtime/knowledge/cache/`，后续启动在注册表和
+翻译表未变化时复用缓存，不再重复执行数万条静态捕获，只向 Worker 做增量校验同步。缓存损坏或
+注册表/语言变化时才重新捕获。物品目录只保留当前游戏语言，切换语言后重新扫描并替换对应目录。玩家确认物品且静态简介缺失时，Worker 可通过
+`runtime_item_context` 按需请求最多 3 个物品的当前世界 Tooltip。该运行时信息只进入当前 AI 工具结果，
+不写入 `knowledge.db`、会话、日志或诊断文件；物品上下文不会伪装成手册来源。
 
 通用 Wiki 来源放在 `sources/<source-id>/`，最少包含 `source.json` 和
 `documents/**/*.md`。`source.json` 用来声明来源集合、语言、版本和优先级，未来可以增加

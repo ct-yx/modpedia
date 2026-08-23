@@ -1,13 +1,18 @@
 package io.ctyx.modpedia.client;
 
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.language.ClientLanguage;
 import net.minecraft.locale.Language;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +32,8 @@ public final class ItemNameResolver {
     private static volatile Map<String, String> DISPLAY_NAME_SNAPSHOT = Map.of();
     private static volatile ItemNameMatcher DISPLAY_NAME_MATCHER = ItemNameMatcher.empty();
     private static volatile long INDEX_GENERATION;
+    private static volatile Object ENGLISH_RESOURCE_MANAGER;
+    private static volatile Map<String, String> ENGLISH_LANGUAGE_DATA = Map.of();
     private static boolean BUILDING_INDEX;
 
     private ItemNameResolver() {
@@ -34,7 +41,21 @@ public final class ItemNameResolver {
 
     public static String displayName(String id) {
         String normalized = id == null ? "" : id.strip();
-        return registeredName(normalized).orElse(normalized);
+        Optional<String> registered = registeredName(normalized);
+        if (registered.isPresent()) {
+            return registered.get();
+        }
+        // 已注册但缺少当前语言和 en_us 翻译的物品，始终使用可读回退名。
+        // 未注册的外部 ID 仍保留原文，便于诊断未知数据。
+        try {
+            if (!normalized.isBlank()
+                    && BuiltInRegistries.ITEM.getOptional(ResourceLocation.parse(normalized)).isPresent()) {
+                return readableFallbackName(normalized);
+            }
+        } catch (RuntimeException ignored) {
+            // 非法或未知 ID 保留原文。
+        }
+        return normalized;
     }
 
     /** 返回当前客户端注册表中的本地化名称；未注册的 ID 返回空值。 */
@@ -85,6 +106,24 @@ public final class ItemNameResolver {
             INDEX_GENERATION++;
             BUILDING_INDEX = false;
         }
+    }
+
+    /** 从持久化目录缓存恢复名称索引，不访问注册表和动态 Tooltip。 */
+    static void replaceLanguageIndex(Collection<io.ctyx.modpedia.search.ItemCatalogEntry> entries) {
+        synchronized (INDEX_LOCK) {
+            DISPLAY_NAMES.clear();
+            UNIQUE_IDS_BY_DISPLAY_NAME.clear();
+            AMBIGUOUS_DISPLAY_NAMES.clear();
+            BUILDING_INDEX = true;
+        }
+        if (entries != null) {
+            for (io.ctyx.modpedia.search.ItemCatalogEntry entry : entries) {
+                if (entry != null) {
+                    remember(entry.itemId(), entry.displayName());
+                }
+            }
+        }
+        finishLanguageIndex();
     }
 
     /** 丢弃未完成的构建缓冲区，但保留上一份可用名称快照。 */
@@ -187,6 +226,152 @@ public final class ItemNameResolver {
             name = cleanCandidate(languageName, normalizedId, descriptionId);
         }
         return name.isBlank() ? Optional.empty() : Optional.of(name);
+    }
+
+    /**
+     * 启动前静态目录使用的名称解析。这个入口只读取物品的固定描述键和当前
+     * Language，不创建 ItemStack，也不调用任何 Tooltip/物品回调。
+     */
+    static Optional<String> staticLocalizedName(Item item, String itemId) {
+        String normalizedId = normalizeId(itemId);
+        if (item == null || normalizedId.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            String descriptionId = item.getDescriptionId();
+            if (descriptionId == null || descriptionId.isBlank()) {
+                return Optional.empty();
+            }
+            return staticLocalizedName(
+                    descriptionId,
+                    normalizedId,
+                    Map.copyOf(Language.getInstance().getLanguageData()),
+                    englishLanguageDataSnapshot()
+            );
+        } catch (Throwable ignored) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 使用已经快照化的语言表解析名称。这个重载不触碰 Minecraft/Language 单例，
+     * 供启动前目录在专用后台线程批量处理数万条注册表记录。
+     */
+    static Optional<String> staticLocalizedName(
+            String descriptionId,
+            String itemId,
+            Map<String, String> languageData,
+            Map<String, String> englishLanguageData
+    ) {
+        String normalizedId = normalizeId(itemId);
+        if (descriptionId == null || descriptionId.isBlank() || normalizedId.isBlank()) {
+            return Optional.empty();
+        }
+        String name = cleanCandidate(
+                languageData == null ? "" : languageData.getOrDefault(descriptionId, ""),
+                normalizedId,
+                descriptionId
+        );
+        if (name.isBlank()) {
+            name = cleanCandidate(
+                    englishLanguageData == null
+                            ? ""
+                            : englishLanguageData.getOrDefault(descriptionId, ""),
+                    normalizedId,
+                    descriptionId
+            );
+        }
+        return name.isBlank() ? Optional.empty() : Optional.of(name);
+    }
+
+    /** 目录缓存和渲染入口共用的名称质量检查。 */
+    static boolean isDisplayNameUsable(String displayName, String itemId) {
+        String candidate = displayName == null ? "" : displayName.strip();
+        String normalizedId = normalizeId(itemId);
+        return !candidate.isBlank()
+                && !candidate.equalsIgnoreCase(normalizedId)
+                && !isTranslationKey(candidate);
+    }
+
+    /** 返回当前已加载语言表的不可变快照；调用方应在客户端加载阶段调用。 */
+    static Map<String, String> languageDataSnapshot() {
+        try {
+            return Map.copyOf(Language.getInstance().getLanguageData());
+        } catch (Throwable ignored) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * 在客户端线程加载一次 en_us 资源，并返回不可变语言表。
+     * 后台目录线程只使用返回值，不再访问 Minecraft 资源管理器。
+     */
+    static Map<String, String> englishLanguageDataSnapshot() {
+        try {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft == null || minecraft.getResourceManager() == null) {
+                return Map.of();
+            }
+            Object resourceManager = minecraft.getResourceManager();
+            Map<String, String> data = ENGLISH_LANGUAGE_DATA;
+            if (data.isEmpty() || resourceManager != ENGLISH_RESOURCE_MANAGER) {
+                ClientLanguage language = ClientLanguage.loadFrom(
+                        minecraft.getResourceManager(),
+                        List.of("en_us"),
+                        false
+                );
+                data = Map.copyOf(language.getLanguageData());
+                ENGLISH_RESOURCE_MANAGER = resourceManager;
+                ENGLISH_LANGUAGE_DATA = data;
+            }
+            return data;
+        } catch (Throwable ignored) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * 从当前资源包中读取 en_us 语言表作为安全静态回退。这里只解析翻译资源，
+     * 不创建 ItemStack、不触发 Tooltip 事件，也不会改变客户端当前语言。
+     */
+    private static String englishLocalizedName(String descriptionId) {
+        if (descriptionId == null || descriptionId.isBlank()) {
+            return "";
+        }
+        return englishLanguageDataSnapshot().getOrDefault(descriptionId, "");
+    }
+
+    /**
+     * 真正没有任何翻译资源时使用可读的本地名称，而不是把 namespace:path 原样
+     * 展示给玩家。稳定 ID 仍单独保存在 item_id，Cmd/Ctrl 模式可以继续显示它。
+     */
+    static String readableFallbackName(String itemId) {
+        String normalized = normalizeId(itemId);
+        if (normalized.isBlank()) {
+            return "未知物品";
+        }
+        int separator = normalized.indexOf(':');
+        String namespace = separator > 0 ? normalized.substring(0, separator) : "";
+        String path = separator > 0 ? normalized.substring(separator + 1) : normalized;
+        String readablePath = humanize(path);
+        if (namespace.isBlank() || "minecraft".equals(namespace)) {
+            return readablePath;
+        }
+        return humanize(namespace) + " · " + readablePath;
+    }
+
+    private static String humanize(String value) {
+        StringBuilder result = new StringBuilder();
+        for (String word : value.split("[_./-]+")) {
+            if (word.isBlank()) {
+                continue;
+            }
+            if (result.length() > 0) {
+                result.append(' ');
+            }
+            result.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return result.isEmpty() ? "未知物品" : result.toString();
     }
 
     private static Optional<String> localizedName(Item item, String itemId) {

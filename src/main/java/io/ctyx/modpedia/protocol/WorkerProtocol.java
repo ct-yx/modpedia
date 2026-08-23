@@ -30,6 +30,13 @@ public final class WorkerProtocol {
     public static final String CHAT_CANCEL = "chat.cancel";
     public static final String RUNTIME_CONTEXT_REQUEST = "runtime_context_request";
     public static final String RUNTIME_CONTEXT_RESPONSE = "runtime_context_response";
+    /** runtime_context_request 的可选物品 Tooltip 请求类型。 */
+    public static final String RUNTIME_ITEM_CONTEXT_KIND = "item_tooltip";
+    public static final String RUNTIME_ITEM_CONTEXT_CAPABILITY = "runtime_item_context";
+    public static final int MAX_RUNTIME_ITEM_CONTEXT_ITEMS = 3;
+    public static final int MAX_RUNTIME_ITEM_CONTEXT_BYTES = 64 * 1024;
+    public static final int MAX_RUNTIME_ITEM_ID_CHARS = 256;
+    public static final int MAX_RUNTIME_ITEM_TEXT_CHARS = 12_000;
     public static final String RECIPE_QUERY_REQUEST = "recipe_query_request";
     public static final String RECIPE_QUERY_RESPONSE = "recipe_query_response";
     public static final String KNOWLEDGE_REBUILD = "knowledge.rebuild";
