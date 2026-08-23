@@ -34,12 +34,21 @@ final class WorkerRuntimeDiagnostics {
         Class<?> gsonRuntimeClass = loadWithoutInitialization(
                 "com.google.gson.Gson", loader
         );
+        Class<?> slf4jClass = loadWithoutInitialization(
+                "org.slf4j.LoggerFactory", loader
+        );
         String estimatorSource = codeSource(estimatorClass);
         String jtokkitSource = codeSource(jtokkitClass);
         String gsonSource = codeSource(gsonClass);
         String estimatorVersion = artifactVersion(estimatorSource, "langchain4j-open-ai");
         String jtokkitVersion = artifactVersion(jtokkitSource, "jtokkit");
         String gsonVersion = artifactVersion(gsonSource, "gson");
+        String slf4jSource = codeSource(slf4jClass);
+        String slf4jVersion = artifactVersion(slf4jSource, "slf4j-api");
+        boolean slf4jLoaded = slf4jClass != null;
+        String slf4jFailureType = slf4jLoaded
+                ? ""
+                : firstFailureType("org.slf4j.LoggerFactory", "org.slf4j.Logger", loader);
         boolean o200k = resource(loader, "o200k_base.tiktoken");
         boolean cl100k = resource(loader, "cl100k_base.tiktoken");
         boolean p50k = resource(loader, "p50k_base.tiktoken");
@@ -72,6 +81,10 @@ final class WorkerRuntimeDiagnostics {
                 gsonVersion,
                 gsonLoaded,
                 gsonFailureType,
+                slf4jSource,
+                slf4jVersion,
+                slf4jLoaded,
+                slf4jFailureType,
                 o200k,
                 cl100k,
                 p50k,
@@ -99,6 +112,11 @@ final class WorkerRuntimeDiagnostics {
             LOG.log(Level.WARNING,
                     "WORKER_DEPENDENCY_WARNING Gson class loading failed error_type={0}",
                     snapshot.gsonFailureType());
+        }
+        if (!snapshot.slf4jLoaded()) {
+            LOG.log(Level.WARNING,
+                    "WORKER_DEPENDENCY_WARNING SLF4J API class loading failed error_type={0}",
+                    snapshot.slf4jFailureType());
         }
     }
 
@@ -173,6 +191,10 @@ final class WorkerRuntimeDiagnostics {
             String gsonVersion,
             boolean gsonLoaded,
             String gsonFailureType,
+            String slf4jCodeSource,
+            String slf4jVersion,
+            boolean slf4jLoaded,
+            String slf4jFailureType,
             boolean o200kBase,
             boolean cl100kBase,
             boolean p50kBase,
@@ -194,6 +216,10 @@ final class WorkerRuntimeDiagnostics {
                     + " gson_version=" + gsonVersion
                     + " gson_loaded=" + gsonLoaded
                     + " gson_error_type=" + Objects.toString(gsonFailureType, "")
+                    + " slf4j_code_source=" + slf4jCodeSource
+                    + " slf4j_version=" + slf4jVersion
+                    + " slf4j_loaded=" + slf4jLoaded
+                    + " slf4j_error_type=" + Objects.toString(slf4jFailureType, "")
                     + " tokenizer_o200k_base=" + o200kBase
                     + " tokenizer_cl100k_base=" + cl100kBase
                     + " tokenizer_p50k_base=" + p50kBase

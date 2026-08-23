@@ -48,7 +48,7 @@
     "root": "~/.modpedia",
     "ai_settings": "~/.modpedia/ai.json",
     "installation_id": "~/.modpedia/installation-id",
-    "worker_library": "~/.modpedia/worker/lib/worker-baseline-2"
+    "worker_library": "~/.modpedia/worker/lib/worker-baseline-3"
   },
   "content_directories": {
     "root": "config/modpedia/knowledge",

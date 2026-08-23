@@ -23,6 +23,12 @@ public final class WorkerTokenEstimatorSelfTest {
                 "Gson 实际版本不为 2.11.0：" + runtime.gsonVersion());
         check(runtime.gsonLoaded(),
                 "Worker 独立 JVM 未加载 Gson：" + runtime.gsonFailureType());
+        check(runtime.slf4jCodeSource().contains("slf4j-api"),
+                "SLF4J API CodeSource 不可识别：" + runtime.summary());
+        check("2.0.9".equals(runtime.slf4jVersion()),
+                "SLF4J API 实际版本不为 2.0.9：" + runtime.slf4jVersion());
+        check(runtime.slf4jLoaded(),
+                "Worker 独立 JVM 未加载 SLF4J API：" + runtime.slf4jFailureType());
         check(runtime.requiredTokenizerResourcesPresent(),
                 "JTokkit 必需 tokenizer 资源不完整：" + runtime.summary());
         check(runtime.estimatorInitialized(),
