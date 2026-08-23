@@ -3,7 +3,6 @@ package io.ctyx.modpedia.client;
 import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiSettings;
 import io.ctyx.modpedia.ModPedia;
-import io.ctyx.modpedia.compat.WorkerLibraryVerifier;
 import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
@@ -35,7 +34,6 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +48,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
@@ -67,6 +67,7 @@ public final class ModPediaBridge {
     private static final long RECONNECT_DELAY_SECONDS = 2L;
     private static final long HEARTBEAT_SECONDS = 10L;
     private static final String WORKER_MAIN_ENTRY = "io/ctyx/modpedia/worker/WorkerMain.class";
+    private static final String WORKER_ONLY_DEPENDENCY_PREFIX = "META-INF/modpedia-worker/";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ModPediaBridge INSTANCE = new ModPediaBridge();
 
@@ -101,6 +102,8 @@ public final class ModPediaBridge {
     private final Object lifecycleLock = new Object();
     /** writer、socket 和 ready 的检查与实际写入共享同一发送边界。 */
     private final Object writeLock = new Object();
+    /** 每次 Worker 连接递增；旧 reader 的迟到事件不能污染新连接。 */
+    private final AtomicLong connectionGeneration = new AtomicLong();
     private volatile Process process;
     private volatile Socket socket;
     private volatile BufferedWriter writer;
@@ -236,6 +239,7 @@ public final class ModPediaBridge {
                     socket = accepted;
                     writer = acceptedWriter;
                 }
+                long generation = connectionGeneration.incrementAndGet();
                 BufferedReader reader = new BufferedReader(new InputStreamReader(
                         accepted.getInputStream(), StandardCharsets.UTF_8
                 ));
@@ -262,7 +266,7 @@ public final class ModPediaBridge {
                     ready = true;
                 }
                 Thread readerThread = new Thread(
-                        () -> readEvents(reader, accepted, launchedProcess),
+                        () -> readEvents(reader, accepted, launchedProcess, generation),
                         "modpedia-worker-ipc-reader"
                 );
                 readerThread.setDaemon(true);
@@ -837,7 +841,12 @@ public final class ModPediaBridge {
     private void closeConnectionForRecovery() {
         Socket current = socket;
         Process currentProcess = process;
-        handleConnectionLost(current, currentProcess, "ModPedia Worker 心跳超时，正在准备重连");
+        handleConnectionLost(
+                current,
+                currentProcess,
+                connectionGeneration.get(),
+                "ModPedia Worker 心跳超时，正在准备重连"
+        );
     }
 
     private void cancelLifecycleTasks() {
@@ -924,13 +933,10 @@ public final class ModPediaBridge {
         command.add(paths.conversationsRoot().toString());
         command.add("--settings");
         command.add(paths.aiSettings().toString());
-        command.add("--worker-library");
-        command.add(paths.workerLibraryRoot().toString());
-        command.add("--worker-baseline");
-        command.add(WorkerCompatibility.WORKER_LIBRARY_BASELINE);
         Path log = workerDirectory.resolve("worker.log");
         ProcessBuilder builder = new ProcessBuilder(command)
-                .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()));
+                .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
         // Token 不再出现在 ps/Activity Monitor 的命令行参数中；只通过子进程
         // 环境变量传递，并且 Worker 仍会在握手阶段再次校验。
         builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
@@ -952,16 +958,13 @@ public final class ModPediaBridge {
             if (Files.isRegularFile(codeSource) && containsWorkerMain(codeSource)) {
                 packagedArchiveFound = true;
                 entries.add(codeSource.toString());
-                entries.addAll(WorkerLibraryVerifier.synchronize(codeSource, sharedLibraryDirectory).classpath()
-                        .stream().map(Path::toString).toList());
+                entries.addAll(extractNestedJars(codeSource, sharedLibraryDirectory));
             } else if (Files.isDirectory(codeSource)
                     && Files.isRegularFile(codeSource.resolve(WORKER_MAIN_ENTRY))) {
                 // 开发环境通常以 classes 目录作为代码来源；只加入 Worker 自身
                 // classes，不把整个游戏 JVM 的 classpath 继承给子 JVM。
                 entries.add(codeSource.toString());
             }
-        } catch (IOException exception) {
-            throw exception;
         } catch (Exception exception) {
             ModPedia.LOGGER.debug("Worker classpath code source unavailable", exception);
         }
@@ -975,26 +978,14 @@ public final class ModPediaBridge {
             if (installedArchive != null) {
                 packagedArchiveFound = true;
                 entries.add(installedArchive.toString());
-                WorkerLibraryVerifier.SyncResult libraries = WorkerLibraryVerifier.synchronize(
-                        installedArchive,
-                        sharedLibraryDirectory
-                );
-                entries.addAll(libraries.classpath().stream().map(Path::toString).toList());
-                if (libraries.changed()) {
-                    ModPedia.LOGGER.info(
-                            "worker_library_repaired baseline={} files={}",
-                            libraries.baseline(),
-                            libraries.repairedFiles()
-                    );
-                }
+                entries.addAll(extractNestedJars(installedArchive, sharedLibraryDirectory));
             } else {
                 ModPedia.LOGGER.warn("未找到包含 {} 的 ModPedia 发布 JAR", WORKER_MAIN_ENTRY);
             }
-        } catch (IOException exception) {
-            throw exception;
         } catch (Exception exception) {
             ModPedia.LOGGER.warn("扫描 ModPedia Worker 发布 JAR 失败", exception);
         }
+
         if (!packagedArchiveFound) {
             // 开发环境没有可提取的发布 JAR 时，仅按类的实际 CodeSource 加入当前
             // 构建解析出的 Worker 依赖。生产环境绝不回退到父 JVM 的完整 classpath，
@@ -1013,31 +1004,11 @@ public final class ModPediaBridge {
                 addClassLocation(entries, className);
             }
         } else {
-            // SLF4J 和 Gson 由游戏运行时提供；只加入这两个明确需要的 API，不能
-            // 把游戏 JVM 的全部依赖传给 Worker。
+            // SLF4J 由游戏运行时提供；Gson 已从发布 JAR 的 Worker 专用资源目录
+            // 提取到 sharedLibraryDirectory，不再从 Forge/NeoForge 游戏类加载器取。
             addClassLocation(entries, "org.slf4j.LoggerFactory");
-            addClassLocation(entries, "com.google.gson.Gson");
         }
-        return mergeWorkerClasspath(entries, List.of());
-    }
-
-    /** 共享 Worker 依赖优先于游戏继承 classpath，并去除重复条目。 */
-    static String mergeWorkerClasspath(
-            Collection<String> preferredEntries,
-            Collection<String> inheritedEntries
-    ) {
-        LinkedHashSet<String> merged = new LinkedHashSet<>();
-        if (preferredEntries != null) {
-            preferredEntries.stream()
-                    .filter(entry -> entry != null && !entry.isBlank())
-                    .forEach(merged::add);
-        }
-        if (inheritedEntries != null) {
-            inheritedEntries.stream()
-                    .filter(entry -> entry != null && !entry.isBlank())
-                    .forEach(merged::add);
-        }
-        return String.join(File.pathSeparator, merged);
+        return String.join(File.pathSeparator, entries);
     }
 
     /** 仅检查当前实例的模组归档，不解析模组类或启动客户端类。 */
@@ -1085,11 +1056,67 @@ public final class ModPediaBridge {
         }
     }
 
-    private void readEvents(BufferedReader reader, Socket observedSocket, Process observedProcess) {
+    private List<String> extractNestedJars(Path jar, Path outputDirectory) throws IOException {
+        Files.createDirectories(outputDirectory);
+        List<String> result = new ArrayList<>();
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            var entries = zip.stream()
+                    .filter(entry -> !entry.isDirectory())
+                    .filter(entry -> isWorkerDependencyEntry(entry.getName()))
+                    .toList();
+            for (ZipEntry entry : entries) {
+                Path target = outputDirectory.resolve(Path.of(entry.getName()).getFileName().toString());
+                Path temporary = outputDirectory.resolve(
+                        target.getFileName() + ".tmp-" + UUID.randomUUID()
+                );
+                try {
+                    try (var input = zip.getInputStream(entry)) {
+                        Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    // 同一 baseline 目录可能来自旧构建；不能只按文件名跳过，
+                    // 否则同名但缺少 tokenizer 资源的旧 JAR 会永久复用。
+                    boolean identical = Files.isRegularFile(target)
+                            && Files.mismatch(temporary, target) == -1L;
+                    if (!identical) {
+                        try {
+                            Files.move(
+                                    temporary,
+                                    target,
+                                    StandardCopyOption.ATOMIC_MOVE,
+                                    StandardCopyOption.REPLACE_EXISTING
+                            );
+                        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    }
+                } finally {
+                    Files.deleteIfExists(temporary);
+                }
+                result.add(target.toString());
+            }
+        }
+        return result;
+    }
+
+    private static boolean isWorkerDependencyEntry(String name) {
+        return (name.startsWith("META-INF/jarjar/")
+                || name.startsWith(WORKER_ONLY_DEPENDENCY_PREFIX))
+                && name.endsWith(".jar");
+    }
+
+    private void readEvents(
+            BufferedReader reader,
+            Socket observedSocket,
+            Process observedProcess,
+            long generation
+    ) {
         try {
-            while (ready) {
+            while (ready && isCurrentConnection(observedSocket, generation)) {
                 JsonObject event = WorkerProtocol.read(reader);
                 if (event == null) {
+                    break;
+                }
+                if (!isCurrentConnection(observedSocket, generation)) {
                     break;
                 }
                 dispatch(event);
@@ -1100,10 +1127,16 @@ public final class ModPediaBridge {
             }
         } finally {
             if (!shuttingDown) {
-                handleConnectionLost(observedSocket, observedProcess,
+                handleConnectionLost(observedSocket, observedProcess, generation,
                         "ModPedia Worker 连接已断开，正在准备重连");
             }
         }
+    }
+
+    private boolean isCurrentConnection(Socket observedSocket, long generation) {
+        return observedSocket != null
+                && socket == observedSocket
+                && connectionGeneration.get() == generation;
     }
 
     /**
@@ -1113,16 +1146,20 @@ public final class ModPediaBridge {
     private void handleConnectionLost(
             Socket observedSocket,
             Process observedProcess,
+            long generation,
             String message
     ) {
         if (shuttingDown) {
             return;
         }
         synchronized (writeLock) {
-            if (observedSocket == null || socket != observedSocket) {
+            if (observedSocket == null
+                    || socket != observedSocket
+                    || connectionGeneration.get() != generation) {
                 return;
             }
             ready = false;
+            connectionGeneration.incrementAndGet();
             socket = null;
             writer = null;
             if (process == observedProcess) {
@@ -1526,6 +1563,7 @@ public final class ModPediaBridge {
     private boolean sendIfReady(JsonObject message) {
         Socket observedSocket = null;
         Process observedProcess = null;
+        long generation = -1L;
         try {
             synchronized (writeLock) {
                 // writer 的快照和实际写入必须在同一锁内完成；断线处理不能在
@@ -1535,11 +1573,12 @@ public final class ModPediaBridge {
                 }
                 observedSocket = socket;
                 observedProcess = process;
+                generation = connectionGeneration.get();
                 WorkerProtocol.write(writer, message);
                 return true;
             }
         } catch (IOException exception) {
-            handleConnectionLost(observedSocket, observedProcess,
+            handleConnectionLost(observedSocket, observedProcess, generation,
                     "ModPedia Worker 写入失败，正在准备重连");
             return false;
         }
@@ -1572,6 +1611,7 @@ public final class ModPediaBridge {
         Process currentProcess;
         synchronized (writeLock) {
             ready = false;
+            connectionGeneration.incrementAndGet();
             currentSocket = socket;
             currentProcess = process;
             socket = null;

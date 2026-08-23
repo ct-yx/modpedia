@@ -64,6 +64,7 @@ public final class WorkerServer {
     private static final long RUNTIME_CONTEXT_TIMEOUT_SECONDS = 15L;
     private static final long RECIPE_QUERY_TIMEOUT_SECONDS = 15L;
     private static final int MAX_ITEM_CATALOG_ENTRIES = 250_000;
+    private static final long MAX_ITEM_CATALOG_BYTES = 64L * 1024L * 1024L;
 
     private final Socket socket;
     private final String expectedToken;
@@ -690,15 +691,23 @@ public final class WorkerServer {
         if (!Files.isRegularFile(payload)) {
             throw new IOException("物品目录批量载荷不存在: " + payload);
         }
+        if (Files.size(payload) > MAX_ITEM_CATALOG_BYTES) {
+            throw new IOException("物品目录批量载荷超过大小上限");
+        }
         if (expectedCount > MAX_ITEM_CATALOG_ENTRIES) {
             throw new IOException("物品目录批量载荷条目数超过上限: " + expectedCount);
         }
         List<ItemCatalogEntry> entries = new ArrayList<>(Math.max(0, expectedCount));
+        long bytesRead = 0L;
         try (BufferedReader input = Files.newBufferedReader(payload, StandardCharsets.UTF_8)) {
             String line;
             int lineNumber = 0;
-            while ((line = input.readLine()) != null) {
+            while ((line = WorkerProtocol.readLineLimited(input)) != null) {
                 lineNumber++;
+                bytesRead += WorkerProtocol.utf8Length(line) + 1L;
+                if (bytesRead > MAX_ITEM_CATALOG_BYTES) {
+                    throw new IOException("物品目录批量载荷超过大小上限");
+                }
                 if (line.isBlank()) {
                     continue;
                 }

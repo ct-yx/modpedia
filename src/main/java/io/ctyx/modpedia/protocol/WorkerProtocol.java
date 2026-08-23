@@ -8,6 +8,7 @@ import com.google.gson.JsonPrimitive;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 /**
@@ -18,6 +19,8 @@ import java.util.UUID;
  */
 public final class WorkerProtocol {
     public static final int VERSION = 1;
+    /** 单条 JSONL 消息的 UTF-8 字节上限，避免 readLine 无界分配内存。 */
+    public static final int MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024;
 
     public static final String HELLO = "hello";
     public static final String HELLO_ACK = "hello_ack";
@@ -78,6 +81,9 @@ public final class WorkerProtocol {
         if (line == null || line.isBlank()) {
             throw new IllegalArgumentException("空的 Worker 协议消息");
         }
+        if (utf8Length(line) > MAX_JSONL_LINE_BYTES) {
+            throw new IllegalArgumentException("Worker 协议消息超过大小上限");
+        }
         JsonElement parsed = JsonParser.parseString(line);
         if (!parsed.isJsonObject()) {
             throw new IllegalArgumentException("Worker 协议消息必须是 JSON 对象");
@@ -92,8 +98,34 @@ public final class WorkerProtocol {
     }
 
     public static JsonObject read(BufferedReader reader) throws IOException {
-        String line = reader.readLine();
+        String line = readLineLimited(reader);
         return line == null ? null : parse(line);
+    }
+
+    /** 供 JSONL 文件载荷复用的有界行读取。 */
+    public static String readLineLimited(BufferedReader reader) throws IOException {
+        StringBuilder line = new StringBuilder();
+        int bytes = 0;
+        int value;
+        while ((value = reader.read()) != -1) {
+            if (value == '\n' || value == '\r') {
+                break;
+            }
+            char character = (char) value;
+            bytes += character <= 0x7F ? 1 : character <= 0x7FF ? 2 : 3;
+            if (bytes > MAX_JSONL_LINE_BYTES) {
+                throw new IOException("Worker JSONL 行超过大小上限");
+            }
+            line.append(character);
+        }
+        if (value == -1 && line.isEmpty()) {
+            return null;
+        }
+        return line.toString();
+    }
+
+    public static int utf8Length(String value) {
+        return value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length;
     }
 
     public static int integer(JsonObject object, String name, int fallback) {

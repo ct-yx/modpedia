@@ -247,16 +247,20 @@ public final class AiModelCompatibilityTester {
                         .header("Accept", streaming ? "text/event-stream" : "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                         .build();
-                HttpResponse<String> response = client.send(
+                HttpResponse<java.io.InputStream> response = client.send(
                         request,
-                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+                        HttpResponse.BodyHandlers.ofInputStream()
                 );
+                String responseBody;
+                try (java.io.InputStream input = response.body()) {
+                    responseBody = AiHttpResponseLimits.read(input, AiHttpResponseLimits.MAX_BODY_BYTES);
+                }
                 boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
                 if (!success && attempt < MAX_RETRIES && retryable(response.statusCode())) {
                     sleep(350L * (attempt + 1));
                     continue;
                 }
-                return new HttpResult(response.statusCode(), response.body(),
+                return new HttpResult(response.statusCode(), responseBody,
                         System.nanoTime() - started, success);
             } catch (Exception exception) {
                 if (attempt < MAX_RETRIES) {
@@ -280,12 +284,18 @@ public final class AiModelCompatibilityTester {
                     .GET()
                     .build();
             for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<java.io.InputStream> response = client.send(
+                        request, HttpResponse.BodyHandlers.ofInputStream()
+                );
+                String responseBody;
+                try (java.io.InputStream input = response.body()) {
+                    responseBody = AiHttpResponseLimits.read(input, AiHttpResponseLimits.MAX_BODY_BYTES);
+                }
                 if (attempt < MAX_RETRIES && retryable(response.statusCode())) {
                     sleep(350L * (attempt + 1));
                     continue;
                 }
-                return AiClient.parseModelListResponse(response.statusCode(), response.body());
+                return AiClient.parseModelListResponse(response.statusCode(), responseBody);
             }
             return new AiClient.ModelListResult(true, List.of(), "获取模型列表失败，请稍后重试。");
         } catch (Exception exception) {

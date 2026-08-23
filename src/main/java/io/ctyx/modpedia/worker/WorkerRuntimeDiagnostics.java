@@ -28,10 +28,18 @@ final class WorkerRuntimeDiagnostics {
         Class<?> jtokkitClass = loadWithoutInitialization(
                 "com.knuddels.jtokkit.Encodings", loader
         );
+        Class<?> gsonClass = loadWithoutInitialization(
+                "com.google.gson.JsonElement", loader
+        );
+        Class<?> gsonRuntimeClass = loadWithoutInitialization(
+                "com.google.gson.Gson", loader
+        );
         String estimatorSource = codeSource(estimatorClass);
         String jtokkitSource = codeSource(jtokkitClass);
+        String gsonSource = codeSource(gsonClass);
         String estimatorVersion = artifactVersion(estimatorSource, "langchain4j-open-ai");
         String jtokkitVersion = artifactVersion(jtokkitSource, "jtokkit");
+        String gsonVersion = artifactVersion(gsonSource, "gson");
         boolean o200k = resource(loader, "o200k_base.tiktoken");
         boolean cl100k = resource(loader, "cl100k_base.tiktoken");
         boolean p50k = resource(loader, "p50k_base.tiktoken");
@@ -47,11 +55,23 @@ final class WorkerRuntimeDiagnostics {
         } catch (RuntimeException | LinkageError failure) {
             estimatorFailureType = failure.getClass().getSimpleName();
         }
+        boolean gsonLoaded = gsonClass != null && gsonRuntimeClass != null;
+        String gsonFailureType = gsonLoaded
+                ? ""
+                : firstFailureType(
+                        "com.google.gson.JsonElement",
+                        "com.google.gson.Gson",
+                        loader
+                );
         return new Snapshot(
                 estimatorSource,
                 estimatorVersion,
                 jtokkitSource,
                 jtokkitVersion,
+                gsonSource,
+                gsonVersion,
+                gsonLoaded,
+                gsonFailureType,
                 o200k,
                 cl100k,
                 p50k,
@@ -75,6 +95,11 @@ final class WorkerRuntimeDiagnostics {
                             + " error_type={0}; AI requests will use approximate token counting",
                     snapshot.estimatorFailureType());
         }
+        if (!snapshot.gsonLoaded()) {
+            LOG.log(Level.WARNING,
+                    "WORKER_DEPENDENCY_WARNING Gson class loading failed error_type={0}",
+                    snapshot.gsonFailureType());
+        }
     }
 
     private static Class<?> loadWithoutInitialization(String className, ClassLoader loader) {
@@ -83,6 +108,17 @@ final class WorkerRuntimeDiagnostics {
         } catch (ClassNotFoundException | LinkageError ignored) {
             return null;
         }
+    }
+
+    private static String firstFailureType(String firstClass, String secondClass, ClassLoader loader) {
+        for (String className : new String[]{firstClass, secondClass}) {
+            try {
+                Class.forName(className, false, loader);
+            } catch (ClassNotFoundException | LinkageError failure) {
+                return failure.getClass().getSimpleName();
+            }
+        }
+        return "UnknownError";
     }
 
     private static String codeSource(Class<?> type) {
@@ -133,6 +169,10 @@ final class WorkerRuntimeDiagnostics {
             String estimatorVersion,
             String jtokkitCodeSource,
             String jtokkitVersion,
+            String gsonCodeSource,
+            String gsonVersion,
+            boolean gsonLoaded,
+            String gsonFailureType,
             boolean o200kBase,
             boolean cl100kBase,
             boolean p50kBase,
@@ -150,6 +190,10 @@ final class WorkerRuntimeDiagnostics {
                     + " langchain_openai_version=" + estimatorVersion
                     + " jtokkit_code_source=" + jtokkitCodeSource
                     + " jtokkit_version=" + jtokkitVersion
+                    + " gson_code_source=" + gsonCodeSource
+                    + " gson_version=" + gsonVersion
+                    + " gson_loaded=" + gsonLoaded
+                    + " gson_error_type=" + Objects.toString(gsonFailureType, "")
                     + " tokenizer_o200k_base=" + o200kBase
                     + " tokenizer_cl100k_base=" + cl100kBase
                     + " tokenizer_p50k_base=" + p50kBase

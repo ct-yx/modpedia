@@ -46,6 +46,7 @@ public final class KnowledgeDatabase {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final int CUSTOM_PRIORITY = 100;
     private static final int FTS_FULL_OPTIMIZE_MIN_CHANGED_ROWS = 64;
+    private static final int MAX_ITEM_LOOKUP_RESULTS = 64;
     // 仅供 benchmark source set 做 A/B 对照；正常运行不读取用户配置。
     private static final String FTS_STORAGE_PROPERTY = "modpedia.benchmark.fts.storage";
     private static final String FTS_OPTIMIZE_PROPERTY = "modpedia.benchmark.fts.optimize";
@@ -511,6 +512,9 @@ public final class KnowledgeDatabase {
         for (String itemId : itemIds) {
             if (itemId != null && !itemId.isBlank()) {
                 requested.add(itemId.strip().toLowerCase(java.util.Locale.ROOT));
+                if (requested.size() >= MAX_ITEM_LOOKUP_RESULTS) {
+                    break;
+                }
             }
         }
         if (requested.isEmpty()) {
@@ -625,8 +629,13 @@ public final class KnowledgeDatabase {
             if (matches == null) {
                 continue;
             }
+            int remaining = MAX_ITEM_LOOKUP_RESULTS - result.size();
+            if (remaining <= 0) {
+                break;
+            }
             matches.values().stream()
                     .sorted(java.util.Comparator.comparing(ItemCatalogEntry::itemId))
+                    .limit(remaining)
                     .forEach(result::add);
         }
         return List.copyOf(result);

@@ -14,18 +14,26 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Set;
 
 /** 本地会话仓库；AI 上下文窗口由 LangChain4j 管理，本类负责 ModPedia 的 UI 历史。 */
 public final class ConversationStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static final String INDEX_FILE = "index.json";
+    private static final int MAX_MESSAGE_COUNT = 200;
+    private static final int MAX_MESSAGE_MARKDOWN_CHARS = 64_000;
     private static final int MAX_TRACE_COUNT = 200;
+    private static final int MAX_TRACE_SOURCES = 16;
+    private static final int MAX_MEMORY_MESSAGES_CHARS = 1_000_000;
+    private static final long MAX_CONVERSATION_FILE_BYTES = 8L * 1024L * 1024L;
 
     private final Path root;
     private final Map<String, ConversationRecord> records = new LinkedHashMap<>();
@@ -229,6 +237,7 @@ public final class ConversationStore {
     private void load() {
         try {
             Files.createDirectories(root);
+            restrictDirectory(root);
             try (DirectoryStream<Path> files = Files.newDirectoryStream(root, "conversation-*.json")) {
                 for (Path file : files) {
                     try {
@@ -238,9 +247,10 @@ public final class ConversationStore {
                         );
                         if (record != null && !record.id().isBlank()) {
                             ConversationRecord migrated = migrateCitationMessages(record);
-                            records.put(migrated.id(), migrated);
-                            if (migrated != record) {
-                                persist(migrated);
+                            ConversationRecord bounded = fitForStorage(migrated);
+                            records.put(bounded.id(), bounded);
+                            if (!bounded.equals(record)) {
+                                persist(bounded);
                             }
                         }
                     } catch (IOException | RuntimeException ignored) {
@@ -318,15 +328,22 @@ public final class ConversationStore {
     }
 
     private void replace(ConversationRecord record) {
-        records.put(record.id(), record);
-        persist(record);
+        ConversationRecord bounded = fitForStorage(record);
+        records.put(bounded.id(), bounded);
+        persist(bounded);
         persistIndex();
     }
 
     private void persist(ConversationRecord record) {
         try {
             Files.createDirectories(root);
-            writeAtomically(fileFor(record.id()), GSON.toJson(record));
+            restrictDirectory(root);
+            ConversationRecord bounded = fitForStorage(record);
+            String json = GSON.toJson(bounded);
+            if (json.getBytes(StandardCharsets.UTF_8).length > MAX_CONVERSATION_FILE_BYTES) {
+                return;
+            }
+            writeAtomically(fileFor(bounded.id()), json);
         } catch (IOException ignored) {
             // 会话写入失败时继续使用内存中的当前会话。
         }
@@ -335,6 +352,7 @@ public final class ConversationStore {
     private void persistIndex() {
         try {
             Files.createDirectories(root);
+            restrictDirectory(root);
             writeAtomically(root.resolve(INDEX_FILE), GSON.toJson(new IndexData(activeId)));
         } catch (IOException ignored) {
             // 会话文件仍然保留，下一次启动可按更新时间恢复。
@@ -343,11 +361,145 @@ public final class ConversationStore {
 
     private void writeAtomically(Path target, String content) throws IOException {
         Path temporary = Files.createTempFile(root, "conversation-", ".tmp");
+        restrictFile(temporary);
         Files.writeString(temporary, content, StandardCharsets.UTF_8);
         try {
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException exception) {
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+        restrictFile(target);
+    }
+
+    private ConversationRecord fitForStorage(ConversationRecord record) {
+        if (record == null) {
+            return new ConversationRecord("", "新会话", 0L, 0L, List.of(), List.of(), "");
+        }
+        ConversationRecord bounded = boundRecord(record);
+        while (serializedBytes(bounded) > MAX_CONVERSATION_FILE_BYTES
+                && bounded.messages().size() > 1) {
+            bounded = new ConversationRecord(
+                    bounded.id(),
+                    bounded.title(),
+                    bounded.createdAt(),
+                    bounded.updatedAt(),
+                    bounded.messages().subList(1, bounded.messages().size()),
+                    bounded.searchTraces(),
+                    bounded.memoryMessagesJson()
+            );
+        }
+        if (serializedBytes(bounded) <= MAX_CONVERSATION_FILE_BYTES) {
+            return bounded;
+        }
+        // 理论上 boundRecord 已经足够小；如果外部模型对象仍产生异常大的结构，
+        // 保留最新一条消息和会话元数据，不让磁盘写入失控。
+        ChatMessage latest = bounded.messages().isEmpty()
+                ? null
+                : bounded.messages().getLast();
+        return new ConversationRecord(
+                bounded.id(),
+                bounded.title(),
+                bounded.createdAt(),
+                bounded.updatedAt(),
+                latest == null ? List.of() : List.of(latest),
+                List.of(),
+                ""
+        );
+    }
+
+    private long serializedBytes(ConversationRecord record) {
+        return GSON.toJson(record).getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private ConversationRecord boundRecord(ConversationRecord record) {
+        int messageStart = Math.max(0, record.messages().size() - MAX_MESSAGE_COUNT);
+        List<ChatMessage> messages = record.messages().subList(messageStart, record.messages().size())
+                .stream()
+                .map(this::boundMessage)
+                .toList();
+        int traceStart = Math.max(0, record.searchTraces().size() - MAX_TRACE_COUNT);
+        List<SearchTrace> traces = record.searchTraces().subList(traceStart, record.searchTraces().size())
+                .stream()
+                .map(this::boundTrace)
+                .toList();
+        String memory = record.memoryMessagesJson();
+        if (memory.codePointCount(0, memory.length()) > MAX_MEMORY_MESSAGES_CHARS) {
+            memory = "";
+        }
+        return new ConversationRecord(
+                record.id(),
+                truncate(record.title(), 48),
+                record.createdAt(),
+                record.updatedAt(),
+                messages,
+                traces,
+                memory
+        );
+    }
+
+    private ChatMessage boundMessage(ChatMessage message) {
+        if (message == null) {
+            return new ChatMessage(MessageRole.ASSISTANT, "", List.of());
+        }
+        return new ChatMessage(
+                message.role(),
+                truncate(message.markdown(), MAX_MESSAGE_MARKDOWN_CHARS),
+                message.sources().stream().limit(MAX_TRACE_SOURCES).map(this::boundSource).toList(),
+                message.followUpQuestions(),
+                message.taskSummary()
+        );
+    }
+
+    private SearchTrace boundTrace(SearchTrace trace) {
+        if (trace == null) {
+            return new SearchTrace("", "auto", "identify", 1, "", false, List.of(), 0L);
+        }
+        return new SearchTrace(
+                truncate(trace.query(), 2_000),
+                truncate(trace.language(), 32),
+                truncate(trace.focus(), 64),
+                trace.round(),
+                truncate(trace.status(), 64),
+                trace.hasMore(),
+                trace.sources().stream().limit(MAX_TRACE_SOURCES).map(this::boundSource).toList(),
+                trace.createdAt(),
+                truncate(trace.tool(), 64)
+        );
+    }
+
+    private SourceReference boundSource(SourceReference source) {
+        if (source == null) {
+            return new SourceReference("", "", "", "");
+        }
+        return new SourceReference(
+                truncate(source.documentId(), 512),
+                truncate(source.title(), 512),
+                truncate(source.sourceMod(), 128),
+                truncate(source.sourcePath(), 2_048),
+                truncate(source.annotation(), 120)
+        );
+    }
+
+    private static void restrictDirectory(Path directory) {
+        try {
+            Files.setPosixFilePermissions(directory, Set.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE
+            ));
+        } catch (IOException | UnsupportedOperationException | SecurityException ignored) {
+            // Windows 和不支持 POSIX 权限的文件系统使用系统默认用户权限。
+        }
+    }
+
+    private static void restrictFile(Path file) {
+        try {
+            Files.setPosixFilePermissions(file, EnumSet.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE
+            ));
+        } catch (IOException | UnsupportedOperationException | SecurityException ignored) {
+            // Windows 和不支持 POSIX 权限的文件系统使用系统默认用户权限。
         }
     }
 
