@@ -109,6 +109,15 @@ public final class WorkerProtocol {
         int value;
         while ((value = reader.read()) != -1) {
             if (value == '\n' || value == '\r') {
+                if (value == '\r') {
+                    // BufferedReader 不支持 unread；用一个字符的 mark/reset 保留
+                    // 单独 CR 后紧随的非 LF 字符，同时消费 CRLF 中的 LF。
+                    reader.mark(1);
+                    int next = reader.read();
+                    if (next != '\n' && next != -1) {
+                        reader.reset();
+                    }
+                }
                 break;
             }
             char character = (char) value;
