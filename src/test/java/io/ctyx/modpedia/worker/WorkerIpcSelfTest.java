@@ -225,6 +225,7 @@ public final class WorkerIpcSelfTest {
         }
         String langchainVersion = System.getProperty("modpedia.langchain4j.version", "1.18.1");
         String jtokkitVersion = System.getProperty("modpedia.jtokkit.version", "1.1.0");
+        String slf4jVersion = System.getProperty("modpedia.slf4j.version", "2.0.9");
         try (ZipFile zip = new ZipFile(Path.of(value).toFile())) {
             for (String artifact : List.of(
                     "langchain4j",
@@ -243,6 +244,15 @@ public final class WorkerIpcSelfTest {
             ZipEntry nested = zip.getEntry(jtokkitEntry);
             check(nested != null, "发布 JAR 缺少统一版本 JTokkit：" + jtokkitEntry);
             checkNestedTokenizerResources(zip, nested);
+            String slf4jEntry = "META-INF/modpedia-worker/slf4j-api-" + slf4jVersion + ".jar";
+            ZipEntry nestedSlf4j = zip.getEntry(slf4jEntry);
+            check(nestedSlf4j != null, "发布 JAR 缺少 Worker 专用 SLF4J API：" + slf4jEntry);
+            long slf4jCount = zip.stream()
+                    .filter(entry -> entry.getName().startsWith("META-INF/modpedia-worker/slf4j-api-"))
+                    .filter(entry -> entry.getName().endsWith(".jar"))
+                    .count();
+            check(slf4jCount == 1, "Worker 专用 SLF4J API 不能存在多个版本");
+            checkNestedSlf4j(zip, nestedSlf4j);
         }
     }
 
@@ -292,6 +302,20 @@ public final class WorkerIpcSelfTest {
                 }
             }
             check(jsonElement, "Worker 专用 Gson 缺少 com/google/gson/JsonElement.class");
+        }
+    }
+
+    private static void checkNestedSlf4j(ZipFile outer, ZipEntry nested) throws IOException {
+        try (var input = outer.getInputStream(nested); ZipInputStream jar = new ZipInputStream(input)) {
+            boolean loggerFactory = false;
+            ZipEntry entry;
+            while ((entry = jar.getNextEntry()) != null) {
+                if ("org/slf4j/LoggerFactory.class".equals(entry.getName())) {
+                    loggerFactory = true;
+                    break;
+                }
+            }
+            check(loggerFactory, "Worker 专用 SLF4J API 缺少 org/slf4j/LoggerFactory.class");
         }
     }
 
@@ -1021,9 +1045,6 @@ public final class WorkerIpcSelfTest {
                         .filter(entry -> isWorkerDependencyEntry(entry.getName()))
                         .forEach(entry -> extract(zip, entry, libraryDirectory, entries));
             }
-            // 发布 JAR 不再携带 SLF4J；真实游戏由 NeoForge 模块层提供，测试进程
-            // 从自身的编译 classpath 取出同一份 API，模拟生产 Worker 的装配方式。
-            addClassLocation(entries, "org.slf4j.LoggerFactory");
             return String.join(java.io.File.pathSeparator, entries);
         }
 
@@ -1033,20 +1054,6 @@ public final class WorkerIpcSelfTest {
                     && name.endsWith(".jar");
         }
 
-        private static void addClassLocation(List<String> entries, String className) {
-            try {
-                Class<?> type = Class.forName(className, false, WorkerIpcSelfTest.class.getClassLoader());
-                if (type.getProtectionDomain().getCodeSource() == null) {
-                    return;
-                }
-                Path location = Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
-                if (Files.isRegularFile(location)) {
-                    entries.add(location.toString());
-                }
-            } catch (Exception exception) {
-                throw new IllegalStateException("测试需要可定位的 SLF4J API：" + className, exception);
-            }
-        }
 
         private static void extract(ZipFile zip, ZipEntry entry, Path directory, List<String> output) {
             try {
@@ -1126,6 +1133,15 @@ public final class WorkerIpcSelfTest {
                     "Worker 实际加载的 Gson 版本不正确");
             check(log.contains("gson_loaded=true"),
                     "Worker 独立 JVM 未加载 Gson");
+            check(log.contains("slf4j_code_source=")
+                            && log.contains("slf4j-api-2.0.9.jar"),
+                    "Worker 实际加载的 SLF4J CodeSource 不正确");
+            check(log.contains("slf4j_version=2.0.9"),
+                    "Worker 实际加载的 SLF4J API 版本不正确");
+            check(log.contains("slf4j_loaded=true"),
+                    "Worker 独立 JVM 未加载 SLF4J API");
+            check(log.contains("WORKER_MEMORY_STORE initialized"),
+                    "SQLChatMemoryStore 未能在独立 Worker JVM 初始化");
             check(log.contains("tokenizer_o200k_base=true"),
                     "Worker 运行时未找到 o200k tokenizer 资源");
             check(log.contains("estimator_gpt5=true"),

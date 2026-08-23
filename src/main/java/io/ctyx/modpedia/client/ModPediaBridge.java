@@ -998,15 +998,10 @@ public final class ModPediaBridge {
                     "com.fasterxml.jackson.databind.ObjectMapper",
                     "org.apache.opennlp.tools.tokenizer.Tokenizer",
                     "org.xerial.sqlite.JDBC",
-                    "org.slf4j.LoggerFactory",
                     "com.google.gson.Gson"
             )) {
                 addClassLocation(entries, className);
             }
-        } else {
-            // SLF4J 由游戏运行时提供；Gson 已从发布 JAR 的 Worker 专用资源目录
-            // 提取到 sharedLibraryDirectory，不再从 Forge/NeoForge 游戏类加载器取。
-            addClassLocation(entries, "org.slf4j.LoggerFactory");
         }
         return String.join(File.pathSeparator, entries);
     }

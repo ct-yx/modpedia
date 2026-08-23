@@ -1,14 +1,14 @@
 # Worker 基线与兼容层
 
 本文件定义独立 Worker 与 Minecraft 客户端适配层之间的稳定边界。当前基线为
-`worker-baseline-2` 是 Worker 依赖与协议基线；当前 Forge 1.20.1 适配层使用它。它不是
+`worker-baseline-3` 是 Worker 依赖与协议基线；当前 Forge 1.20.1 适配层使用它。它不是
 新的运行库目录，也不替代 `config/modpedia/runtime/` 的实例级状态。
 
 ## 1. 当前基线
 
 | 项目 | 值 |
 | --- | --- |
-| Worker 基线 | `worker-baseline-2` |
+| Worker 基线 | `worker-baseline-3` |
 | Worker API level | `1` |
 | JSONL 协议 | `WorkerProtocol.VERSION = 1` |
 | Minecraft | `1.20.1` |
@@ -19,13 +19,13 @@
 | LangChain4j Community SQL | `1.18.0-beta28` |
 | JTokkit | `1.1.0`，包含 `o200k_base`、`cl100k_base`、`p50k_base`、`r50k_base` |
 | Gson | `2.11.0`，位于发布 JAR 的 `META-INF/modpedia-worker/gson-2.11.0.jar`，只提取到 Worker JVM |
-| SLF4J API | `2.0.9`，由 Forge 运行时提供 |
+| SLF4J API | `2.0.9`，位于发布 JAR 的 `META-INF/modpedia-worker/slf4j-api-2.0.9.jar`，只提取到 Worker JVM |
 | 客户端适配层 | `forge-1.20.1` |
 
 共享依赖库位于：
 
 ```text
-~/.modpedia/worker/lib/worker-baseline-2/
+~/.modpedia/worker/lib/worker-baseline-3/
 ```
 
 同一基线可以被不同 ModPedia 版本和不同游戏实例复用。实例自己的 Worker JAR、
@@ -51,7 +51,7 @@ Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用
 {
   "protocol_version": 1,
   "worker_api_level": 1,
-  "worker_baseline": "worker-baseline-2",
+  "worker_baseline": "worker-baseline-3",
   "client_adapter": "forge-1.20.1",
   "client_java": "17",
   "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
@@ -64,7 +64,7 @@ Worker 返回 `hello_ack` 时包含：
 {
   "accepted": true,
   "worker_api_level": 1,
-  "worker_baseline": "worker-baseline-2",
+  "worker_baseline": "worker-baseline-3",
   "worker_java": "17",
   "worker_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
 }
@@ -103,8 +103,8 @@ io.ctyx.modpedia.client.*
 
 Worker 启动时使用发布 JAR、`META-INF/jarjar/*.jar` 和同一基线提取出的
 `META-INF/modpedia-worker/*.jar` 构造隔离 classpath；不继承游戏 JVM 的完整
-`java.class.path`。SLF4J API 由 Forge 运行时提供，Gson 从 Worker 专用资源提取，不能从游戏类
-加载器取 Gson，也不能把它放入普通 Jar-in-Jar 目录。这样游戏实例
+`java.class.path`。Gson 与 SLF4J API 都从 Worker 专用资源提取，不能从 Forge 类加载器取
+`LoggerFactory`，也不能把 SLF4J API 放入普通 `META-INF/jarjar/` 目录。这样游戏实例
 中残留的旧版 LangChain4j/JTokkit 不会抢先加载。Worker 会在启动日志中记录两个核心类的
 CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始化结果，但不记录 API Key、
 请求正文或会话正文。
@@ -116,9 +116,9 @@ CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始�
 
 | 客户端适配层 | Worker 基线 | Java | 状态 | 必须验证 |
 | --- | --- | --- | --- | --- |
-| Forge 1.20.1 | `worker-baseline-2` | 17 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
-| 未来 Minecraft 版本 + 新适配层 | `worker-baseline-2` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
-| 未来 Worker API/依赖变化 | `worker-baseline-3+` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
+| Forge 1.20.1 | `worker-baseline-3` | 17 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
+| 未来 Minecraft 版本 + 新适配层 | `worker-baseline-3` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
+| 未来 Worker API/依赖变化 | `worker-baseline-4+` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
 
 状态含义：
 

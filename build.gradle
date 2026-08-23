@@ -209,10 +209,11 @@ dependencies {
             strictly "[${gson_version}, 2.12)"
         }
     }
-    // SLF4J API 由 Forge/Minecraft 运行时提供。Worker 复用游戏进程的基础
-    // classpath，因此只保留编译依赖和开发运行时依赖，不能再把同一个 API
-    // 作为 Jar-in-Jar 嵌入模组，否则会和整合包的 org.slf4j 模块重复。
-    compileOnly("org.slf4j:slf4j-api:2.0.9")
+    // 游戏代码只需要编译期的 SLF4J API；独立 Worker JVM 使用下面的专用资源副本，
+    // 不从 Forge 类加载器获取 LoggerFactory，避免发布后 Worker 缺少 SLF4J。
+    compileOnly("org.slf4j:slf4j-api:${slf4j_version}")
+    // 纯 Java 自测需要在测试 JVM 中检查实际版本；这不改变发布 JAR 的隔离路径。
+    testRuntimeOnly("org.slf4j:slf4j-api:${slf4j_version}")
     // 基准报告和测试夹具直接读取 JSON。
     testImplementation "com.google.code.gson:gson:${gson_version}"
 
@@ -221,6 +222,12 @@ dependencies {
     workerOnlyRuntime("com.google.code.gson:gson:${gson_version}") {
         version {
             strictly "[${gson_version}, 2.12)"
+        }
+    }
+    // SLF4J 只能作为 Worker 专用资源发布，不能落入 META-INF/jarjar/。
+    workerOnlyRuntime("org.slf4j:slf4j-api:${slf4j_version}") {
+        version {
+            strictly "[${slf4j_version}, 2.0.10)"
         }
     }
 
@@ -430,6 +437,7 @@ def workerTokenEstimatorSelfTest = tasks.register('workerTokenEstimatorSelfTest'
     systemProperty 'modpedia.langchain4j.version', langchain4j_version
     systemProperty 'modpedia.jtokkit.version', jtokkit_version
     systemProperty 'modpedia.gson.version', gson_version
+    systemProperty 'modpedia.slf4j.version', slf4j_version
 }
 
 def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', JavaExec) {
@@ -456,6 +464,7 @@ def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     systemProperty 'modpedia.langchain4j.version', langchain4j_version
     systemProperty 'modpedia.jtokkit.version', jtokkit_version
     systemProperty 'modpedia.gson.version', gson_version
+    systemProperty 'modpedia.slf4j.version', slf4j_version
 }
 
 def modPediaPathsSelfTest = tasks.register('modPediaPathsSelfTest', JavaExec) {

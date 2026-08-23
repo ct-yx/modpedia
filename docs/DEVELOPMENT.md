@@ -13,7 +13,7 @@
 | Forge | `47.4.16` |
 | Java | `21` |
 | Mod ID / 包名 | `modpedia` / `io.ctyx.modpedia` |
-| Worker 基线 | `worker-baseline-2` |
+| Worker 基线 | `worker-baseline-3` |
 | 当前分支 | 以 `git status --short --branch` 为准 |
 
 本分支负责 Worker Core、客户端适配层、协议兼容、测试和迁移文档；不维护发布版本号、下载链接、更新日志或网页内容。
@@ -58,7 +58,7 @@
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
-- [~] Worker 使用 `worker-baseline-2`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
+- [~] Worker 使用 `worker-baseline-3`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
   具体基线、禁止依赖和迁移矩阵见 [docs/WORKER_BASELINE.md](WORKER_BASELINE.md)；可执行证据矩阵见
 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
