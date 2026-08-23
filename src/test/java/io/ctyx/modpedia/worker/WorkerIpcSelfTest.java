@@ -312,6 +312,30 @@ public final class WorkerIpcSelfTest {
             rejected = true;
         }
         check(rejected, "超过 JSONL 单行上限的消息必须被拒绝");
+
+        JsonObject first = WorkerProtocol.message(WorkerProtocol.PING, "crlf-first");
+        JsonObject second = WorkerProtocol.message(WorkerProtocol.PONG, "crlf-second");
+        BufferedReader crlfReader = new BufferedReader(new StringReader(
+                first + "\r\n" + second + "\r\n"
+        ));
+        check("crlf-first".equals(WorkerProtocol.string(
+                        WorkerProtocol.read(crlfReader), "request_id"
+                )),
+                "CRLF 第一条 JSONL 消息应正常解析");
+        check("crlf-second".equals(WorkerProtocol.string(
+                        WorkerProtocol.read(crlfReader), "request_id"
+                )),
+                "CRLF 第二条 JSONL 消息不应被空行干扰");
+
+        BufferedReader lineReader = new BufferedReader(new StringReader("one\r\ntwo\rthree\nfour"));
+        check("one".equals(WorkerProtocol.readLineLimited(lineReader)),
+                "readLineLimited 应消费 CRLF 的 LF");
+        check("two".equals(WorkerProtocol.readLineLimited(lineReader)),
+                "readLineLimited 应支持单独 CR");
+        check("three".equals(WorkerProtocol.readLineLimited(lineReader)),
+                "readLineLimited 应支持混合换行");
+        check("four".equals(WorkerProtocol.readLineLimited(lineReader)),
+                "readLineLimited 应读取末尾无换行的行");
     }
 
     private static void checkCancellationGate() {
