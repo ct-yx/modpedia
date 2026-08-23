@@ -11,6 +11,7 @@ import io.ctyx.modpedia.ai.AiModelCompatibilityTester;
 import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.ai.ConversationRecord;
 import io.ctyx.modpedia.ai.ConversationStore;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
@@ -62,6 +63,7 @@ public final class WorkerServer {
     private static final Logger LOG = Logger.getLogger("ModPediaWorker");
     private static final Gson JSON = new Gson();
     private static final long RUNTIME_CONTEXT_TIMEOUT_SECONDS = 15L;
+    private static final long RUNTIME_ITEM_CONTEXT_TIMEOUT_SECONDS = 3L;
     private static final long RECIPE_QUERY_TIMEOUT_SECONDS = 15L;
     private static final int MAX_ITEM_CATALOG_ENTRIES = 250_000;
     private static final long MAX_ITEM_CATALOG_BYTES = 64L * 1024L * 1024L;
@@ -107,6 +109,8 @@ public final class WorkerServer {
     private final WorkerRequestCancellation requestCancellation = new WorkerRequestCancellation();
     private final Object writeLock = new Object();
     private volatile boolean running = true;
+    /** 旧客户端没有该可选能力时，物品查询直接使用静态 item_catalog。 */
+    private volatile boolean clientSupportsRuntimeItemContext;
     private BufferedWriter writer;
     private ConversationStore conversationStore;
     private WorkerChatService chatService;
@@ -151,6 +155,7 @@ public final class WorkerServer {
                     settingsStore,
                     this::send,
                     this::requestRuntimeContext,
+                    this::requestRuntimeItemContext,
                     this::requestRecipe,
                     this::isCancelled
             );
@@ -192,6 +197,10 @@ public final class WorkerServer {
         boolean tokenValid = expectedToken.equals(WorkerProtocol.string(hello, "auth_token"));
         boolean compatibilityValid = WorkerCompatibility.isCompatibleClient(hello);
         boolean valid = protocolValid && tokenValid && compatibilityValid;
+        clientSupportsRuntimeItemContext = valid && WorkerCompatibility.supportsOptionalCapability(
+                hello,
+                WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+        );
         JsonObject response = WorkerProtocol.message(
                 WorkerProtocol.HELLO_ACK,
                 WorkerProtocol.string(hello, "request_id")
@@ -481,6 +490,77 @@ public final class WorkerServer {
             return null;
         } finally {
             runtimeWaiters.remove(contextRequestId);
+        }
+    }
+
+    /**
+     * 按需向客户端读取最多三个已确认物品的运行时 Tooltip。这个请求复用任务的
+     * runtime_context waiter，但使用独立 request_kind；世界未就绪、旧客户端、
+     * 超时或任何单项错误都只返回空列表，让搜索继续使用静态 item_catalog。
+     */
+    private List<RuntimeItemContext> requestRuntimeItemContext(
+            String requestId,
+            String conversationId,
+            String language,
+            List<String> itemIds
+    ) {
+        if (!clientSupportsRuntimeItemContext || isCancelled(requestId)) {
+            return List.of();
+        }
+        LinkedHashSet<String> requested = new LinkedHashSet<>();
+        if (itemIds != null) {
+            for (String value : itemIds) {
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                requested.add(value.strip().toLowerCase(java.util.Locale.ROOT));
+                if (requested.size() >= WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS) {
+                    break;
+                }
+            }
+        }
+        if (requested.isEmpty()) {
+            return List.of();
+        }
+        String itemRequestId = requestId + ":item:" + UUID.randomUUID();
+        CompletableFuture<JsonObject> waiter = new CompletableFuture<>();
+        runtimeWaiters.put(itemRequestId, waiter);
+        JsonObject request = WorkerProtocol.message(
+                WorkerProtocol.RUNTIME_CONTEXT_REQUEST,
+                itemRequestId
+        );
+        request.addProperty("request_kind", WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND);
+        request.addProperty("chat_request_id", requestId == null ? "" : requestId);
+        request.addProperty("conversation_id", conversationId == null ? "" : conversationId);
+        request.addProperty("language", language == null || language.isBlank() ? "neutral" : language);
+        request.addProperty("max_items", requested.size());
+        request.add("item_ids", WorkerPayloadCodec.array(requested));
+        sendQuietly(request);
+        try {
+            JsonObject response = waiter.get(
+                    RUNTIME_ITEM_CONTEXT_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS
+            );
+            if (response == null
+                    || (!WorkerProtocol.string(response, "request_kind").isBlank()
+                    && !WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND.equals(
+                    WorkerProtocol.string(response, "request_kind")))
+                    || WorkerProtocol.utf8Length(response.toString())
+                    > WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_BYTES) {
+                return List.of();
+            }
+            java.util.Set<String> allowed = java.util.Set.copyOf(requested);
+            return WorkerPayloadCodec.runtimeItemContexts(response).stream()
+                    .filter(RuntimeItemContext::usable)
+                    .filter(context -> allowed.contains(context.itemId()))
+                    .toList();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (Exception ignored) {
+            return List.of();
+        } finally {
+            runtimeWaiters.remove(itemRequestId);
         }
     }
 

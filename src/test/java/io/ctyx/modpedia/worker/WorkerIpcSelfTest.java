@@ -1,9 +1,11 @@
 package io.ctyx.modpedia.worker;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.ctyx.modpedia.compat.WorkerCompatibility;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
 import io.ctyx.modpedia.search.ItemCatalogEntry;
@@ -68,6 +70,8 @@ public final class WorkerIpcSelfTest {
                 JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "hello-valid");
                 hello.addProperty("auth_token", "token-valid");
                 WorkerCompatibility.addClientHello(hello);
+                WorkerCompatibility.addClientOptionalCapability(
+                        hello, WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY);
                 hello.addProperty("conversation_id", CONVERSATION_ID);
                 harness.send(hello);
                 JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
@@ -122,6 +126,7 @@ public final class WorkerIpcSelfTest {
                         "知识库构建完成后应由 Worker 创建 knowledge.db");
 
                 double itemSyncMillis = verifyItemCatalogFileSync(harness);
+                verifyRuntimeItemCatalogFixture(harness);
 
                 JsonObject chat = WorkerProtocol.message(WorkerProtocol.CHAT_START, "chat-search-only");
                 chat.addProperty("conversation_id", WorkerProtocol.string(
@@ -139,6 +144,7 @@ public final class WorkerIpcSelfTest {
                         "knowledge.db 应由 Worker 进程创建或打开");
 
                 verifyProcessAiChain(harness, aiFixture, startup);
+                verifyProcessRuntimeItemContext(harness, aiFixture, startup);
                 verifyProcessAi503Failure(harness, aiFixture, startup);
 
                 JsonObject cancel = WorkerProtocol.message(WorkerProtocol.CHAT_CANCEL, "cancel-unknown");
@@ -691,6 +697,92 @@ public final class WorkerIpcSelfTest {
         }
     }
 
+    private static void verifyRuntimeItemCatalogFixture(Harness harness) throws Exception {
+        JsonObject request = WorkerProtocol.message(
+                WorkerProtocol.KNOWLEDGE_ITEMS_SYNC,
+                "runtime-item-catalog"
+        );
+        request.addProperty("language", "zh_cn");
+        JsonArray items = new JsonArray();
+        items.add(WorkerPayloadCodec.item(new ItemCatalogEntry(
+                "fixture:dynamic",
+                "zh_cn",
+                "动态物品",
+                "",
+                "fixture",
+                "runtime-item-static-empty"
+        )));
+        request.add("items", items);
+        harness.send(request);
+        JsonObject completed = harness.read(event ->
+                WorkerProtocol.COMPLETED.equals(WorkerProtocol.string(event, "type"))
+                        && "runtime-item-catalog".equals(WorkerProtocol.string(event, "request_id")));
+        check(WorkerProtocol.integer(completed, "item_count", -1) == 1,
+                "运行时 Tooltip IPC 夹具应保留空静态简介物品");
+    }
+
+    private static void verifyProcessRuntimeItemContext(
+            Harness harness,
+            AiFixture fixture,
+            JsonObject startup
+    ) throws Exception {
+        saveAiSettings(harness, fixture.endpoint(), false, "settings-runtime-item");
+        fixture.setRuntimeItemQuery(true);
+        boolean sawRuntimeRequest = false;
+        boolean sawTool = false;
+        JsonObject completed = null;
+        try {
+            JsonObject chat = WorkerProtocol.message(
+                    WorkerProtocol.CHAT_START,
+                    "chat-runtime-item"
+            );
+            chat.addProperty("conversation_id", WorkerProtocol.string(
+                    startup, "active_conversation_id"));
+            chat.addProperty("prompt", "请查询 [[item:fixture:dynamic|动态物品]] 的当前 Tooltip");
+            chat.addProperty("language", "zh_cn");
+            harness.send(chat);
+            while (completed == null) {
+                JsonObject event = harness.read(ignored -> true);
+                String type = WorkerProtocol.string(event, "type");
+                if (WorkerProtocol.RUNTIME_CONTEXT_REQUEST.equals(type)
+                        && WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND.equals(
+                        WorkerProtocol.string(event, "request_kind"))) {
+                    JsonObject response = WorkerProtocol.message(
+                            WorkerProtocol.RUNTIME_CONTEXT_RESPONSE,
+                            WorkerProtocol.string(event, "request_id")
+                    );
+                    response.addProperty("request_kind", WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND);
+                    JsonArray contexts = new JsonArray();
+                    contexts.add(WorkerPayloadCodec.runtimeItemContext(new RuntimeItemContext(
+                            "fixture:dynamic",
+                            "zh_cn",
+                            "动态物品",
+                            "- 来自当前世界的运行时 Tooltip",
+                            true,
+                            123456L
+                    )));
+                    response.add("runtime_item_context", contexts);
+                    harness.send(response);
+                    sawRuntimeRequest = true;
+                } else if (WorkerProtocol.TOOL_CALL.equals(type)
+                        && "chat-runtime-item".equals(WorkerProtocol.string(event, "request_id"))) {
+                    sawTool = "search_knowledge".equals(WorkerProtocol.string(event, "tool"));
+                } else if (WorkerProtocol.COMPLETED.equals(type)
+                        && "chat-runtime-item".equals(WorkerProtocol.string(event, "request_id"))) {
+                    completed = event;
+                }
+            }
+        } finally {
+            fixture.setRuntimeItemQuery(false);
+        }
+        check(sawRuntimeRequest, "AI 工具遇到空静态简介时应向客户端请求运行时 Tooltip");
+        check(sawTool, "运行时物品测试应实际执行 search_knowledge");
+        check("worker blocking answer".equals(WorkerProtocol.string(completed, "answer")),
+                "运行时物品上下文返回后 AI 链路应正常完成");
+        check(fixture.containsRequest("来自当前世界的运行时 Tooltip"),
+                "runtime_item_context 应进入当前模型工具结果");
+    }
+
     private static void saveAiSettings(
             Harness harness,
             String endpoint,
@@ -729,6 +821,7 @@ public final class WorkerIpcSelfTest {
         private final AtomicInteger blockingRequests = new AtomicInteger();
         private final AtomicInteger streamingRequests = new AtomicInteger();
         private volatile boolean chatUnavailable;
+        private volatile boolean runtimeItemQuery;
 
         private AiFixture(HttpServer server, ExecutorService executor) {
             this.server = server;
@@ -762,6 +855,16 @@ public final class WorkerIpcSelfTest {
 
         private void setChatUnavailable(boolean value) {
             chatUnavailable = value;
+        }
+
+        private void setRuntimeItemQuery(boolean value) {
+            runtimeItemQuery = value;
+        }
+
+        private boolean containsRequest(String value) {
+            synchronized (requests) {
+                return requests.stream().anyMatch(request -> request.contains(value));
+            }
         }
 
         private void handle(HttpExchange exchange) throws IOException {
@@ -808,8 +911,18 @@ public final class WorkerIpcSelfTest {
             }
         }
 
-        private static String blockingToolResponse() {
-            return "{\"id\":\"worker-fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"worker-call\",\"type\":\"function\",\"function\":{\"name\":\"search_knowledge\",\"arguments\":\"{\\\"query\\\":\\\"IPC\\\",\\\"language\\\":\\\"zh_cn\\\",\\\"limit\\\":4,\\\"focus\\\":\\\"related\\\",\\\"exclude_document_ids\\\":[]}\"}}]},\"finish_reason\":\"tool_calls\"}]}";
+        private String blockingToolResponse() {
+            String query = runtimeItemQuery
+                    ? "[[item:fixture:dynamic|动态物品]] 当前 Tooltip"
+                    : "IPC";
+            String focus = runtimeItemQuery ? "identify" : "related";
+            String arguments = "{\\\"query\\\":\\\"" + escape(query)
+                    + "\\\",\\\"language\\\":\\\"zh_cn\\\",\\\"limit\\\":4,"
+                    + "\\\"focus\\\":\\\"" + focus
+                    + "\\\",\\\"exclude_document_ids\\\":[]}";
+            return "{\"id\":\"worker-fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"worker-call\",\"type\":\"function\",\"function\":{\"name\":\"search_knowledge\",\"arguments\":\""
+                    + arguments
+                    + "\"}}]},\"finish_reason\":\"tool_calls\"}]}";
         }
 
         private static String blockingTextResponse() {

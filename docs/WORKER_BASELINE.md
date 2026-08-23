@@ -58,6 +58,18 @@ Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用
 }
 ```
 
+已实现运行时物品 Tooltip 的客户端才额外发送可选字段：
+
+```json
+{
+  "client_optional_capabilities": ["runtime_item_context"]
+}
+```
+
+该字段不参与旧客户端的必选能力校验；缺失时 Worker 只使用静态 `item_catalog`。
+Worker 的 `hello_ack` 会声明 `worker_optional_capabilities`，具体客户端仍需确认自己
+已经实现对应回调后再声明 `client_optional_capabilities`。
+
 Worker 返回 `hello_ack` 时包含：
 
 ```json
@@ -67,6 +79,14 @@ Worker 返回 `hello_ack` 时包含：
   "worker_baseline": "worker-baseline-3",
   "worker_java": "21",
   "worker_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
+}
+```
+
+当前 Worker 还会返回：
+
+```json
+{
+  "worker_optional_capabilities": ["runtime_item_context"]
 }
 ```
 

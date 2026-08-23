@@ -35,6 +35,7 @@ import io.ctyx.modpedia.ai.TaskQuestionClassifier;
 import io.ctyx.modpedia.knowledge.BuiltInGuide;
 import io.ctyx.modpedia.api.ChatMessage;
 import io.ctyx.modpedia.api.MessageRole;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 import io.ctyx.modpedia.api.SourceReference;
 import io.ctyx.modpedia.protocol.WorkerPayloadCodec;
 import io.ctyx.modpedia.protocol.WorkerProtocol;
@@ -86,6 +87,7 @@ public final class WorkerChatService {
     private final RetrievalService retrievalService;
     private final WorkerEventSink sink;
     private final RuntimeContextRequester runtimeContextRequester;
+    private final RuntimeItemContextRequester runtimeItemContextRequester;
     private final RecipeQueryRequester recipeQueryRequester;
     private final Predicate<String> requestCancelled;
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<SearchTrace>> requestTraces =
@@ -106,6 +108,7 @@ public final class WorkerChatService {
                 sink,
                 runtimeContextRequester,
                 null,
+                null,
                 ignored -> false
         );
     }
@@ -125,6 +128,29 @@ public final class WorkerChatService {
                 sink,
                 runtimeContextRequester,
                 null,
+                null,
+                requestCancelled
+        );
+    }
+
+    /** 保留旧的配方回调构造器；运行时物品上下文默认关闭。 */
+    public WorkerChatService(
+            Path knowledgeRoot,
+            ConversationStore conversationStore,
+            AiSettingsStore settingsStore,
+            WorkerEventSink sink,
+            RuntimeContextRequester runtimeContextRequester,
+            RecipeQueryRequester recipeQueryRequester,
+            Predicate<String> requestCancelled
+    ) {
+        this(
+                knowledgeRoot,
+                conversationStore,
+                settingsStore,
+                sink,
+                runtimeContextRequester,
+                null,
+                recipeQueryRequester,
                 requestCancelled
         );
     }
@@ -135,6 +161,7 @@ public final class WorkerChatService {
             AiSettingsStore settingsStore,
             WorkerEventSink sink,
             RuntimeContextRequester runtimeContextRequester,
+            RuntimeItemContextRequester runtimeItemContextRequester,
             RecipeQueryRequester recipeQueryRequester,
             Predicate<String> requestCancelled
     ) {
@@ -146,6 +173,7 @@ public final class WorkerChatService {
         this.retrievalService = new RetrievalService(this.knowledgeRoot);
         this.sink = sink;
         this.runtimeContextRequester = runtimeContextRequester;
+        this.runtimeItemContextRequester = runtimeItemContextRequester;
         this.recipeQueryRequester = recipeQueryRequester;
         this.requestCancelled = requestCancelled == null ? ignored -> false : requestCancelled;
     }
@@ -515,6 +543,14 @@ public final class WorkerChatService {
                 new TaskKnowledgeStore(knowledgeRoot),
                 runtimeReader,
                 requestId,
+                runtimeItemContextRequester == null
+                        ? null
+                        : (languageCode, itemIds) -> runtimeItemContextRequester.request(
+                                requestId,
+                                conversationFor(requestId),
+                                languageCode,
+                                itemIds
+                        ),
                 trace -> onSearchTrace(requestId, trace)
         );
     }
@@ -713,6 +749,8 @@ public final class WorkerChatService {
 
     /** 由 WorkerServer 在一次逻辑请求结束后释放临时请求状态。 */
     void releaseRequest(String requestId) {
+        String conversationId = conversationFor(requestId);
+        memoryStore.clearEphemeral(conversationId);
         requestConversations.remove(requestId);
         requestTraces.remove(requestId);
     }
@@ -849,6 +887,16 @@ public final class WorkerChatService {
     @FunctionalInterface
     public interface RuntimeContextRequester {
         TaskRuntimeSnapshot request(String requestId, String conversationId, TaskQuery query);
+    }
+
+    @FunctionalInterface
+    public interface RuntimeItemContextRequester {
+        List<RuntimeItemContext> request(
+                String requestId,
+                String conversationId,
+                String language,
+                List<String> itemIds
+        );
     }
 
     @FunctionalInterface

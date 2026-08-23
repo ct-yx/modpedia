@@ -48,6 +48,8 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
     private final ConversationStore conversations;
     private final SQLChatMemoryStore delegate;
     private final Path databasePath;
+    /** 当前 AI 回合的临时工具结果只留在内存，回合结束即清理。 */
+    private final java.util.Map<String, List<ChatMessage>> ephemeralMessages = new java.util.HashMap<>();
 
     public PersistentChatMemoryStore(ConversationStore conversations) {
         this(conversations, databasePath(conversations));
@@ -97,7 +99,11 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
     public synchronized void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String id = String.valueOf(memoryId);
         List<ChatMessage> safeMessages = messages == null ? List.of() : List.copyOf(messages);
-        List<ChatMessage> compacted = compactToolHistory(safeMessages);
+        ephemeralMessages.put(id, safeMessages);
+        // 运行时 Tooltip 只服务当前模型回合，不进入持久化 SQLite；静态
+        // item_catalog 和手册来源仍按原协议保留。
+        List<ChatMessage> persistedMessages = stripRuntimeItemContext(safeMessages);
+        List<ChatMessage> compacted = compactToolHistory(persistedMessages);
         // 社区实现使用官方 ChatMessageSerializer，能够保留工具调用 ID 和消息顺序。
         delegate.updateMessages(id, compacted);
         clearLegacyMessages(id);
@@ -106,6 +112,7 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
     @Override
     public synchronized void deleteMessages(Object memoryId) {
         String id = String.valueOf(memoryId);
+        ephemeralMessages.remove(id);
         delegate.deleteMessages(id);
         clearLegacyMessages(id);
     }
@@ -128,6 +135,7 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             if (sanitized.size() != messages.size()) {
                 // 修复失败尾部时保留此前完整工具证据，供 prepareForRetry 精确移除
                 // 当前用户消息；下一次正常上下文更新再执行成本压缩。
+                ephemeralMessages.put(memoryId, sanitized);
                 delegate.updateMessages(memoryId, sanitized);
                 clearLegacyMessages(memoryId);
             }
@@ -200,6 +208,10 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
     }
 
     private List<ChatMessage> loadMessages(String memoryId) {
+        List<ChatMessage> ephemeral = ephemeralMessages.get(memoryId);
+        if (ephemeral != null) {
+            return List.copyOf(ephemeral);
+        }
         try {
             List<ChatMessage> stored = delegate.getMessages(memoryId);
             if (!stored.isEmpty()) {
@@ -230,6 +242,13 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             LOG.warning("AI legacy memory JSON is invalid: conversation="
                     + memoryId + ", reason=" + messageOf(exception));
             return List.of();
+        }
+    }
+
+    /** 请求结束后清理当前回合的临时 Tooltip，下一次对话只从持久化事实恢复。 */
+    public synchronized void clearEphemeral(String memoryId) {
+        if (memoryId != null && !memoryId.isBlank()) {
+            ephemeralMessages.remove(memoryId);
         }
     }
 
@@ -386,6 +405,11 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
             if (COMPACTED_MARKER.equals(key)) {
                 return;
             }
+            if ("runtime_item_context".equals(key)
+                    || "runtime_item_context_count".equals(key)
+                    || "runtime_item_context_truncated".equals(key)) {
+                return;
+            }
             if ("results".equals(key) || "item_context".equals(key)
                     || "timeline".equals(key) || "requirements".equals(key)
                     || "rewards".equals(key) || "candidates".equals(key)
@@ -400,6 +424,57 @@ public final class PersistentChatMemoryStore implements ChatMemoryStore {
         target.addProperty(COMPACTED_MARKER, true);
         target.addProperty("history_note", "较早工具证据已压缩；保留来源、标题和正文首尾片段，当前轮结果保持完整");
         return target;
+    }
+
+    /** 从持久化消息中移除临时 Tooltip；工具结果仍可保留搜索结果和来源。 */
+    static List<ChatMessage> stripRuntimeItemContext(List<ChatMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        List<ChatMessage> result = new ArrayList<>(messages.size());
+        for (ChatMessage message : messages) {
+            if (!(message instanceof ToolExecutionResultMessage tool) || !tool.hasSingleText()) {
+                result.add(message);
+                continue;
+            }
+            String original = tool.text();
+            String sanitized = stripRuntimeItemContext(original);
+            if (sanitized.equals(original)) {
+                result.add(message);
+                continue;
+            }
+            var replacement = ToolExecutionResultMessage.builder()
+                    .id(tool.id())
+                    .toolName(tool.toolName())
+                    .text(sanitized);
+            if (tool.isError() != null) {
+                replacement.isError(tool.isError());
+            }
+            if (!tool.attributes().isEmpty()) {
+                replacement.attributes(tool.attributes());
+            }
+            result.add(replacement.build());
+        }
+        return List.copyOf(result);
+    }
+
+    static String stripRuntimeItemContext(String text) {
+        if (text == null || text.isBlank()) {
+            return text == null ? "" : text;
+        }
+        try {
+            JsonElement parsed = JsonParser.parseString(text);
+            if (!parsed.isJsonObject()) {
+                return text;
+            }
+            JsonObject object = parsed.getAsJsonObject().deepCopy();
+            boolean changed = object.remove("runtime_item_context") != null;
+            changed |= object.remove("runtime_item_context_count") != null;
+            changed |= object.remove("runtime_item_context_truncated") != null;
+            return changed ? JSON.toJson(object) : text;
+        } catch (RuntimeException ignored) {
+            return text;
+        }
     }
 
     private static JsonElement compactJsonValue(JsonElement value, String key) {

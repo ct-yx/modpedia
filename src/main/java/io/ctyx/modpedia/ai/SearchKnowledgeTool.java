@@ -30,6 +30,7 @@ import io.ctyx.modpedia.task.TaskSearchSummary;
 import io.ctyx.modpedia.task.TaskStatus;
 import io.ctyx.modpedia.task.TaskTimelineEntry;
 import io.ctyx.modpedia.task.TaskTimelineEventType;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -94,6 +95,7 @@ public final class SearchKnowledgeTool {
     private final TaskKnowledgeStore taskStore;
     private final TaskRuntimeReader taskRuntimeReader;
     private final String runtimeRequestKey;
+    private final RuntimeItemContextRequester runtimeItemContextRequester;
     private final AtomicInteger roundCounter;
     private final Consumer<SearchTrace> traceSink;
     private boolean taskRuntimeRead;
@@ -107,6 +109,9 @@ public final class SearchKnowledgeTool {
     // 同一文档在不同补搜轮次可能返回不同的最佳段落；只按段落身份去重，
     // 否则第一轮命中概览页后，后续步骤/配方查询永远拿不到同一手册的细节页。
     private final Set<String> seenSegments = new LinkedHashSet<>();
+    /** 同一聊天请求内每个物品 ID 最多触发一次客户端运行时读取。 */
+    private final Set<String> runtimeItemContextRequestedIds = new LinkedHashSet<>();
+    private final Map<String, RuntimeItemContext> runtimeItemContexts = new LinkedHashMap<>();
 
     public SearchKnowledgeTool(
             RetrievalService retrievalService,
@@ -163,6 +168,35 @@ public final class SearchKnowledgeTool {
             String runtimeRequestKey,
             Consumer<SearchTrace> traceSink
     ) {
+        this(
+                retrievalService,
+                defaultLanguage,
+                maxResults,
+                maxContextChars,
+                round,
+                maxRounds,
+                taskStore,
+                taskRuntimeReader,
+                runtimeRequestKey,
+                null,
+                traceSink
+        );
+    }
+
+    /** AI 会话使用的完整构造器；运行时物品 Tooltip 是可选回调。 */
+    public SearchKnowledgeTool(
+            RetrievalService retrievalService,
+            SearchLanguage defaultLanguage,
+            int maxResults,
+            int maxContextChars,
+            int round,
+            int maxRounds,
+            TaskKnowledgeStore taskStore,
+            TaskRuntimeReader taskRuntimeReader,
+            String runtimeRequestKey,
+            RuntimeItemContextRequester runtimeItemContextRequester,
+            Consumer<SearchTrace> traceSink
+    ) {
         this.retrievalService = retrievalService;
         this.defaultLanguage = defaultLanguage == null || defaultLanguage == SearchLanguage.AUTO
                 ? SearchLanguage.ZH_CN
@@ -178,6 +212,7 @@ public final class SearchKnowledgeTool {
         this.runtimeRequestKey = runtimeRequestKey == null || runtimeRequestKey.isBlank()
                 ? "tool-" + System.identityHashCode(this)
                 : runtimeRequestKey.strip();
+        this.runtimeItemContextRequester = runtimeItemContextRequester;
         this.traceSink = traceSink == null ? ignored -> { } : traceSink;
     }
 
@@ -239,6 +274,11 @@ public final class SearchKnowledgeTool {
                 normalizedQuery,
                 requestedLanguage
         );
+        List<RuntimeItemContext> runtimeItemContext = requestRuntimeItemContext(
+                itemQuery,
+                itemContext,
+                requestedLanguage
+        );
         String knowledgeQuery = itemQuery.searchableText();
         if (!itemContext.isEmpty()) {
             knowledgeQuery = knowledgeQuery + " " + itemContext.stream()
@@ -250,7 +290,7 @@ public final class SearchKnowledgeTool {
         if (!seenQueries.add(queryKey)) {
             return finish(output, currentRound, SearchStatus.NO_MATCH, List.of(), false,
                     "重复查询，请改写关键词或针对缺失的资料类型继续搜索", normalizedQuery, normalizedLanguage,
-                    normalizedFocus, itemContext);
+                    normalizedFocus, itemContext, runtimeItemContext);
         }
 
         List<SearchResponse> responses = searchLanguages(
@@ -336,7 +376,7 @@ public final class SearchKnowledgeTool {
         }
         return finish(output, currentRound, selected.isEmpty() ? combinedStatus(responses) : SearchStatus.READY, selected, hasMore,
                 fresh.isEmpty() ? "当前查询没有新增来源，请改写查询或缩小到具体名称、机器或步骤" : "",
-                normalizedQuery, normalizedLanguage, normalizedFocus, itemContext);
+                normalizedQuery, normalizedLanguage, normalizedFocus, itemContext, runtimeItemContext);
     }
 
     @Tool(
@@ -1122,6 +1162,60 @@ public final class SearchKnowledgeTool {
         return hits * 160;
     }
 
+    /**
+     * 只对已确认 ID 且静态 Tooltip 为空的物品发起一次客户端读取。显示名称查询
+     * 不会触发运行时读取，旧客户端或失败回调自然退回 item_catalog。
+     */
+    private List<RuntimeItemContext> requestRuntimeItemContext(
+            ItemQueryParser.Parsed itemQuery,
+            List<ItemCatalogEntry> itemContext,
+            SearchLanguage language
+    ) {
+        if (runtimeItemContextRequester == null || itemQuery == null || itemQuery.itemIds().isEmpty()) {
+            return List.of();
+        }
+        Set<String> staticallySufficient = itemContext == null
+                ? Set.of()
+                : itemContext.stream()
+                .filter(entry -> entry != null && !entry.descriptionMarkdown().isBlank())
+                .map(ItemCatalogEntry::itemId)
+                .collect(java.util.stream.Collectors.toSet());
+        List<String> pending = new ArrayList<>();
+        for (String itemId : itemQuery.itemIds()) {
+            if (itemId == null || itemId.isBlank() || staticallySufficient.contains(itemId)
+                    || runtimeItemContextRequestedIds.contains(itemId)) {
+                continue;
+            }
+            runtimeItemContextRequestedIds.add(itemId);
+            pending.add(itemId);
+            if (pending.size() >= io.ctyx.modpedia.protocol.WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS) {
+                break;
+            }
+        }
+        if (!pending.isEmpty()) {
+            try {
+                List<RuntimeItemContext> returned = runtimeItemContextRequester.request(
+                        language == null ? defaultLanguage.code() : language.code(),
+                        List.copyOf(pending)
+                );
+                if (returned != null) {
+                    returned.stream()
+                            .filter(RuntimeItemContext::usable)
+                            .filter(context -> pending.contains(context.itemId()))
+                            .forEach(context -> runtimeItemContexts.putIfAbsent(
+                                    context.itemId(), context
+                            ));
+                }
+            } catch (Throwable ignored) {
+                // 运行时 Tooltip 是增强数据；任何失败都保留静态搜索结果。
+            }
+        }
+        return itemQuery.itemIds().stream()
+                .map(runtimeItemContexts::get)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
     private String finish(
             JsonObject output,
             int round,
@@ -1143,6 +1237,7 @@ public final class SearchKnowledgeTool {
                 query,
                 language,
                 focus,
+                List.of(),
                 List.of()
         );
     }
@@ -1159,9 +1254,40 @@ public final class SearchKnowledgeTool {
             String focus,
             List<ItemCatalogEntry> itemContext
     ) {
+        return finish(
+                output,
+                round,
+                status,
+                results,
+                hasMore,
+                hint,
+                query,
+                language,
+                focus,
+                itemContext,
+                List.of()
+        );
+    }
+
+    private String finish(
+            JsonObject output,
+            int round,
+            SearchStatus status,
+            List<SearchResult> results,
+            boolean hasMore,
+            String hint,
+            String query,
+            String language,
+            String focus,
+            List<ItemCatalogEntry> itemContext,
+            List<RuntimeItemContext> runtimeItemContext
+    ) {
         JsonArray documents = new JsonArray();
         Map<String, SourceReference> sourcesByDocument = new LinkedHashMap<>();
         List<ItemCatalogEntry> actualItemContext = itemContext == null ? List.of() : itemContext;
+        List<RuntimeItemContext> actualRuntimeItemContext = runtimeItemContext == null
+                ? List.of()
+                : runtimeItemContext;
         JsonArray itemContexts = new JsonArray();
         int usedChars = 0;
         int itemContextBudget = Math.max(0, Math.min(8_000, maxContextChars / 3));
@@ -1208,6 +1334,55 @@ public final class SearchKnowledgeTool {
             item.addProperty("source_mod", entry.sourceMod());
             item.addProperty("ambiguous", itemNameCounts.getOrDefault(normalize(entry.displayName()), 0) > 1);
             itemContexts.add(item);
+            usedChars += entryChars;
+        }
+        JsonArray runtimeItemContexts = new JsonArray();
+        int runtimeItemContextBudget = Math.max(0, Math.min(16_000, maxContextChars / 3));
+        boolean runtimeItemContextTruncated = actualRuntimeItemContext.size()
+                > io.ctyx.modpedia.protocol.WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS;
+        int runtimeIndex = 0;
+        int runtimeUsedChars = 0;
+        for (RuntimeItemContext context : actualRuntimeItemContext) {
+            if (runtimeIndex++ >= io.ctyx.modpedia.protocol.WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS
+                    || context == null || !context.usable()) {
+                runtimeItemContextTruncated = true;
+                break;
+            }
+            String displayName = truncate(context.displayName(),
+                    io.ctyx.modpedia.protocol.WorkerProtocol.MAX_RUNTIME_ITEM_ID_CHARS);
+            String tooltip = truncate(context.tooltipMarkdown(),
+                    io.ctyx.modpedia.protocol.WorkerProtocol.MAX_RUNTIME_ITEM_TEXT_CHARS);
+            int remaining = Math.min(
+                    runtimeItemContextBudget - runtimeUsedChars,
+                    Math.max(0, maxContextChars - usedChars)
+            );
+            int entryChars = displayName.length() + tooltip.length();
+            if (remaining <= 0) {
+                runtimeItemContextTruncated = true;
+                break;
+            }
+            if (entryChars > remaining) {
+                if (displayName.length() > remaining) {
+                    displayName = truncate(displayName, remaining);
+                    tooltip = "";
+                } else {
+                    tooltip = truncate(tooltip, Math.max(0, remaining - displayName.length()));
+                }
+                entryChars = displayName.length() + tooltip.length();
+                runtimeItemContextTruncated = true;
+            }
+            if (entryChars == 0) {
+                continue;
+            }
+            JsonObject item = new JsonObject();
+            item.addProperty("item_id", context.itemId());
+            item.addProperty("language", context.language());
+            item.addProperty("display_name", displayName);
+            item.addProperty("tooltip_markdown", tooltip);
+            item.addProperty("world_ready", context.worldReady());
+            item.addProperty("captured_at", context.capturedAt());
+            runtimeItemContexts.add(item);
+            runtimeUsedChars += entryChars;
             usedChars += entryChars;
         }
         for (SearchResult result : results) {
@@ -1258,6 +1433,9 @@ public final class SearchKnowledgeTool {
         output.addProperty("item_context_count", itemContexts.size());
         output.addProperty("item_context_truncated", itemContextTruncated);
         output.add("item_context", itemContexts);
+        output.addProperty("runtime_item_context_count", runtimeItemContexts.size());
+        output.addProperty("runtime_item_context_truncated", runtimeItemContextTruncated);
+        output.add("runtime_item_context", runtimeItemContexts);
         output.add("results", documents);
         if (!hint.isBlank()) {
             output.addProperty("hint", hint);
@@ -1362,5 +1540,10 @@ public final class SearchKnowledgeTool {
         return documentKey(result.documentId())
                 + "|" + normalize(result.headingPath())
                 + "|" + normalize(result.segmentMarkdown());
+    }
+
+    @FunctionalInterface
+    public interface RuntimeItemContextRequester {
+        List<RuntimeItemContext> request(String language, List<String> itemIds);
     }
 }

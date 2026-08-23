@@ -94,6 +94,9 @@ Worker 版本引用：<commit/ref>
 具体版本对话只修改自己的适配层和测试。若发现 Worker 仍缺少能力，停止继续复制逻辑，
 重新生成 `[WORKER_CHANGE_REQUEST]` 返回阶段 A。
 
+本次运行时物品 Tooltip 的具体适配内容见
+[WORKER_RUNTIME_ITEM_CONTEXT_CLIENT_PROMPT.md](WORKER_RUNTIME_ITEM_CONTEXT_CLIENT_PROMPT.md)。
+
 ## 3. 基线和发布规则
 
 - 同一 `worker-baseline-N` 的不同 ModPedia 版本和游戏实例共享同一套用户级 lib。
