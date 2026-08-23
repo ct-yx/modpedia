@@ -7,8 +7,11 @@ import io.ctyx.modpedia.api.SourceReference;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /** UI 会话文件、历史操作和旧版 memory JSON 兼容的纯 Java 回归测试。 */
 public final class ConversationStoreSelfTest {
@@ -83,6 +86,49 @@ public final class ConversationStoreSelfTest {
             Files.writeString(root.resolve("conversation-corrupt.json"), "not-json");
             ConversationStore isolated = new ConversationStore(root);
             check(!isolated.activeId().isBlank(), "损坏的单个会话文件不应阻塞其他会话加载");
+
+            ConversationStore bounded = new ConversationStore(root.resolve("bounded"));
+            String boundedId = bounded.activeId();
+            for (int index = 0; index < 240; index++) {
+                bounded.appendMessage(boundedId, new ChatMessage(
+                        MessageRole.USER,
+                        "历史消息-" + index + " ".repeat(1000),
+                        List.of()
+                ));
+            }
+            bounded.appendMessage(boundedId, new ChatMessage(
+                    MessageRole.ASSISTANT,
+                    "超长回答" + "内容".repeat(100_000),
+                    List.of()
+            ));
+            bounded.updateMemoryMessages(boundedId, "m".repeat(1_100_000));
+            check(bounded.active().messages().size() <= 200, "会话消息数量必须有上限");
+            var latest = bounded.active().messages().get(bounded.active().messages().size() - 1);
+            check(latest.markdown().codePointCount(0, latest.markdown().length()) <= 64_001,
+                    "单条会话正文必须有字符上限");
+            check(bounded.memoryMessagesJson(boundedId).isBlank(), "超大旧版上下文应被清理");
+            try (var files = Files.list(root.resolve("bounded"))) {
+                files.filter(path -> path.getFileName().toString().endsWith(".json"))
+                        .forEach(path -> {
+                            try {
+                                check(Files.size(path) <= 8L * 1024L * 1024L,
+                                        "会话文件不得超过 8 MiB：" + path);
+                            } catch (Exception exception) {
+                                throw new AssertionError(exception);
+                            }
+                        });
+            }
+            try {
+                Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(root.resolve("bounded"));
+                check(permissions.equals(EnumSet.of(
+                                PosixFilePermission.OWNER_READ,
+                                PosixFilePermission.OWNER_WRITE,
+                                PosixFilePermission.OWNER_EXECUTE
+                        )),
+                        "会话目录应限制为当前用户权限");
+            } catch (UnsupportedOperationException ignored) {
+                // Windows 等非 POSIX 文件系统使用系统默认用户 ACL。
+            }
             System.out.println("ModPedia conversation store self-test passed");
         } finally {
             deleteTree(root);

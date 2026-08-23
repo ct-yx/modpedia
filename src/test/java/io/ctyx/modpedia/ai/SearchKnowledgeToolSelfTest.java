@@ -312,6 +312,7 @@ public final class SearchKnowledgeToolSelfTest {
             check(multiIds.contains("ae2:pressure") && multiIds.contains("ae2:controller"),
                     "中文多实体查询应拆开召回压力容器和控制器，而不是要求同一段同时出现两者");
             testChineseItemNameToEnglishManual(root);
+            testItemContextBudget(root);
             testIncompleteToolTurnCleanup();
             testPersistentContextRepair(conversationsRoot);
             System.out.println("ModPedia search knowledge tool self-test passed");
@@ -372,6 +373,36 @@ public final class SearchKnowledgeToolSelfTest {
                         .anyMatch(element -> element.getAsJsonObject().get("document_id").getAsString()
                                 .equals("pneumaticcraft:pressure-tubes-en")),
                 "中文物品名不能只返回 ModPedia 示例页或其它压力设备");
+    }
+
+    private static void testItemContextBudget(Path root) throws Exception {
+        List<ItemCatalogEntry> entries = new ArrayList<>();
+        for (int index = 0; index < 80; index++) {
+            entries.add(new ItemCatalogEntry(
+                    "fixture:item_" + index,
+                    "zh_cn",
+                    "压力管道",
+                    "- " + "非常长的 Tooltip 描述。".repeat(500),
+                    "fixture",
+                    "budget-" + index
+            ));
+        }
+        KnowledgeDatabase.syncItemCatalog(root, "zh_cn", entries);
+        SearchKnowledgeTool tool = new SearchKnowledgeTool(
+                new RetrievalService(root),
+                SearchLanguage.ZH_CN,
+                8,
+                4_000,
+                1,
+                ignored -> { }
+        );
+        JsonObject output = parse(tool.search("压力管道", "zh_cn", 8, "identify", List.of()));
+        check(output.get("item_context_count").getAsInt() <= 16,
+                "同名物品上下文必须有数量上限");
+        check(output.get("item_context_truncated").getAsBoolean(),
+                "超出物品上下文预算时必须标记截断");
+        check(output.get("context_chars").getAsInt() <= 4_000,
+                "物品简介和手册段落必须共用上下文预算");
     }
 
     private static KnowledgeDatabase.DocumentInput input(String id, String title, String body) {

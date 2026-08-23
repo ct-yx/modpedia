@@ -12,6 +12,10 @@ import java.util.Map;
  * 类，确保独立 Worker 可以直接读取配置目录。</p>
  */
 public final class WorkerSnbtParser {
+    public static final int MAX_NESTING_DEPTH = 64;
+    private static final int MAX_VALUES = 500_000;
+    private static final int MAX_COLLECTION_ENTRIES = 100_000;
+    private static final int MAX_STRING_CHARS = 256_000;
     private WorkerSnbtParser() {
     }
 
@@ -130,22 +134,34 @@ public final class WorkerSnbtParser {
     private static final class Parser {
         private final String source;
         private int index;
+        private int depth;
+        private int values;
 
         private Parser(String source) {
             this.source = source;
         }
 
         private Object value() {
-            skipWhitespace();
-            if (end()) {
-                throw error("缺少值");
+            if (++values > MAX_VALUES) {
+                throw error("SNBT 节点数量超过上限");
             }
-            return switch (source.charAt(index)) {
-                case '{' -> compoundValue();
-                case '[' -> listValue();
-                case '\"', '\'' -> quoted();
-                default -> bareValue();
-            };
+            if (++depth > MAX_NESTING_DEPTH) {
+                throw error("SNBT 嵌套深度超过上限");
+            }
+            try {
+                skipWhitespace();
+                if (end()) {
+                    throw error("缺少值");
+                }
+                return switch (source.charAt(index)) {
+                    case '{' -> compoundValue();
+                    case '[' -> listValue();
+                    case '\"', '\'' -> quoted();
+                    default -> bareValue();
+                };
+            } finally {
+                depth--;
+            }
         }
 
         private Map<String, Object> compoundValue() {
@@ -153,6 +169,9 @@ public final class WorkerSnbtParser {
             Map<String, Object> result = new LinkedHashMap<>();
             skipWhitespace();
             while (!end() && source.charAt(index) != '}') {
+                if (result.size() >= MAX_COLLECTION_ENTRIES) {
+                    throw error("SNBT compound 条目数量超过上限");
+                }
                 String name = keyValue();
                 skipWhitespace();
                 expect(':');
@@ -181,6 +200,9 @@ public final class WorkerSnbtParser {
             List<Object> result = new ArrayList<>();
             skipWhitespace();
             while (!end() && source.charAt(index) != ']') {
+                if (result.size() >= MAX_COLLECTION_ENTRIES) {
+                    throw error("SNBT list 条目数量超过上限");
+                }
                 result.add(value());
                 skipWhitespace();
                 if (!end() && source.charAt(index) == ',') {
@@ -226,6 +248,9 @@ public final class WorkerSnbtParser {
                 } else {
                     result.append(current);
                 }
+                if (result.length() > MAX_STRING_CHARS) {
+                    throw error("SNBT 字符串长度超过上限");
+                }
             }
             throw error("字符串没有闭合");
         }
@@ -238,6 +263,9 @@ public final class WorkerSnbtParser {
                     break;
                 }
                 index++;
+            }
+            if (index - start > MAX_STRING_CHARS) {
+                throw error("SNBT 值长度超过上限");
             }
             String token = source.substring(start, index);
             if (token.isBlank()) {

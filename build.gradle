@@ -83,6 +83,8 @@ minecraft {
 // "optional", meaning it will not be pulled by dependents of this mod.
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+    // 只供独立 Worker JVM 使用；不会作为 Forge 游戏运行时依赖解析。
+    workerOnlyRuntime
 }
 
 dependencies {
@@ -200,19 +202,27 @@ dependencies {
             strictly '[1.0.0, 2.0)'
         }
     }
-    // Gson 已由 Minecraft/NeoForge 运行时提供。不要把它作为 Jar-in-Jar
-    // 嵌入，否则发布模组会和游戏自身的 com.google.gson 模块重复。
-    compileOnly("com.google.code.gson:gson:2.11.0") {
+    // 游戏代码继续使用运行时提供的 Gson；Worker 专用副本在下面的自定义资源目录
+    // 打包，由客户端只提取到 Worker 的隔离 classpath，不进入 Forge 类加载器。
+    compileOnly("com.google.code.gson:gson:${gson_version}") {
         version {
-            strictly '[2.11, 2.12)'
+            strictly "[${gson_version}, 2.12)"
         }
     }
-    // SLF4J API 由 NeoForge/Minecraft 运行时提供。Worker 复用游戏进程的基础
+    // SLF4J API 由 Forge/Minecraft 运行时提供。Worker 复用游戏进程的基础
     // classpath，因此只保留编译依赖和开发运行时依赖，不能再把同一个 API
     // 作为 Jar-in-Jar 嵌入模组，否则会和整合包的 org.slf4j 模块重复。
     compileOnly("org.slf4j:slf4j-api:2.0.9")
     // 基准报告和测试夹具直接读取 JSON。
-    testImplementation "com.google.code.gson:gson:2.11.0"
+    testImplementation "com.google.code.gson:gson:${gson_version}"
+
+    // Gson 不能继续只依赖游戏 JVM：WorkerServer 的 JSONL 协议直接使用 JsonElement。
+    // 该配置不参与 jarJar，避免第二份 Gson 被 Forge 游戏类加载器发现。
+    workerOnlyRuntime("com.google.code.gson:gson:${gson_version}") {
+        version {
+            strictly "[${gson_version}, 2.12)"
+        }
+    }
 
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
@@ -235,6 +245,21 @@ dependencies {
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
+}
+
+// 将 Worker 专用 Gson 保存在不可被游戏 Mod 类加载器当作普通 Jar-in-Jar 依赖的路径。
+// ModPediaBridge 只在启动子 JVM 时提取 META-INF/modpedia-worker/*.jar。
+tasks.named('jar', Jar).configure {
+    from(project.configurations.workerOnlyRuntime) {
+        into 'META-INF/modpedia-worker'
+    }
+}
+tasks.named('jarJar', Jar).configure {
+    // ForgeGradle 的最终 jarJar 任务不一定复用 slim jar 的资源输入；在最终
+    // 发布 JAR 上再次声明，确保 Worker 专用 Gson 一定随发布物携带。
+    from(project.configurations.workerOnlyRuntime) {
+        into 'META-INF/modpedia-worker'
+    }
 }
 
 def searchSelfTest = tasks.register('searchSelfTest', JavaExec) {
@@ -404,6 +429,7 @@ def workerTokenEstimatorSelfTest = tasks.register('workerTokenEstimatorSelfTest'
     mainClass = 'io.ctyx.modpedia.worker.WorkerTokenEstimatorSelfTest'
     systemProperty 'modpedia.langchain4j.version', langchain4j_version
     systemProperty 'modpedia.jtokkit.version', jtokkit_version
+    systemProperty 'modpedia.gson.version', gson_version
 }
 
 def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', JavaExec) {
@@ -429,6 +455,7 @@ def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     systemProperty 'modpedia.worker.jar', tasks.named('jarJar').flatMap { it.archiveFile }.get().asFile.absolutePath
     systemProperty 'modpedia.langchain4j.version', langchain4j_version
     systemProperty 'modpedia.jtokkit.version', jtokkit_version
+    systemProperty 'modpedia.gson.version', gson_version
 }
 
 def modPediaPathsSelfTest = tasks.register('modPediaPathsSelfTest', JavaExec) {

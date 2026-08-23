@@ -33,7 +33,10 @@ public final class MarkdownKnowledgeSourceImporter implements KnowledgeSourceImp
             Path sourceRoot,
             KnowledgeSourceDescriptor source
     ) throws IOException {
-        Path documentsRoot = sourceRoot.resolve(source.localRoot().isBlank() ? "documents" : source.localRoot());
+        Path documentsRoot = KnowledgePathGuard.resolve(
+                sourceRoot,
+                source.localRoot().isBlank() ? "documents" : source.localRoot()
+        );
         if (!Files.isDirectory(documentsRoot)) {
             throw new IOException("Wiki 文档目录不存在：" + documentsRoot);
         }

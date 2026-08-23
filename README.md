@@ -16,10 +16,10 @@ English version: [README.en.md](README.en.md)
 | 项目 | 开发基线 |
 | --- | --- |
 | Minecraft | **1.20.1** |
-| Forge | **47.4.16**（兼容 **21.1.x**） |
-| Java | **21** |
+| Forge | **47.4.16**（1.20.1） |
+| Java | **17** |
 | Mod ID | **modpedia** |
-| Worker 基线 | **worker-baseline-1** |
+| Worker 基线 | **worker-baseline-2** |
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 Forge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
@@ -160,7 +160,7 @@ config/modpedia/
 依次回退，全部不可用时才回退到配置目录父级。这样启动器覆盖 `user.home` 时，仍能使用真实用户的
 `~/.modpedia/`。旧启动器目录中的空 `ai.json` 会清理；用户级配置不存在时才迁移旧配置，已有用户级
 配置始终优先。旧的 `runtime/worker/lib/` 也会迁移到固定的
-`~/.modpedia/worker/lib/worker-baseline-1/`，而日志、IPC 状态和临时 payload 仍留在当前实例的
+`~/.modpedia/worker/lib/worker-baseline-2/`，而日志、IPC 状态和临时 payload 仍留在当前实例的
 `config/modpedia/runtime/worker/`。
 
 `knowledge.db` 使用 Schema v7。模组手册、Wiki、FTBQ 静态任务定义和物品目录共用这个文件，但通过
@@ -204,7 +204,7 @@ config/modpedia/runtime/knowledge/state.json
 
 这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
 数据库文件也属于派生文件，不应进入整合包。Worker 的共享依赖库位于用户目录
-`~/.modpedia/worker/lib/worker-baseline-1/`，也不属于整合包，不要复制或打包；同一 Worker 基线的
+`~/.modpedia/worker/lib/worker-baseline-2/`，也不属于整合包，不要复制或打包；同一 Worker 基线的
 不同 ModPedia 版本和游戏实例会复用该目录。Worker 依赖发生变化时会递增基线编号。
 
 整合包作者需要随包保留的知识源如下：

@@ -31,6 +31,9 @@ public final class WorkerTaskStaticImporter {
     private static final String SOURCE_PREFIX = "ftbquests:static:";
     private static final long MAX_TASK_FILE_BYTES = 8L * 1024L * 1024L;
     private static final long MAX_LANGUAGE_FILE_BYTES = 4L * 1024L * 1024L;
+    private static final int MAX_TASK_FILES = 10_000;
+    private static final int MAX_LANGUAGE_FILES = 512;
+    private static final long MAX_TASK_TOTAL_BYTES = 256L * 1024L * 1024L;
 
     public ImportResult importDirectory(Path questsRoot) throws IOException {
         Path root = questsRoot == null ? null : questsRoot.toAbsolutePath().normalize();
@@ -41,8 +44,9 @@ public final class WorkerTaskStaticImporter {
             return new ImportResult(false, true, List.of(), List.of());
         }
 
-        Map<String, String> english = loadLanguage(root, "en_us");
-        Map<String, String> chinese = loadLanguage(root, "zh_cn");
+        ImportBudget budget = new ImportBudget(MAX_TASK_FILES, MAX_TASK_TOTAL_BYTES);
+        Map<String, String> english = loadLanguage(root, "en_us", budget);
+        Map<String, String> chinese = loadLanguage(root, "zh_cn", budget);
         Map<String, String> localized = new LinkedHashMap<>(english);
         localized.putAll(chinese);
 
@@ -52,10 +56,19 @@ public final class WorkerTaskStaticImporter {
             return new ImportResult(true, true, List.of(), List.of());
         }
         try (Stream<Path> files = Files.walk(chaptersRoot)) {
-            chapterFiles = files.filter(Files::isRegularFile)
+            List<Path> candidates = files.filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".snbt"))
                     .sorted()
                     .toList();
+            if (candidates.size() > MAX_TASK_FILES) {
+                return new ImportResult(
+                        true,
+                        false,
+                        List.of(),
+                        List.of("Worker 任务章节文件数量超过上限")
+                );
+            }
+            chapterFiles = candidates;
         }
 
         List<TaskSnapshot> snapshots = new ArrayList<>();
@@ -63,7 +76,7 @@ public final class WorkerTaskStaticImporter {
         boolean complete = true;
         for (Path file : chapterFiles) {
             try {
-                snapshots.add(parseChapter(root, file, localized));
+                snapshots.add(parseChapter(root, file, localized, budget));
             } catch (RuntimeException | IOException exception) {
                 complete = false;
                 warnings.add("Worker 解析任务章节失败：" + root.relativize(file).toString().replace('\\', '/'));
@@ -72,8 +85,13 @@ public final class WorkerTaskStaticImporter {
         return new ImportResult(true, complete, snapshots, warnings);
     }
 
-    private TaskSnapshot parseChapter(Path root, Path file, Map<String, String> localized) throws IOException {
-        byte[] bytes = readLimitedBytes(file, MAX_TASK_FILE_BYTES);
+    private TaskSnapshot parseChapter(
+            Path root,
+            Path file,
+            Map<String, String> localized,
+            ImportBudget budget
+    ) throws IOException {
+        byte[] bytes = readLimitedBytes(file, MAX_TASK_FILE_BYTES, budget);
         String raw = new String(bytes, StandardCharsets.UTF_8);
         Map<String, Object> chapter = WorkerSnbtParser.compound(WorkerSnbtParser.parse(raw));
         String relative = root.relativize(file).toString().replace('\\', '/');
@@ -231,7 +249,11 @@ public final class WorkerTaskStaticImporter {
         return normalized.contains("random") || normalized.contains("loot");
     }
 
-    private Map<String, String> loadLanguage(Path root, String language) throws IOException {
+    private Map<String, String> loadLanguage(
+            Path root,
+            String language,
+            ImportBudget budget
+    ) throws IOException {
         Path languageRoot = root.resolve("lang");
         if (!Files.isDirectory(languageRoot)) {
             return Map.of();
@@ -239,22 +261,27 @@ public final class WorkerTaskStaticImporter {
         Map<String, String> result = new LinkedHashMap<>();
         Path flat = languageRoot.resolve(language + ".snbt");
         if (Files.isRegularFile(flat)) {
-            mergeLanguage(result, readLimited(flat, MAX_LANGUAGE_FILE_BYTES));
+            mergeLanguage(result, readLimited(flat, MAX_LANGUAGE_FILE_BYTES, budget));
         }
         Path nested = languageRoot.resolve(language);
         if (Files.isDirectory(nested)) {
             try (Stream<Path> files = Files.walk(nested)) {
-                for (Path file : files.filter(Files::isRegularFile)
+                List<Path> languageFiles = files.filter(Files::isRegularFile)
                         .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".snbt"))
-                        .sorted().toList()) {
-                    mergeLanguage(result, readLimited(file, MAX_LANGUAGE_FILE_BYTES));
+                        .sorted().toList();
+                if (languageFiles.size() > MAX_LANGUAGE_FILES) {
+                    throw new IOException("Worker 任务语言文件数量超过上限");
+                }
+                for (Path file : languageFiles) {
+                    mergeLanguage(result, readLimited(file, MAX_LANGUAGE_FILE_BYTES, budget));
                 }
             }
         }
         return Map.copyOf(result);
     }
 
-    private byte[] readLimitedBytes(Path file, long limit) throws IOException {
+    private byte[] readLimitedBytes(Path file, long limit, ImportBudget budget) throws IOException {
+        budget.reserveFile();
         try (InputStream input = Files.newInputStream(file)) {
             ByteArrayOutputStream output = new ByteArrayOutputStream(8192);
             byte[] buffer = new byte[8192];
@@ -267,12 +294,14 @@ public final class WorkerTaskStaticImporter {
                 }
                 output.write(buffer, 0, read);
             }
-            return output.toByteArray();
+            byte[] bytes = output.toByteArray();
+            budget.reserveBytes(bytes.length);
+            return bytes;
         }
     }
 
-    private String readLimited(Path file, long limit) throws IOException {
-        return new String(readLimitedBytes(file, limit), StandardCharsets.UTF_8);
+    private String readLimited(Path file, long limit, ImportBudget budget) throws IOException {
+        return new String(readLimitedBytes(file, limit, budget), StandardCharsets.UTF_8);
     }
 
     private void mergeLanguage(Map<String, String> output, String raw) {
@@ -331,6 +360,33 @@ public final class WorkerTaskStaticImporter {
 
     public static String sourcePrefix() {
         return SOURCE_PREFIX;
+    }
+
+    private static final class ImportBudget {
+        private final int maxFiles;
+        private final long maxBytes;
+        private int files;
+        private long bytes;
+
+        private ImportBudget(int maxFiles, long maxBytes) {
+            this.maxFiles = maxFiles;
+            this.maxBytes = maxBytes;
+        }
+
+        private boolean reserveFile() throws IOException {
+            if (files >= maxFiles) {
+                throw new IOException("Worker 任务资源文件数量超过上限");
+            }
+            files++;
+            return true;
+        }
+
+        private void reserveBytes(long amount) throws IOException {
+            if (amount < 0 || bytes > maxBytes - amount) {
+                throw new IOException("Worker 任务资源总大小超过上限");
+            }
+            bytes += amount;
+        }
     }
 
     public record ImportResult(

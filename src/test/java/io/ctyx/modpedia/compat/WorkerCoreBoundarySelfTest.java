@@ -12,14 +12,14 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * Worker Core 的源码边界回归：核心闭包不得直接引用 Minecraft、NeoForge 或客户端包。
+ * Worker Core 的源码边界回归：核心闭包不得直接引用 Minecraft、Forge/NeoForge 或客户端包。
  *
  * <p>AiAssistantSession 和 client.LocalGuideScanner 是客户端适配实现，不属于 Worker
  * 闭包；Worker 使用的 AI、知识库、任务和存储类仍在本测试覆盖范围内。</p>
  */
 public final class WorkerCoreBoundarySelfTest {
     private static final Pattern FORBIDDEN = Pattern.compile(
-            "(?:net\\.minecraft\\.|net\\.neoforged\\.|io\\.ctyx\\.modpedia\\.client\\.)"
+            "(?:net\\.minecraft\\.|net\\.minecraftforge\\.|net\\.neoforged\\.|io\\.ctyx\\.modpedia\\.client\\.)"
     );
     private static final List<String> PURE_PACKAGES = List.of(
             "worker",

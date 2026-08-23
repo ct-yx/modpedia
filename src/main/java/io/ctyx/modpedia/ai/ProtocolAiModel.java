@@ -185,19 +185,21 @@ public final class ProtocolAiModel implements ChatModel, StreamingChatModel {
         AiSettings actual = settings;
         URI uri = endpoint(actual, false, request);
         JsonObject payload = payload(request, false);
-        HttpResponse<String> response;
+        HttpResponse<InputStream> response;
         try {
-            response = client.send(
-                    request(uri, payload, false),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
+            response = client.send(request(uri, payload, false), HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException exception) {
             throw new IllegalStateException("AI 请求连接失败：" + exception.getMessage(), exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new CancellationException("AI 请求已取消");
         }
-        String body = response.body() == null ? "" : response.body();
+        String body;
+        try (InputStream input = response.body()) {
+            body = AiHttpResponseLimits.read(input, AiHttpResponseLimits.MAX_BODY_BYTES);
+        } catch (IOException exception) {
+            throw new IllegalStateException("AI 响应超过大小上限或读取失败", exception);
+        }
         ensureSuccess(response.statusCode(), body);
         return parseResponse(parseObject(body), body);
     }
@@ -220,18 +222,28 @@ public final class ProtocolAiModel implements ChatModel, StreamingChatModel {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String body;
                 try (InputStream input = response.body()) {
-                    body = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+                    body = AiHttpResponseLimits.read(input, AiHttpResponseLimits.MAX_BODY_BYTES);
+                } catch (IOException exception) {
+                    throw new IllegalStateException("AI 错误响应超过大小上限或读取失败", exception);
                 }
                 ensureSuccess(response.statusCode(), body);
                 return;
             }
 
             StreamAccumulator accumulator = new StreamAccumulator(settings.apiFormat());
+            int totalBytes = 0;
             try (InputStream input = response.body(); BufferedReader reader = new BufferedReader(
                     new InputStreamReader(input, StandardCharsets.UTF_8)
             )) {
                 String line;
-                while (!handle.isCancelled() && (line = reader.readLine()) != null) {
+                while (!handle.isCancelled()
+                        && (line = AiHttpResponseLimits.readLine(
+                                reader, AiHttpResponseLimits.MAX_SSE_LINE_BYTES
+                        )) != null) {
+                    totalBytes += line.getBytes(StandardCharsets.UTF_8).length + 1;
+                    if (totalBytes > AiHttpResponseLimits.MAX_SSE_TOTAL_BYTES) {
+                        throw new IOException("AI SSE 响应超过大小上限");
+                    }
                     if (line.isBlank() || line.startsWith(":")) {
                         continue;
                     }

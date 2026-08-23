@@ -14,6 +14,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.StringReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -191,13 +192,23 @@ public final class WorkerIpcSelfTest {
         if (value.isBlank() || !Files.isRegularFile(Path.of(value))) {
             return;
         }
+        String gsonVersion = System.getProperty("modpedia.gson.version", "2.11.0");
         try (ZipFile zip = new ZipFile(Path.of(value).toFile())) {
             boolean bundled = zip.stream()
                     .anyMatch(entry -> entry.getName().matches(
                             "META-INF/jarjar/.*/?gson[^/]*\\.jar"
                     ));
             check(!bundled,
-                    "发布 JAR 不应嵌入第二份 Gson 模块，否则会触发 NeoForge 模块解析冲突");
+                    "发布 JAR 不应把 Gson 放进 META-INF/jarjar，否则会触发游戏类加载器冲突");
+            String workerGsonEntry = "META-INF/modpedia-worker/gson-" + gsonVersion + ".jar";
+            ZipEntry nestedGson = zip.getEntry(workerGsonEntry);
+            check(nestedGson != null, "发布 JAR 缺少 Worker 专用 Gson：" + workerGsonEntry);
+            long workerGsonCount = zip.stream()
+                    .filter(entry -> entry.getName().startsWith("META-INF/modpedia-worker/gson-"))
+                    .filter(entry -> entry.getName().endsWith(".jar"))
+                    .count();
+            check(workerGsonCount == 1, "Worker 专用 Gson 不能存在多个版本");
+            checkNestedGson(zip, nestedGson);
             boolean bundledSlf4j = zip.stream()
                     .anyMatch(entry -> entry.getName().matches(
                             "META-INF/jarjar/.*/?slf4j-api[^/]*\\.jar"
@@ -270,7 +281,21 @@ public final class WorkerIpcSelfTest {
                 "JTokkit 1.1.0 不应依赖旧版 5.4k tokenizer 资源");
     }
 
-    private static void checkEnvelope() {
+    private static void checkNestedGson(ZipFile outer, ZipEntry nested) throws IOException {
+        try (var input = outer.getInputStream(nested); ZipInputStream jar = new ZipInputStream(input)) {
+            boolean jsonElement = false;
+            ZipEntry entry;
+            while ((entry = jar.getNextEntry()) != null) {
+                if ("com/google/gson/JsonElement.class".equals(entry.getName())) {
+                    jsonElement = true;
+                    break;
+                }
+            }
+            check(jsonElement, "Worker 专用 Gson 缺少 com/google/gson/JsonElement.class");
+        }
+    }
+
+    private static void checkEnvelope() throws IOException {
         JsonObject message = WorkerProtocol.message(WorkerProtocol.PING, "envelope");
         check(WorkerProtocol.VERSION == WorkerProtocol.integer(message, "protocol_version", -1),
                 "协议消息必须带 protocol_version");
@@ -278,6 +303,15 @@ public final class WorkerIpcSelfTest {
                 "协议消息必须保留 request_id");
         check(message.has("conversation_id"), "协议消息必须带 conversation_id");
         check(WorkerProtocol.isCurrentVersion(message), "当前消息应通过版本检查");
+
+        String oversized = "{\"payload\":\"" + "x".repeat(WorkerProtocol.MAX_JSONL_LINE_BYTES) + "\"}";
+        boolean rejected = false;
+        try {
+            WorkerProtocol.read(new BufferedReader(new StringReader(oversized + "\n")));
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        check(rejected, "超过 JSONL 单行上限的消息必须被拒绝");
     }
 
     private static void checkCancellationGate() {
@@ -923,6 +957,7 @@ public final class WorkerIpcSelfTest {
             List<String> command = new ArrayList<>();
             command.add(javaExecutable());
             command.add("-Dmodpedia.worker=true");
+            command.add("-Dmodpedia.disable.system.keychain=true");
             command.add("-Xlog:class+load=info:file=" + classLog.toAbsolutePath());
             command.add("-cp");
             command.add(workerClasspath(libraryDirectory));
@@ -959,17 +994,19 @@ public final class WorkerIpcSelfTest {
             try (ZipFile zip = new ZipFile(jar.toFile())) {
                 zip.stream()
                         .filter(entry -> !entry.isDirectory())
-                        .filter(entry -> entry.getName().startsWith("META-INF/jarjar/"))
-                        .filter(entry -> entry.getName().endsWith(".jar"))
+                        .filter(entry -> isWorkerDependencyEntry(entry.getName()))
                         .forEach(entry -> extract(zip, entry, libraryDirectory, entries));
             }
             // 发布 JAR 不再携带 SLF4J；真实游戏由 NeoForge 模块层提供，测试进程
             // 从自身的编译 classpath 取出同一份 API，模拟生产 Worker 的装配方式。
             addClassLocation(entries, "org.slf4j.LoggerFactory");
-            // Gson 由 Minecraft/NeoForge 运行时提供，发布 JAR 不再携带第二份
-            // com.google.gson 模块；测试也必须模拟生产 Worker 的 classpath。
-            addClassLocation(entries, "com.google.gson.Gson");
             return String.join(java.io.File.pathSeparator, entries);
+        }
+
+        private static boolean isWorkerDependencyEntry(String name) {
+            return (name.startsWith("META-INF/jarjar/")
+                    || name.startsWith("META-INF/modpedia-worker/"))
+                    && name.endsWith(".jar");
         }
 
         private static void addClassLocation(List<String> entries, String className) {
@@ -1033,6 +1070,7 @@ public final class WorkerIpcSelfTest {
                     "io.ctyx.modpedia.client.Jei",
                     "io.ctyx.modpedia.client.ItemCatalog",
                     "net.minecraft.",
+                    "net.minecraftforge.",
                     "net.neoforged.",
                     "ModernUI",
                     "modernui"
@@ -1047,10 +1085,23 @@ public final class WorkerIpcSelfTest {
             }
             String log = Files.readString(workerLog, StandardCharsets.UTF_8);
             check(log.contains("WORKER_DEPENDENCY"), "Worker 应输出依赖 CodeSource 诊断");
+            check(log.contains("langchain_openai_code_source=")
+                            && log.contains("langchain4j-open-ai-1.18.1.jar"),
+                    "Worker 实际加载的 LangChain4j CodeSource 不正确");
             check(log.contains("langchain_openai_version=1.18.1"),
                     "Worker 实际加载的 LangChain4j OpenAI 版本不正确");
+            check(log.contains("jtokkit_code_source=")
+                            && log.contains("jtokkit-1.1.0.jar"),
+                    "Worker 实际加载的 JTokkit CodeSource 不正确");
             check(log.contains("jtokkit_version=1.1.0"),
                     "Worker 实际加载的 JTokkit 版本不正确");
+            check(log.contains("gson_code_source=")
+                            && log.contains("gson-2.11.0.jar"),
+                    "Worker 实际加载的 Gson CodeSource 不正确");
+            check(log.contains("gson_version=2.11.0"),
+                    "Worker 实际加载的 Gson 版本不正确");
+            check(log.contains("gson_loaded=true"),
+                    "Worker 独立 JVM 未加载 Gson");
             check(log.contains("tokenizer_o200k_base=true"),
                     "Worker 运行时未找到 o200k tokenizer 资源");
             check(log.contains("estimator_gpt5=true"),

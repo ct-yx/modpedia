@@ -16,6 +16,18 @@ public final class WorkerTaskStaticImporterSelfTest {
     public static void main(String[] args) throws Exception {
         Path root = Files.createTempDirectory("modpedia-task-import-");
         try {
+            String deep = "{}";
+            for (int index = 0; index < WorkerSnbtParser.MAX_NESTING_DEPTH + 4; index++) {
+                deep = "{nested:" + deep + "}";
+            }
+            boolean depthRejected = false;
+            try {
+                WorkerSnbtParser.parse(deep);
+            } catch (IllegalArgumentException expected) {
+                depthRejected = true;
+            }
+            check(depthRejected, "SNBT 嵌套深度超过预算时必须拒绝解析");
+
             Path quests = root.resolve("quests");
             Path chapters = quests.resolve("chapters");
             Files.createDirectories(chapters);

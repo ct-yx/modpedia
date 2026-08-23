@@ -17,7 +17,7 @@ public final class WorkerCompatibility {
     /** Worker API 发生不兼容变化时递增。 */
     public static final int API_LEVEL = 1;
     /** 运行库发生变化时递增；必须与用户级共享 lib 目录一致。 */
-    public static final String WORKER_LIBRARY_BASELINE = "worker-baseline-1";
+    public static final String WORKER_LIBRARY_BASELINE = "worker-baseline-2";
     /** 当前客户端适配层标识，仅用于诊断，不决定 Worker 核心是否可复用。 */
     public static final String CLIENT_ADAPTER = "forge-1.20.1";
 

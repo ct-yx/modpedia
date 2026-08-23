@@ -124,7 +124,7 @@ public final class KnowledgeCompiler {
                 for (int index = 0; index < generated.size(); index++) {
                     KnowledgeDocument document = generated.get(index);
                     String relativePath = outputPaths.get(index);
-                    writeDocument(runtimeKnowledgeRoot.resolve(relativePath), document);
+                    writeDocument(KnowledgePathGuard.resolve(runtimeKnowledgeRoot, relativePath), document);
                     entries.add(new DocumentEntry(document, relativePath));
                 }
                 converted = List.copyOf(entries);
@@ -221,7 +221,7 @@ public final class KnowledgeCompiler {
     ) throws IOException {
         List<DocumentEntry> result = new ArrayList<>();
         for (String relativePath : outputPaths) {
-            Path output = knowledgeRoot.resolve(relativePath);
+            Path output = KnowledgePathGuard.resolve(knowledgeRoot, relativePath);
             if (!Files.isRegularFile(output)) {
                 return List.of();
             }
@@ -279,7 +279,7 @@ public final class KnowledgeCompiler {
                 continue;
             }
             try {
-                Files.deleteIfExists(knowledgeRoot.resolve(oldOutput));
+                Files.deleteIfExists(KnowledgePathGuard.resolve(knowledgeRoot, oldOutput));
             } catch (IOException exception) {
                 warnings.add("删除旧版知识文件失败：" + oldOutput);
             }
@@ -593,7 +593,7 @@ public final class KnowledgeCompiler {
             }
             for (String outputPath : entry.getValue().outputPaths()) {
                 try {
-                    if (Files.deleteIfExists(knowledgeRoot.resolve(outputPath))) {
+                    if (Files.deleteIfExists(KnowledgePathGuard.resolve(knowledgeRoot, outputPath))) {
                         removedCount++;
                     }
                 } catch (IOException exception) {
@@ -612,16 +612,6 @@ public final class KnowledgeCompiler {
         String modId = sourceKey.substring(0, separator);
         String sourcePath = sourceKey.substring(separator + 1);
         return generatedRelativePath(modId, sourcePath);
-    }
-
-    private Path generatedPath(Path knowledgeRoot, String sourceKey) {
-        int separator = sourceKey.indexOf(':');
-        if (separator <= 0 || separator == sourceKey.length() - 1) {
-            return null;
-        }
-        String modId = sourceKey.substring(0, separator);
-        String sourcePath = sourceKey.substring(separator + 1);
-        return knowledgeRoot.resolve(generatedRelativePath(modId, sourcePath));
     }
 
     private String generatedRelativePath(ScannedResource source) {

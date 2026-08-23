@@ -189,12 +189,15 @@ public final class AiClient {
                 HttpRequest request = requestBuilder
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                         .build();
-                HttpResponse<String> response = HTTP_CLIENT.send(
+                HttpResponse<java.io.InputStream> response = HTTP_CLIENT.send(
                         request,
-                        HttpResponse.BodyHandlers.ofString()
+                        HttpResponse.BodyHandlers.ofInputStream()
                 );
                 int status = response.statusCode();
-                String body = response.body() == null ? "" : response.body().strip();
+                String body;
+                try (java.io.InputStream input = response.body()) {
+                    body = AiHttpResponseLimits.read(input, AiHttpResponseLimits.MAX_BODY_BYTES).strip();
+                }
                 String retryAfter = retryAfter(response.headers());
                 if (attempt == 1 && retryableStatus(status) && retryAfter.isBlank()) {
                     sleepQuietly(350L);
@@ -458,12 +461,18 @@ public final class AiClient {
                 .build();
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
-                HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<java.io.InputStream> response = HTTP_CLIENT.send(
+                        request, HttpResponse.BodyHandlers.ofInputStream()
+                );
+                String body;
+                try (java.io.InputStream input = response.body()) {
+                    body = AiHttpResponseLimits.read(input, AiHttpResponseLimits.MAX_BODY_BYTES);
+                }
                 if (attempt == 0 && retryableStatus(response.statusCode())) {
                     sleepQuietly(350L);
                     continue;
                 }
-                return parseModelListResponse(response.statusCode(), response.body(), settings.apiFormat());
+                return parseModelListResponse(response.statusCode(), body, settings.apiFormat());
             } catch (Exception exception) {
                 if (attempt == 0 && isRetryableFailure(exception)) {
                     sleepQuietly(350L);

@@ -19,6 +19,10 @@ public final class WorkerTokenEstimatorSelfTest {
                 "LangChain4j OpenAI 实际版本不为 1.18.1：" + runtime.estimatorVersion());
         check("1.1.0".equals(runtime.jtokkitVersion()),
                 "JTokkit 实际版本不为 1.1.0：" + runtime.jtokkitVersion());
+        check("2.11.0".equals(runtime.gsonVersion()),
+                "Gson 实际版本不为 2.11.0：" + runtime.gsonVersion());
+        check(runtime.gsonLoaded(),
+                "Worker 独立 JVM 未加载 Gson：" + runtime.gsonFailureType());
         check(runtime.requiredTokenizerResourcesPresent(),
                 "JTokkit 必需 tokenizer 资源不完整：" + runtime.summary());
         check(runtime.estimatorInitialized(),
