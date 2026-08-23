@@ -141,6 +141,7 @@ public final class WorkerChatService {
         this.knowledgeRoot = knowledgeRoot.toAbsolutePath().normalize();
         this.conversationStore = conversationStore;
         this.memoryStore = new PersistentChatMemoryStore(conversationStore);
+        LOG.info("WORKER_MEMORY_STORE initialized");
         this.settingsStore = settingsStore;
         this.retrievalService = new RetrievalService(this.knowledgeRoot);
         this.sink = sink;

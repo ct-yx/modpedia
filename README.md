@@ -19,7 +19,7 @@ English version: [README.en.md](README.en.md)
 | NeoForge | **21.1.244**（兼容 **21.1.x**） |
 | Java | **21** |
 | Mod ID | **modpedia** |
-| Worker 基线 | **worker-baseline-2** |
+| Worker 基线 | **worker-baseline-3** |
 | 客户端 UI 依赖 | 无外部 UI 依赖（基于 NeoForge 原生 GUI API 自绘） |
 | 作者 | **ctyx** |
 
@@ -160,7 +160,7 @@ config/modpedia/
 依次回退，全部不可用时才回退到配置目录父级。这样启动器覆盖 `user.home` 时，仍能使用真实用户的
 `~/.modpedia/`。旧启动器目录中的空 `ai.json` 会清理；用户级配置不存在时才迁移旧配置，已有用户级
 配置始终优先。旧的 `runtime/worker/lib/` 也会迁移到固定的
-`~/.modpedia/worker/lib/worker-baseline-2/`，而日志、IPC 状态和临时 payload 仍留在当前实例的
+`~/.modpedia/worker/lib/worker-baseline-3/`，而日志、IPC 状态和临时 payload 仍留在当前实例的
 `config/modpedia/runtime/worker/`。
 
 `knowledge.db` 使用 Schema v7。模组手册、Wiki、FTBQ 静态任务定义和物品目录共用这个文件，但通过
@@ -204,8 +204,8 @@ config/modpedia/runtime/knowledge/state.json
 
 这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
 数据库文件也属于派生文件，不应进入整合包。Worker 的共享依赖库位于用户目录
-`~/.modpedia/worker/lib/worker-baseline-2/`，也不属于整合包，不要复制或打包；其中 Gson
-由发布 JAR 的 `META-INF/modpedia-worker/` 专用资源提取，不能作为游戏类加载器的普通
+`~/.modpedia/worker/lib/worker-baseline-3/`，也不属于整合包，不要复制或打包；其中 Gson 和
+SLF4J API 由发布 JAR 的 `META-INF/modpedia-worker/` 专用资源提取，不能作为游戏类加载器的普通
 Jar-in-Jar 依赖。同一 Worker 基线的不同 ModPedia 版本和游戏实例会复用该目录。Worker
 依赖发生变化时会递增基线编号。
 

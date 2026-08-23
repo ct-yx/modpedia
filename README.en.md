@@ -23,7 +23,7 @@ links, changelogs, and site content are maintained only on the `main` branch.
 | NeoForge | **21.1.244** (compatible with **21.1.x**) |
 | Java | **21** |
 | Mod ID | **modpedia** |
-| Worker baseline | **worker-baseline-2** |
+| Worker baseline | **worker-baseline-3** |
 | Client UI dependency | None; drawn with the native NeoForge GUI API |
 | Author | **ctyx** |
 
@@ -226,7 +226,7 @@ the parent of the instance config directory is used. This keeps launcher-overrid
 the old launcher directory is removed; a non-empty old configuration is migrated
 only when the user-level file does not exist, and the user-level file always wins.
 An old `runtime/worker/lib/` is moved to the fixed shared
-`~/.modpedia/worker/lib/worker-baseline-2/`; Worker logs, IPC state, and temporary
+`~/.modpedia/worker/lib/worker-baseline-3/`; Worker logs, IPC state, and temporary
 payloads remain in the current instance at `config/modpedia/runtime/worker/`.
 
 `knowledge.db` uses Schema v7. Mod manuals, Wiki content, static FTBQ task
@@ -280,7 +280,7 @@ config/modpedia/runtime/knowledge/state.json
 These files are regenerated on first startup or after pressing **F9**.
 `knowledge.db-wal`, `knowledge.db-shm`, and temporary database files are also
 derived files and should stay out of the modpack. Worker shared libraries live
-at `~/.modpedia/worker/lib/worker-baseline-2/`; they are user-level files and
+at `~/.modpedia/worker/lib/worker-baseline-3/`; they are user-level files and
 must not be copied into a modpack. Gson is extracted from the published JAR
 `META-INF/modpedia-worker/` resource directory only for the Worker JVM, not exposed
 as a normal game Jar-in-Jar dependency. ModPedia versions and game instances using
