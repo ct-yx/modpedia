@@ -546,9 +546,10 @@ public final class ItemCatalogSyncService {
         } catch (Throwable exception) {
             displayName = "";
         }
-        if (displayName.isBlank()) {
-            displayName = registryItem.id().toString();
-        } else {
+        if (!ItemNameResolver.isDisplayNameUsable(displayName, registryItem.id().toString())) {
+            displayName = ItemNameResolver.readableFallbackName(registryItem.id().toString());
+        }
+        if (ItemNameResolver.isDisplayNameUsable(displayName, registryItem.id().toString())) {
             ItemNameResolver.remember(registryItem.id().toString(), displayName);
         }
 
@@ -660,11 +661,13 @@ public final class ItemCatalogSyncService {
     private static CaptureResult fallbackCapture(String language, RegistryItem registryItem) {
         String itemId = registryItem.id().toString();
         String sourceMod = registryItem.id().getNamespace();
-        String fingerprint = fingerprint(itemId, language, itemId, "", sourceMod);
+        String displayName = ItemNameResolver.readableFallbackName(itemId);
+        ItemNameResolver.remember(itemId, displayName);
+        String fingerprint = fingerprint(itemId, language, displayName, "", sourceMod);
         return new CaptureResult(new ItemCatalogEntry(
                 itemId,
                 language,
-                itemId,
+                displayName,
                 "",
                 sourceMod,
                 fingerprint

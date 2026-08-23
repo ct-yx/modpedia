@@ -1,5 +1,7 @@
 package io.ctyx.modpedia.client;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.language.ClientLanguage;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.locale.Language;
 import net.minecraft.resources.ResourceLocation;
@@ -8,6 +10,7 @@ import net.minecraft.world.item.ItemStack;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +30,8 @@ public final class ItemNameResolver {
     private static volatile Map<String, String> DISPLAY_NAME_SNAPSHOT = Map.of();
     private static volatile ItemNameMatcher DISPLAY_NAME_MATCHER = ItemNameMatcher.empty();
     private static volatile long INDEX_GENERATION;
+    private static volatile Object ENGLISH_RESOURCE_MANAGER;
+    private static volatile Map<String, String> ENGLISH_LANGUAGE_DATA = Map.of();
     private static boolean BUILDING_INDEX;
 
     private ItemNameResolver() {
@@ -34,7 +39,21 @@ public final class ItemNameResolver {
 
     public static String displayName(String id) {
         String normalized = id == null ? "" : id.strip();
-        return registeredName(normalized).orElse(normalized);
+        Optional<String> registered = registeredName(normalized);
+        if (registered.isPresent()) {
+            return registered.get();
+        }
+        // 已注册但缺少当前语言和 en_us 翻译的物品，使用可读回退名。
+        // 未注册的外部 ID 仍保留原文，方便诊断未知数据。
+        try {
+            if (!normalized.isBlank()
+                    && BuiltInRegistries.ITEM.getOptional(ResourceLocation.parse(normalized)).isPresent()) {
+                return readableFallbackName(normalized);
+            }
+        } catch (RuntimeException ignored) {
+            // 非法或未知 ID 保留原文。
+        }
+        return normalized;
     }
 
     /** 返回当前客户端注册表中的本地化名称；未注册的 ID 返回空值。 */
@@ -202,8 +221,105 @@ public final class ItemNameResolver {
             } catch (RuntimeException ignored) {
             }
         }
-        String name = cleanCandidate(languageName, normalizedId, descriptionId);
+        String englishName = englishLanguageDataSnapshot().getOrDefault(descriptionId, "");
+        return localizedName(
+                descriptionId,
+                normalizedId,
+                Map.of(descriptionId, languageName),
+                Map.of(descriptionId, englishName)
+        );
+    }
+
+    /** 使用当前语言和 en_us 快照解析名称，供启动捕获和纯 Java 回归测试复用。 */
+    static Optional<String> localizedName(
+            String descriptionId,
+            String itemId,
+            Map<String, String> languageData,
+            Map<String, String> englishLanguageData
+    ) {
+        String normalizedId = normalizeId(itemId);
+        if (descriptionId == null || descriptionId.isBlank() || normalizedId.isBlank()) {
+            return Optional.empty();
+        }
+        String name = cleanCandidate(
+                languageData == null ? "" : languageData.getOrDefault(descriptionId, ""),
+                normalizedId,
+                descriptionId
+        );
+        if (name.isBlank()) {
+            name = cleanCandidate(
+                    englishLanguageData == null
+                            ? ""
+                            : englishLanguageData.getOrDefault(descriptionId, ""),
+                    normalizedId,
+                    descriptionId
+            );
+        }
         return name.isBlank() ? Optional.empty() : Optional.of(name);
+    }
+
+    /** 名称进入目录或界面前的质量检查，拒绝原始 ID 和翻译键。 */
+    static boolean isDisplayNameUsable(String displayName, String itemId) {
+        String candidate = displayName == null ? "" : displayName.strip();
+        String normalizedId = normalizeId(itemId);
+        return !candidate.isBlank()
+                && !candidate.equalsIgnoreCase(normalizedId)
+                && !isTranslationKey(candidate);
+    }
+
+    /** 从当前资源包加载一次 en_us 语言表；后续解析只使用不可变快照。 */
+    static Map<String, String> englishLanguageDataSnapshot() {
+        try {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft == null || minecraft.getResourceManager() == null) {
+                return Map.of();
+            }
+            Object resourceManager = minecraft.getResourceManager();
+            Map<String, String> data = ENGLISH_LANGUAGE_DATA;
+            if (data.isEmpty() || resourceManager != ENGLISH_RESOURCE_MANAGER) {
+                ClientLanguage language = ClientLanguage.loadFrom(
+                        minecraft.getResourceManager(),
+                        List.of("en_us"),
+                        false
+                );
+                data = Map.copyOf(language.getLanguageData());
+                ENGLISH_RESOURCE_MANAGER = resourceManager;
+                ENGLISH_LANGUAGE_DATA = data;
+            }
+            return data;
+        } catch (Throwable ignored) {
+            return Map.of();
+        }
+    }
+
+    /** 当前语言和英文都缺失时，生成可读名称而不是直接显示 namespace:path。 */
+    static String readableFallbackName(String itemId) {
+        String normalized = normalizeId(itemId);
+        if (normalized.isBlank()) {
+            return "未知物品";
+        }
+        int separator = normalized.indexOf(':');
+        String namespace = separator > 0 ? normalized.substring(0, separator) : "";
+        String path = separator > 0 ? normalized.substring(separator + 1) : normalized;
+        String readablePath = humanize(path);
+        if (namespace.isBlank() || "minecraft".equals(namespace)) {
+            return readablePath;
+        }
+        return humanize(namespace) + " · " + readablePath;
+    }
+
+    private static String humanize(String value) {
+        StringBuilder result = new StringBuilder();
+        for (String word : value.split("[_./-]+")) {
+            if (word.isBlank()) {
+                continue;
+            }
+            if (result.length() > 0) {
+                result.append(' ');
+            }
+            result.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return result.isEmpty() ? "未知物品" : result.toString();
     }
 
     private static String normalizeId(String id) {
