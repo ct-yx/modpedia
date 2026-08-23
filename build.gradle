@@ -9,7 +9,10 @@ buildscript {
     }
 }
 
-apply plugin: 'net.minecraftforge.gradle'
+// ForgeGradle 2.3 uses the legacy Forge 1.12.2 plugin id.  Cleanroom 0.3+
+// keeps the corresponding Forge lifecycle/API surface, so the common source
+// remains usable by both the compile baseline and the target runtime.
+apply plugin: 'net.minecraftforge.gradle.forge'
 apply plugin: 'java'
 
 version = project.mod_version
@@ -25,12 +28,11 @@ repositories {
 minecraft {
     version = "${project.minecraft_version}-${project.forge_version}"
     mappings = 'snapshot_20171003'
+    // ForgeGradle 2.3 requires a runDir even when this migration branch does
+    // not launch a test client. Keep it under build/ rather than creating a
+    // project-level run/ directory.
+    runDir = 'build/forge-run'
     makeObfSourceJar = false
-    // 不创建 /run；仅保留 ForgeGradle 的运行入口配置，实际测试环境另行准备。
-}
-
-dependencies {
-    minecraft "net.minecraftforge:forge:${project.minecraft_version}-${project.forge_version}"
 }
 
 processResources {
@@ -60,4 +62,43 @@ jar {
                 'Implementation-Vendor': 'ctyx'
         )
     }
+}
+
+// The migration branch keeps executable, dependency-light self-tests next to
+// the first compatibility layer.  They are intentionally separate from the
+// game launch tasks and do not create a run directory.
+task manualCatalogSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.knowledge.ManualCatalogScannerSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyItemIdentitySelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.knowledge.LegacyItemIdentitySelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyMarkdownCompilerSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.knowledge.LegacyMarkdownCompilerSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyFtbQuestNormalizerSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.knowledge.LegacyFtbQuestNormalizerSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyFtbQuestRuntimeSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.knowledge.LegacyFtbQuestRuntimeSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyFtbQuestEventBridgeSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.knowledge.LegacyFtbQuestEventBridgeSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
 }
