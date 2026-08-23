@@ -9,7 +9,7 @@ AI 持久化上下文、数据库 v8 和外部百科按需增强的合并实施�
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前代码基线 | Worker `worker-baseline-1` / knowledge.db Schema v7 |
+| 当前代码基线 | Worker `worker-baseline-2` / knowledge.db Schema v7 |
 | 发布事实源 | `main` 分支统一维护 |
 | 下一版本方向 | `M0–M5`，继续推进真实环境回归与维护能力 |
 | Minecraft | `1.21.1` |
@@ -74,7 +74,7 @@ SQLite/FTS 和检索逻辑。具体基线、握手字段、能力列表和迁移
 
 | 工作项 | 状态 |
 | --- | --- |
-| 固定 `worker-baseline-1` 与用户级共享 lib 目录 | `[x]` |
+| 固定 `worker-baseline-2` 与用户级共享 lib 目录 | `[x]` |
 | 纯 Java DTO、设置/会话路径工厂和客户端扫描器移出 Worker Core | `[x]` |
 | Worker/客户端握手交换 API level、基线和能力 | `[x]` |
 | NeoForge 1.21.1 客户端适配层验证矩阵 | `[~]` |

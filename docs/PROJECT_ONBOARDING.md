@@ -35,12 +35,12 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 | Java | 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
-| Worker 基线 | `worker-baseline-1` |
+| Worker 基线 | `worker-baseline-2` |
 | 主配置目录 | `config/modpedia/` |
 | 知识库 | `config/modpedia/runtime/knowledge/knowledge.db` |
 | 会话目录 | `config/modpedia/runtime/conversations/` |
 | Worker 日志 | `config/modpedia/runtime/worker/worker.log` |
-| Worker 共享依赖 | `~/.modpedia/worker/lib/worker-baseline-1/` |
+| Worker 共享依赖 | `~/.modpedia/worker/lib/worker-baseline-2/` |
 
 本分支的发布版本、下载资产、更新日志和网页内容不作为事实源；需要查看或修改这些内容时交给 `main` 分支。
 

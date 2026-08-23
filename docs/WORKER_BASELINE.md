@@ -1,14 +1,14 @@
 # Worker 基线与兼容层
 
 本文件定义独立 Worker 与 Minecraft 客户端适配层之间的稳定边界。当前基线为
-`worker-baseline-1`，只适用于本仓库当前的 NeoForge 1.21.1 客户端适配层；它不是
+`worker-baseline-2`，只适用于本仓库当前的 NeoForge 1.21.1 客户端适配层；它不是
 新的运行库目录，也不替代 `config/modpedia/runtime/` 的实例级状态。
 
 ## 1. 当前基线
 
 | 项目 | 值 |
 | --- | --- |
-| Worker 基线 | `worker-baseline-1` |
+| Worker 基线 | `worker-baseline-2` |
 | Worker API level | `1` |
 | JSONL 协议 | `WorkerProtocol.VERSION = 1` |
 | Minecraft | `1.21.1` |
@@ -18,14 +18,14 @@
 | LangChain4j | `1.18.1` |
 | LangChain4j Community SQL | `1.18.0-beta28` |
 | JTokkit | `1.1.0`，包含 `o200k_base`、`cl100k_base`、`p50k_base`、`r50k_base` |
-| Gson | `2.11.0`，由游戏运行时提供 |
+| Gson | `2.11.0`，位于发布 JAR 的 `META-INF/modpedia-worker/gson-2.11.0.jar`，只提取到 Worker JVM |
 | SLF4J API | `2.0.9`，由 NeoForge 运行时提供 |
 | 客户端适配层 | `neoforge-1.21.1` |
 
 共享依赖库位于：
 
 ```text
-~/.modpedia/worker/lib/worker-baseline-1/
+~/.modpedia/worker/lib/worker-baseline-2/
 ```
 
 同一基线可以被不同 ModPedia 版本和不同游戏实例复用。实例自己的 Worker JAR、
@@ -51,7 +51,7 @@ Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用
 {
   "protocol_version": 1,
   "worker_api_level": 1,
-  "worker_baseline": "worker-baseline-1",
+  "worker_baseline": "worker-baseline-2",
   "client_adapter": "neoforge-1.21.1",
   "client_java": "21",
   "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
@@ -64,7 +64,7 @@ Worker 返回 `hello_ack` 时包含：
 {
   "accepted": true,
   "worker_api_level": 1,
-  "worker_baseline": "worker-baseline-1",
+  "worker_baseline": "worker-baseline-2",
   "worker_java": "21",
   "worker_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
 }
@@ -101,11 +101,13 @@ io.ctyx.modpedia.client.*
 知识库构建、任务文件解析、会话和协议服务。跨边界只传 JSONL 和纯 Java DTO，避免
 把游戏对象、Screen、Level 或 ItemStack 传入 Worker JVM。
 
-Worker 启动时使用发布 JAR 和同一基线提取出的 Jar-in-Jar 依赖构造隔离 classpath；不继承
-游戏 JVM 的完整 `java.class.path`，只补充游戏运行时提供的 Gson 和 SLF4J API。这样游戏实例
-中残留的旧版 LangChain4j/JTokkit 不会抢先加载。Worker 会在启动日志中记录两个核心类的
-CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始化结果，但不记录 API Key、
-请求正文或会话正文。
+Worker 启动时使用发布 JAR、`META-INF/jarjar/*.jar` 和同一基线提取出的
+`META-INF/modpedia-worker/*.jar` 构造隔离 classpath；不继承游戏 JVM 的完整
+`java.class.path`。SLF4J API 由游戏运行时提供，Gson 从 Worker 专用资源提取，不能从游戏类
+加载器取 Gson，也不能把它放入普通 Jar-in-Jar 目录。这样游戏实例中残留的旧版
+LangChain4j/JTokkit 不会抢先加载。Worker 会在启动日志中记录 LangChain4j、JTokkit、Gson
+的 CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始化结果，但不记录
+API Key、请求正文或会话正文。
 
 当前第一阶段先完成 API/DTO/协议边界，后续可以继续把纯 Java 的检索、知识库和任务
 解析类整理到 Worker Core 包；不能为了移动目录而复制出第二套实现。
@@ -114,9 +116,9 @@ CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始�
 
 | 客户端适配层 | Worker 基线 | Java | 状态 | 必须验证 |
 | --- | --- | --- | --- | --- |
-| NeoForge 1.21.1 | `worker-baseline-1` | 21 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
-| 未来 Minecraft 版本 + 新适配层 | `worker-baseline-1` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
-| 未来 Worker API/依赖变化 | `worker-baseline-2+` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
+| NeoForge 1.21.1 | `worker-baseline-2` | 21 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
+| 未来 Minecraft 版本 + 新适配层 | `worker-baseline-2` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
+| 未来 Worker API/依赖变化 | `worker-baseline-3+` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
 
 状态含义：
 

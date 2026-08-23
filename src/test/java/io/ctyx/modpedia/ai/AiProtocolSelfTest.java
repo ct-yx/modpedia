@@ -6,7 +6,10 @@ import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.TokenStream;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.StringReader;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
@@ -21,6 +24,7 @@ public final class AiProtocolSelfTest {
     }
 
     public static void main(String[] args) throws Exception {
+        verifyResponseLimits();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
             Thread thread = new Thread(runnable, "modpedia-ai-protocol-fixture");
@@ -61,6 +65,36 @@ public final class AiProtocolSelfTest {
             server.stop(0);
             executor.shutdownNow();
         }
+    }
+
+    private static void verifyResponseLimits() throws IOException {
+        String small = "ok";
+        check(small.equals(AiHttpResponseLimits.read(
+                        new ByteArrayInputStream(small.getBytes(StandardCharsets.UTF_8)), 16
+                )),
+                "HTTP 响应限制工具应保留小响应");
+
+        boolean bodyRejected = false;
+        try {
+            AiHttpResponseLimits.read(
+                    new ByteArrayInputStream(new byte[AiHttpResponseLimits.MAX_BODY_BYTES + 1]),
+                    AiHttpResponseLimits.MAX_BODY_BYTES
+            );
+        } catch (IOException expected) {
+            bodyRejected = true;
+        }
+        check(bodyRejected, "超过 HTTP 响应上限的正文必须被拒绝");
+
+        boolean lineRejected = false;
+        try {
+            AiHttpResponseLimits.readLine(
+                    new BufferedReader(new StringReader("x".repeat(AiHttpResponseLimits.MAX_SSE_LINE_BYTES + 1) + "\n")),
+                    AiHttpResponseLimits.MAX_SSE_LINE_BYTES
+            );
+        } catch (IOException expected) {
+            lineRejected = true;
+        }
+        check(lineRejected, "超过 SSE 单行上限的事件必须被拒绝");
     }
 
     private static void runBlocking(HttpServer server, AiApiFormat format) {

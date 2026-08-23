@@ -13,7 +13,7 @@
 | NeoForge | `21.1.244` |
 | Java | `21` |
 | Mod ID / 包名 | `modpedia` / `io.ctyx.modpedia` |
-| Worker 基线 | `worker-baseline-1` |
+| Worker 基线 | `worker-baseline-2` |
 | 当前分支 | 以 `git status --short --branch` 为准 |
 
 本分支负责 Worker Core、客户端适配层、协议兼容、测试和迁移文档；不维护发布版本号、下载链接、更新日志或网页内容。
@@ -58,7 +58,7 @@
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
-- [~] Worker 使用 `worker-baseline-1`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
+- [~] Worker 使用 `worker-baseline-2`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
   具体基线、禁止依赖和迁移矩阵见 [docs/WORKER_BASELINE.md](WORKER_BASELINE.md)；可执行证据矩阵见
 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
@@ -116,7 +116,8 @@
 - [x] 重试或上游中断后清理没有工具结果的持久化调用，避免后续请求复用损坏的工具消息链。
 - [x] 快速、标准、深入和自定义搜索预算可配置。
 - [x] 历史会话保存用户/助手消息、正文来源标注、三个后续问题和 SearchTrace，不复制知识正文。
-- [x] API Key 仅用于认证，不写入日志和会话；`ai.json` 只保存系统标识派生的 AES-GCM 密文，进程首次读取后复用内存缓存；系统标识变化时清除密钥字段，空白时回退到环境变量。
+- [x] API Key 仅用于认证，不写入日志和会话；`ai.json` 优先保存系统 Keychain/Secret Service 引用，不可用时回退到系统标识派生的 AES-GCM 密文；进程首次读取后复用内存缓存，系统标识变化时清除密钥字段，空白时回退到环境变量。
+- [x] 会话消息限制为最近 200 条、单条正文 64,000 字符和单文件 8 MiB；会话目录与文件在 POSIX 系统上限制为当前用户权限。
 - [x] AI 设置保存使用原子替换并回读校验，失败时不会显示“已保存”。
 - [x] `AiClient` 支持按协议读取 `/models` 模型列表、模型 ID 去重排序、根地址自动补全 `/v1`/`/v1beta` 和 HTML/401 友好错误提示。
 - [x] 设置页模型名称右侧提供“获取模型列表”，再次点击可循环切换已获取模型。
@@ -130,6 +131,7 @@
 - [x] 平衡 AI 成本与证据完整性：首轮工具参数使用 1,536 tokens，GPT-5/o 使用 3,072；回答预算按搜索档位为 1,280/2,560/4,096。检索阶段静默；结果保留来源、内容类型、路径、匹配词和完整当前 Markdown。历史上下文保留最近两次工具回合，只有更早回合压缩正文首尾和重复字符串，不删除工具调用、来源 ID 或标题路径。GPT-5/o 系列使用 `max_completion_tokens`，旧模型继续使用 `max_tokens`。
 - [x] 增加 `AiCostOptimizationSelfTest`，覆盖提示词长度、首轮/回答输出预算、历史工具证据分层保留和来源字段完整性；不调用真实模型。
 - [x] Mock 会话与真实 AI 会话接口兼容，支持离线 UI/搜索测试。
+- [x] Worker 手册、任务和 SNBT 扫描增加全局文件数、总字节数、节点数和嵌套深度预算；Worker stdout/stderr 统一写入实例日志，IPC 连接 generation 防止旧 reader 事件串线。
 - [~] 使用真实模型回归多问题补搜、流式输出、取消、超时和历史恢复。
 
 ## 6. 每次修改后的自动检查

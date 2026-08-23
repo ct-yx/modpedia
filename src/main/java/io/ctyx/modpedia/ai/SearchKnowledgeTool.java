@@ -83,6 +83,8 @@ public final class SearchKnowledgeTool {
             "机制", "流程", "生存流程", "新手", "入门", "第一天", "指南", "内容", "重制版",
             "overview", "introduction", "intro", "gameplay", "mechanics", "abbreviation", "guide"
     );
+    private static final int MAX_ITEM_CONTEXT_ENTRIES = 16;
+    private static final int MAX_ITEM_DESCRIPTION_CHARS = 2_000;
 
     private final RetrievalService retrievalService;
     private final SearchLanguage defaultLanguage;
@@ -1162,6 +1164,8 @@ public final class SearchKnowledgeTool {
         List<ItemCatalogEntry> actualItemContext = itemContext == null ? List.of() : itemContext;
         JsonArray itemContexts = new JsonArray();
         int usedChars = 0;
+        int itemContextBudget = Math.max(0, Math.min(8_000, maxContextChars / 3));
+        boolean itemContextTruncated = actualItemContext.size() > MAX_ITEM_CONTEXT_ENTRIES;
         Map<String, Integer> itemNameCounts = new LinkedHashMap<>();
         for (ItemCatalogEntry entry : actualItemContext) {
             String name = normalize(entry.displayName());
@@ -1169,16 +1173,42 @@ public final class SearchKnowledgeTool {
                 itemNameCounts.merge(name, 1, Integer::sum);
             }
         }
+        int itemIndex = 0;
         for (ItemCatalogEntry entry : actualItemContext) {
+            if (itemIndex++ >= MAX_ITEM_CONTEXT_ENTRIES) {
+                itemContextTruncated = true;
+                break;
+            }
+            String displayName = truncate(entry.displayName(), MAX_ITEM_DESCRIPTION_CHARS);
+            String description = truncate(entry.descriptionMarkdown(), MAX_ITEM_DESCRIPTION_CHARS);
+            int remaining = itemContextBudget - usedChars;
+            int entryChars = displayName.length() + description.length();
+            if (remaining <= 0) {
+                itemContextTruncated = true;
+                break;
+            }
+            if (entryChars > remaining) {
+                if (displayName.length() > remaining) {
+                    displayName = truncate(displayName, remaining);
+                    description = "";
+                } else {
+                    description = truncate(description, Math.max(0, remaining - displayName.length()));
+                }
+                entryChars = displayName.length() + description.length();
+                itemContextTruncated = true;
+            }
+            if (entryChars == 0) {
+                continue;
+            }
             JsonObject item = new JsonObject();
             item.addProperty("item_id", entry.itemId());
             item.addProperty("language", entry.language());
-            item.addProperty("display_name", entry.displayName());
-            item.addProperty("description_markdown", entry.descriptionMarkdown());
+            item.addProperty("display_name", displayName);
+            item.addProperty("description_markdown", description);
             item.addProperty("source_mod", entry.sourceMod());
             item.addProperty("ambiguous", itemNameCounts.getOrDefault(normalize(entry.displayName()), 0) > 1);
             itemContexts.add(item);
-            usedChars += entry.displayName().length() + entry.descriptionMarkdown().length();
+            usedChars += entryChars;
         }
         for (SearchResult result : results) {
             int nextChars = result.segmentMarkdown().length();
@@ -1226,6 +1256,7 @@ public final class SearchKnowledgeTool {
         output.addProperty("has_more", hasMore);
         output.addProperty("context_chars", usedChars);
         output.addProperty("item_context_count", itemContexts.size());
+        output.addProperty("item_context_truncated", itemContextTruncated);
         output.add("item_context", itemContexts);
         output.add("results", documents);
         if (!hint.isBlank()) {
@@ -1246,6 +1277,17 @@ public final class SearchKnowledgeTool {
                 traceTool
         ));
         return JSON.toJson(output);
+    }
+
+    private static String truncate(String value, int limit) {
+        String normalized = value == null ? "" : value;
+        if (limit <= 0) {
+            return "";
+        }
+        if (normalized.length() <= limit) {
+            return normalized;
+        }
+        return normalized.substring(0, Math.max(0, limit - 1)) + "…";
     }
 
     private static SearchLanguage parseLanguage(String value) {

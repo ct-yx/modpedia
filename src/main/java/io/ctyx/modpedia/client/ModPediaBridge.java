@@ -48,6 +48,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -66,6 +67,7 @@ public final class ModPediaBridge {
     private static final long RECONNECT_DELAY_SECONDS = 2L;
     private static final long HEARTBEAT_SECONDS = 10L;
     private static final String WORKER_MAIN_ENTRY = "io/ctyx/modpedia/worker/WorkerMain.class";
+    private static final String WORKER_ONLY_DEPENDENCY_PREFIX = "META-INF/modpedia-worker/";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ModPediaBridge INSTANCE = new ModPediaBridge();
 
@@ -100,6 +102,8 @@ public final class ModPediaBridge {
     private final Object lifecycleLock = new Object();
     /** writer、socket 和 ready 的检查与实际写入共享同一发送边界。 */
     private final Object writeLock = new Object();
+    /** 每次 Worker 连接递增；旧 reader 的迟到事件不能污染新连接。 */
+    private final AtomicLong connectionGeneration = new AtomicLong();
     private volatile Process process;
     private volatile Socket socket;
     private volatile BufferedWriter writer;
@@ -235,6 +239,7 @@ public final class ModPediaBridge {
                     socket = accepted;
                     writer = acceptedWriter;
                 }
+                long generation = connectionGeneration.incrementAndGet();
                 BufferedReader reader = new BufferedReader(new InputStreamReader(
                         accepted.getInputStream(), StandardCharsets.UTF_8
                 ));
@@ -261,7 +266,7 @@ public final class ModPediaBridge {
                     ready = true;
                 }
                 Thread readerThread = new Thread(
-                        () -> readEvents(reader, accepted, launchedProcess),
+                        () -> readEvents(reader, accepted, launchedProcess, generation),
                         "modpedia-worker-ipc-reader"
                 );
                 readerThread.setDaemon(true);
@@ -836,7 +841,12 @@ public final class ModPediaBridge {
     private void closeConnectionForRecovery() {
         Socket current = socket;
         Process currentProcess = process;
-        handleConnectionLost(current, currentProcess, "ModPedia Worker 心跳超时，正在准备重连");
+        handleConnectionLost(
+                current,
+                currentProcess,
+                connectionGeneration.get(),
+                "ModPedia Worker 心跳超时，正在准备重连"
+        );
     }
 
     private void cancelLifecycleTasks() {
@@ -925,7 +935,8 @@ public final class ModPediaBridge {
         command.add(paths.aiSettings().toString());
         Path log = workerDirectory.resolve("worker.log");
         ProcessBuilder builder = new ProcessBuilder(command)
-                .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()));
+                .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
         // Token 不再出现在 ps/Activity Monitor 的命令行参数中；只通过子进程
         // 环境变量传递，并且 Worker 仍会在握手阶段再次校验。
         builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
@@ -993,10 +1004,9 @@ public final class ModPediaBridge {
                 addClassLocation(entries, className);
             }
         } else {
-            // SLF4J 和 Gson 由游戏运行时提供；只加入这两个明确需要的 API，不能
-            // 把游戏 JVM 的全部依赖传给 Worker。
+            // SLF4J 由游戏运行时提供；Gson 已从发布 JAR 的 Worker 专用资源目录
+            // 提取到 sharedLibraryDirectory，不再从 Forge/NeoForge 游戏类加载器取。
             addClassLocation(entries, "org.slf4j.LoggerFactory");
-            addClassLocation(entries, "com.google.gson.Gson");
         }
         return String.join(File.pathSeparator, entries);
     }
@@ -1052,8 +1062,7 @@ public final class ModPediaBridge {
         try (ZipFile zip = new ZipFile(jar.toFile())) {
             var entries = zip.stream()
                     .filter(entry -> !entry.isDirectory())
-                    .filter(entry -> entry.getName().startsWith("META-INF/jarjar/")
-                            && entry.getName().endsWith(".jar"))
+                    .filter(entry -> isWorkerDependencyEntry(entry.getName()))
                     .toList();
             for (ZipEntry entry : entries) {
                 Path target = outputDirectory.resolve(Path.of(entry.getName()).getFileName().toString());
@@ -1089,11 +1098,25 @@ public final class ModPediaBridge {
         return result;
     }
 
-    private void readEvents(BufferedReader reader, Socket observedSocket, Process observedProcess) {
+    private static boolean isWorkerDependencyEntry(String name) {
+        return (name.startsWith("META-INF/jarjar/")
+                || name.startsWith(WORKER_ONLY_DEPENDENCY_PREFIX))
+                && name.endsWith(".jar");
+    }
+
+    private void readEvents(
+            BufferedReader reader,
+            Socket observedSocket,
+            Process observedProcess,
+            long generation
+    ) {
         try {
-            while (ready) {
+            while (ready && isCurrentConnection(observedSocket, generation)) {
                 JsonObject event = WorkerProtocol.read(reader);
                 if (event == null) {
+                    break;
+                }
+                if (!isCurrentConnection(observedSocket, generation)) {
                     break;
                 }
                 dispatch(event);
@@ -1104,10 +1127,16 @@ public final class ModPediaBridge {
             }
         } finally {
             if (!shuttingDown) {
-                handleConnectionLost(observedSocket, observedProcess,
+                handleConnectionLost(observedSocket, observedProcess, generation,
                         "ModPedia Worker 连接已断开，正在准备重连");
             }
         }
+    }
+
+    private boolean isCurrentConnection(Socket observedSocket, long generation) {
+        return observedSocket != null
+                && socket == observedSocket
+                && connectionGeneration.get() == generation;
     }
 
     /**
@@ -1117,16 +1146,20 @@ public final class ModPediaBridge {
     private void handleConnectionLost(
             Socket observedSocket,
             Process observedProcess,
+            long generation,
             String message
     ) {
         if (shuttingDown) {
             return;
         }
         synchronized (writeLock) {
-            if (observedSocket == null || socket != observedSocket) {
+            if (observedSocket == null
+                    || socket != observedSocket
+                    || connectionGeneration.get() != generation) {
                 return;
             }
             ready = false;
+            connectionGeneration.incrementAndGet();
             socket = null;
             writer = null;
             if (process == observedProcess) {
@@ -1530,6 +1563,7 @@ public final class ModPediaBridge {
     private boolean sendIfReady(JsonObject message) {
         Socket observedSocket = null;
         Process observedProcess = null;
+        long generation = -1L;
         try {
             synchronized (writeLock) {
                 // writer 的快照和实际写入必须在同一锁内完成；断线处理不能在
@@ -1539,11 +1573,12 @@ public final class ModPediaBridge {
                 }
                 observedSocket = socket;
                 observedProcess = process;
+                generation = connectionGeneration.get();
                 WorkerProtocol.write(writer, message);
                 return true;
             }
         } catch (IOException exception) {
-            handleConnectionLost(observedSocket, observedProcess,
+            handleConnectionLost(observedSocket, observedProcess, generation,
                     "ModPedia Worker 写入失败，正在准备重连");
             return false;
         }
@@ -1576,6 +1611,7 @@ public final class ModPediaBridge {
         Process currentProcess;
         synchronized (writeLock) {
             ready = false;
+            connectionGeneration.incrementAndGet();
             currentSocket = socket;
             currentProcess = process;
             socket = null;

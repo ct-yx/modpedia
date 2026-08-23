@@ -38,6 +38,10 @@ import java.util.zip.ZipFile;
  */
 public final class WorkerGuideScanner {
     private static final long MAX_TEXT_FILE_SIZE = 8L * 1024L * 1024L;
+    private static final int MAX_ARCHIVES = 2_048;
+    private static final int MAX_ARCHIVE_CANDIDATE_PATHS = 100_000;
+    private static final int MAX_SCAN_RESOURCES = 100_000;
+    private static final long MAX_SCAN_BYTES = 512L * 1024L * 1024L;
     private static final int MAX_MODS_SCAN_DEPTH = 3;
     private static final Pattern LANGUAGE_PATH = Pattern.compile(
             "^assets/([^/]+)/lang/(zh_cn|en_us)\\.json$",
@@ -63,12 +67,13 @@ public final class WorkerGuideScanner {
         if (modsDirectory == null || !Files.isDirectory(modsDirectory)) {
             return new ScanResult(List.of(), List.of("Worker mods 目录不存在：" + modsDirectory));
         }
+        ScanBudget budget = new ScanBudget(MAX_SCAN_RESOURCES, MAX_SCAN_BYTES);
         List<Path> archives = archiveFiles(modsDirectory);
         if (archives.isEmpty()) {
             warnings.add("Worker mods 目录中没有可扫描的 JAR/ZIP：" + modsDirectory);
         }
         for (Path file : archives) {
-            scanArchive(file, overrides, raw, warnings);
+            scanArchive(file, overrides, raw, warnings, budget);
         }
         Map<String, Map<String, String>> translations = loadTranslations(raw, warnings);
         List<ScannedResource> result = raw.stream()
@@ -112,6 +117,7 @@ public final class WorkerGuideScanner {
                     .map(path -> path.toAbsolutePath().normalize())
                     .distinct()
                     .sorted()
+                    .limit(MAX_ARCHIVES)
                     .toList();
         }
     }
@@ -120,26 +126,35 @@ public final class WorkerGuideScanner {
             Path archive,
             Map<String, SourceClassification> overrides,
             List<RawResource> raw,
-            List<String> warnings
+            List<String> warnings,
+            ScanBudget budget
     ) {
         try (ZipFile zip = new ZipFile(archive.toFile())) {
-            SourceMetadata defaultMetadata = metadata(zip, archive.getFileName().toString());
-            List<String> paths = zip.stream()
+            SourceMetadata defaultMetadata = metadata(
+                    zip, archive.getFileName().toString(), budget
+            );
+            List<String> candidatePaths = zip.stream()
                     .filter(entry -> !entry.isDirectory())
                     .map(ZipEntry::getName)
                     .filter(this::isPotentialCandidate)
                     .sorted()
                     .toList();
+            if (candidatePaths.size() > MAX_ARCHIVE_CANDIDATE_PATHS) {
+                warnings.add("Worker 模组候选知识路径超过上限，已截断：" + archive.getFileName());
+            }
+            List<String> paths = candidatePaths.size() > MAX_ARCHIVE_CANDIDATE_PATHS
+                    ? candidatePaths.subList(0, MAX_ARCHIVE_CANDIDATE_PATHS)
+                    : candidatePaths;
             Map<String, String> selectedLocales = selectPatchouliLocales(paths);
             Set<String> selectedGuidePaths = GuideLocaleSelector.select(paths);
             Map<String, SourceClassification> classifications = classifications(
-                    zip, paths, defaultMetadata, overrides, warnings
+                    zip, paths, defaultMetadata, overrides, warnings, budget
             );
             for (String path : paths) {
                 if (!isCandidate(path, selectedLocales, selectedGuidePaths)) {
                     continue;
                 }
-                readResource(zip, path, defaultMetadata, classifications, raw, warnings);
+                readResource(zip, path, defaultMetadata, classifications, raw, warnings, budget);
             }
         } catch (IOException | RuntimeException exception) {
             warnings.add("Worker 扫描模组 JAR 失败：" + archive.getFileName() + "（"
@@ -147,9 +162,9 @@ public final class WorkerGuideScanner {
         }
     }
 
-    private SourceMetadata metadata(ZipFile zip, String fileName) {
+    private SourceMetadata metadata(ZipFile zip, String fileName, ScanBudget budget) {
         for (String path : List.of("META-INF/neoforge.mods.toml", "META-INF/mods.toml")) {
-            String text = readText(zip, path).orElse("");
+            String text = readText(zip, path, budget).orElse("");
             if (text.isBlank()) {
                 continue;
             }
@@ -239,7 +254,8 @@ public final class WorkerGuideScanner {
             List<String> paths,
             SourceMetadata metadata,
             Map<String, SourceClassification> overrides,
-            List<String> warnings
+            List<String> warnings,
+            ScanBudget budget
     ) {
         Map<String, SourceClassification> result = new HashMap<>();
         for (String path : paths) {
@@ -251,12 +267,14 @@ public final class WorkerGuideScanner {
             SourceClassification classification = SourceClassification.defaultFor(namespace);
             String sourcePath = sourceResourcePath(path);
             if (sourcePath != null) {
-                classification = readClassification(zip, sourcePath, classification, namespace, warnings);
+                classification = readClassification(
+                        zip, sourcePath, classification, namespace, warnings, budget
+                );
             }
             classification = merge(classification, overrides.get(key));
             String rootPath = rootResourcePath(path);
             if (rootPath != null) {
-                String root = readText(zip, rootPath).orElse("");
+                String root = readText(zip, rootPath, budget).orElse("");
                 if (!root.isBlank()) {
                     try {
                         classification = classificationFromJson(
@@ -278,7 +296,8 @@ public final class WorkerGuideScanner {
             SourceMetadata metadata,
             Map<String, SourceClassification> classifications,
             List<RawResource> raw,
-            List<String> warnings
+            List<String> warnings,
+            ScanBudget budget
     ) {
         String namespace = namespaceOf(path);
         if (namespace == null || isFrameworkNamespace(namespace, metadata)) {
@@ -290,12 +309,20 @@ public final class WorkerGuideScanner {
                 warnings.add("Worker 跳过过大的知识文件：" + path);
                 return;
             }
+            if (!budget.reserveResource()) {
+                warnings.add("Worker 扫描资源数量超过全局上限，已停止读取：" + path);
+                return;
+            }
             byte[] bytes;
             try (InputStream stream = zip.getInputStream(entry)) {
                 bytes = readLimited(stream, MAX_TEXT_FILE_SIZE);
             }
             if (bytes == null) {
                 warnings.add("Worker 跳过过大的知识文件：" + path);
+                return;
+            }
+            if (!budget.reserveBytes(bytes.length)) {
+                warnings.add("Worker 扫描资源总大小超过全局上限，已停止读取：" + path);
                 return;
             }
             String content = new String(bytes, StandardCharsets.UTF_8);
@@ -363,9 +390,10 @@ public final class WorkerGuideScanner {
             String path,
             SourceClassification fallback,
             String namespace,
-            List<String> warnings
+            List<String> warnings,
+            ScanBudget budget
     ) {
-        String content = readText(zip, path).orElse("");
+        String content = readText(zip, path, budget).orElse("");
         if (content.isBlank()) {
             return fallback;
         }
@@ -542,16 +570,20 @@ public final class WorkerGuideScanner {
         }
     }
 
-    private java.util.Optional<String> readText(ZipFile zip, String path) {
+    private java.util.Optional<String> readText(ZipFile zip, String path, ScanBudget budget) {
         ZipEntry entry = zip.getEntry(path);
         if (entry == null || entry.isDirectory() || entry.getSize() > MAX_TEXT_FILE_SIZE) {
             return java.util.Optional.empty();
         }
+        if (!budget.reserveResource()) {
+            return java.util.Optional.empty();
+        }
         try (InputStream stream = zip.getInputStream(entry)) {
             byte[] bytes = readLimited(stream, MAX_TEXT_FILE_SIZE);
-            return bytes == null
-                    ? java.util.Optional.empty()
-                    : java.util.Optional.of(new String(bytes, StandardCharsets.UTF_8));
+            if (bytes == null || !budget.reserveBytes(bytes.length)) {
+                return java.util.Optional.empty();
+            }
+            return java.util.Optional.of(new String(bytes, StandardCharsets.UTF_8));
         } catch (IOException exception) {
             return java.util.Optional.empty();
         }
@@ -608,6 +640,34 @@ public final class WorkerGuideScanner {
             SourceMetadata metadata,
             SourceClassification classification
     ) {
+    }
+
+    private static final class ScanBudget {
+        private final int maxResources;
+        private final long maxBytes;
+        private int resources;
+        private long bytes;
+
+        private ScanBudget(int maxResources, long maxBytes) {
+            this.maxResources = maxResources;
+            this.maxBytes = maxBytes;
+        }
+
+        private boolean reserveResource() {
+            if (resources >= maxResources) {
+                return false;
+            }
+            resources++;
+            return true;
+        }
+
+        private boolean reserveBytes(long amount) {
+            if (amount < 0 || bytes > maxBytes - amount) {
+                return false;
+            }
+            bytes += amount;
+            return true;
+        }
     }
 
     private record SourceMetadata(String name, String version, Set<String> modIds) {

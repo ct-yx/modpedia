@@ -15,22 +15,28 @@ import java.nio.file.StandardCopyOption;
 import java.util.EnumSet;
 import java.util.Set;
 
-/** AI 设置的本地 JSON 存储；API Key 只以密文形式落盘，并在进程内缓存明文。 */
+/** AI 设置的本地 JSON 存储；优先使用系统密钥环，失败时回退到机器绑定密文。 */
 public final class AiSettingsStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
     private final Path path;
     private final ApiKeyProtector protector;
+    private final SystemSecretStore secretStore;
     private AiSettings cached;
     private boolean loaded;
 
     public AiSettingsStore(Path path) {
-        this(path, MachineIdentity.forSettings(path));
+        this(path, MachineIdentity.forSettings(path), SystemSecretStore.current());
     }
 
     AiSettingsStore(Path path, String machineIdentity) {
+        this(path, machineIdentity, SystemSecretStore.disabled());
+    }
+
+    AiSettingsStore(Path path, String machineIdentity, SystemSecretStore secretStore) {
         this.path = path.toAbsolutePath().normalize();
         this.protector = new ApiKeyProtector(machineIdentity);
+        this.secretStore = secretStore == null ? SystemSecretStore.disabled() : secretStore;
     }
 
     // Worker 只接收显式路径；客户端运行时路径由 AiAssistantSession 适配层提供。
@@ -94,11 +100,20 @@ public final class AiSettingsStore {
             // Gson 的 record 字段名是 apiKey；同时清理可能来自旧版本的 snake_case 字段。
             stored.remove("apiKey");
             stored.remove("api_key");
+            stored.remove("api_key_storage");
+            stored.remove("api_key_ref");
             stored.remove("apiFormat");
             stored.addProperty("api_format", actual.apiFormat().name());
             if (!actual.apiKey().isBlank()) {
-                stored.add("api_key_encrypted", protector.encrypt(actual.apiKey()));
+                if (secretStore.put(actual.apiKey())) {
+                    stored.addProperty("api_key_storage", "system");
+                    stored.addProperty("api_key_ref", secretStore.reference());
+                    stored.remove("api_key_encrypted");
+                } else {
+                    stored.add("api_key_encrypted", protector.encrypt(actual.apiKey()));
+                }
             } else {
+                secretStore.delete(secretStore.reference());
                 stored.remove("api_key_encrypted");
             }
             Files.writeString(temporary, GSON.toJson(stored), StandardCharsets.UTF_8);
@@ -135,6 +150,13 @@ public final class AiSettingsStore {
         String apiKey = plaintext;
         boolean migrate = !plaintext.isBlank();
         boolean removeStoredKey = stored.has("api_key_encrypted") && plaintext.isBlank();
+        if (apiKey.isBlank() && "system".equalsIgnoreCase(firstString(stored, "api_key_storage"))) {
+            String keyFromSystem = secretStore.get(firstString(stored, "api_key_ref"));
+            if (!keyFromSystem.isBlank()) {
+                apiKey = keyFromSystem;
+                removeStoredKey = false;
+            }
+        }
         if (apiKey.isBlank() && stored.has("api_key_encrypted")
                 && stored.get("api_key_encrypted").isJsonObject()) {
             ApiKeyProtector.DecryptionResult result = protector.decrypt(

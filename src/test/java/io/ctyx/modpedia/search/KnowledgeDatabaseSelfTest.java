@@ -161,6 +161,7 @@ public final class KnowledgeDatabaseSelfTest {
 
             verifyTransactionRollback(temporary.resolve("transaction"));
             verifyWikiFailureKeepsPrevious(temporary.resolve("wiki-failure"));
+            verifyKnowledgePathBoundaries(temporary.resolve("path-boundary"));
             verifyPreviousDatabaseRecovery(temporary.resolve("database-recovery"));
             verifyCompilerReportsDatabaseFailure(temporary.resolve("compiler-failure"));
             System.out.println("ModPedia SQLite knowledge self-test passed");
@@ -359,6 +360,52 @@ public final class KnowledgeDatabaseSelfTest {
         service.reload();
         check(service.search(new SearchQuery("搜索", 8, SearchLanguage.ZH_CN, KnowledgeScope.WIKI)).hasResults(),
                 "非法 UTF-8 Wiki 后应继续保留旧索引");
+    }
+
+    private static void verifyKnowledgePathBoundaries(Path root) throws Exception {
+        Path contentRoot = root.resolve("content");
+        Path runtimeRoot = root.resolve("runtime");
+        Path sourceRoot = contentRoot.resolve("sources/evil");
+        Path outsideSourceRoot = contentRoot.resolve("sources/outside");
+        Files.createDirectories(outsideSourceRoot);
+        write(outsideSourceRoot.resolve("secret.md"), "# 不应被导入\n\n越界 Wiki 内容。\n");
+        write(sourceRoot.resolve("source.json"), """
+                {"source_id":"evil","collection_id":"evil","content_kind":"wiki",
+                 "source_type":"wiki_markdown","origin_type":"local","title":"越界测试",
+                 "language":"zh_cn","version":"1","documents_root":"../outside"}
+                """);
+
+        boolean importFailed = false;
+        try {
+            new KnowledgeCompiler().compile(
+                    contentRoot,
+                    runtimeRoot,
+                    new KnowledgeScanResult(List.of(), List.of()),
+                    true
+            );
+        } catch (IOException expected) {
+            importFailed = true;
+        }
+        check(importFailed, "documents_root 越界时必须拒绝本次构建");
+        check(!Files.exists(runtimeRoot.resolve("generated/evil/secret.md")),
+                "越界 Wiki 不得写入 generated 输出");
+        deleteTree(sourceRoot);
+        deleteTree(outsideSourceRoot);
+
+        Path outsideOutput = root.resolve("outside-output.md");
+        write(outsideOutput, "必须保留的本地文件\n");
+        Files.createDirectories(runtimeRoot);
+        write(runtimeRoot.resolve("state.json"), """
+                {"schema_version":2,"sources":{"evil:old":{"fingerprint":"old",
+                 "documents":["../outside-output.md"]}}}
+                """);
+        new KnowledgeCompiler().compile(
+                contentRoot,
+                runtimeRoot,
+                new KnowledgeScanResult(List.of(), List.of()),
+                true
+        );
+        check(Files.exists(outsideOutput), "恶意状态输出路径不得删除知识库根目录外文件");
     }
 
     private static void verifyPreviousDatabaseRecovery(Path root) throws Exception {
