@@ -1,7 +1,7 @@
 # ModPedia 知识库设计
 
 当前发布基线为 `v1.4.0`、Schema v7、SQLite FTS5 external-content 和
-`worker-baseline-3`；知识库协议在 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ 兼容线上复用。本文描述运行时事实源、派生库和导入边界；版本级路线见
+`worker-baseline-3`；知识库协议在 NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+ 兼容线上复用。本文描述运行时事实源、派生库和导入边界；版本级路线见
 [ROADMAP.md](ROADMAP.md)，Worker 变更流程见 [WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md)。
 
 ## 1. 设计原则

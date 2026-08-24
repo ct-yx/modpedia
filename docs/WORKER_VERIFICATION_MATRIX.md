@@ -6,7 +6,7 @@
 ## 状态标记
 
 ```text
-[x] 已有自动化证据
+[x] 已有自动化证据和当前目标实例回归
 [~] 已构建或实现，但还需要目标游戏实例人工回归
 [ ] 尚未开始
 [-] 不适用
@@ -21,11 +21,11 @@
 | W3 | SQLite/FTS 与本地 AI Mock | `worker-baseline-3` | 21 | 知识库重建、FTS 查询、Mock 请求和会话重启 | `[x]` |
 | W4 | Worker 知识扫描 | `worker-baseline-3` | 21 | JAR 扫描、语言回退、文档导入和来源统计 | `[x]` |
 | W5 | 任务存档读取 | `worker-baseline-3` | 21 | FTBQ 静态导入、运行时文件读取、p50/p95/p99 | `[x]` |
-| C1 | NeoForge 1.21.1 客户端适配层 | `worker-baseline-3` | 21 | `build`、`runClient`、UI/注册表/可选联动回归 | `[~]` |
-| C2 | NeoForge 1.21.1 Dedicated Server | `worker-baseline-3` | 21 | `build`、`runServer`、不解析客户端类 | `[~]` |
-| C3 | Forge 1.20.1 客户端适配层 | `worker-baseline-3` | 21 | `build`、UI/注册表/可选联动和 Worker 握手 | `[~]` |
-| C4 | Forge 1.20.1 Dedicated Server | `worker-baseline-3` | 21 | `build`、不解析客户端类、Worker 隔离 | `[~]` |
-| L1 | Cleanroom 0.3+ / 1.12.2 客户端适配层 | `worker-baseline-3` | 游戏 8 / Worker 21 | Forge API 构建、Worker 嵌入、旧 UI、JEI/FTBQ 回归 | `[~]` |
+| C1 | NeoForge 1.21.1 客户端适配层 | `worker-baseline-3` | 21 | `build`、`runClient`、UI/注册表/可选联动回归 | `[x]` |
+| C2 | NeoForge 1.21.1 Dedicated Server | `worker-baseline-3` | 21 | `build`、`runServer`、不解析客户端类 | `[x]` |
+| C3 | Forge 1.20.1 客户端适配层 | `worker-baseline-3` | 21 | `build`、UI/注册表/可选联动和 Worker 握手 | `[x]` |
+| C4 | Forge 1.20.1 Dedicated Server | `worker-baseline-3` | 21 | `build`、不解析客户端类、Worker 隔离 | `[x]` |
+| L1 | Forge 1.12.2 / Cleanroom 0.3+ 客户端适配层 | `worker-baseline-3` | 游戏 8 / Worker 21 | Forge API 构建、Worker 嵌入、旧 UI、JEI/FTBQ 回归 | `[x]` |
 | F1 | 未来 Minecraft 版本的新客户端适配层 | `worker-baseline-3` 或递增 | 21 | 新适配层编译、握手、客户端/服务端组合回归 | `[ ]` |
 
 W1–W5 可以在无真实模型、无外网的环境完成；C1/C2 不得用纯 Java 自测代替真实游戏

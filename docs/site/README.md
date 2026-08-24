@@ -12,9 +12,11 @@
 
 - Minecraft 1.21.1 + NeoForge 21.1.x；
 - Minecraft 1.20.1 + Forge 47.x；
-- Minecraft 1.12.2 + Cleanroom 0.3+ 兼容线（CurseForge 文件按 Forge 1.12.2 标记）。
+- Minecraft 1.12.2 + Forge 14.23.5.2847 / Cleanroom 0.3+ 兼容线（同一 JAR，CurseForge 文件按 Forge 1.12.2 标记）。
 
-页面说明手册框架与内容模组的区别，并列出 Patchouli、GuideME/Guide-API、Modonomicon/APP、自定义 Markdown、Wiki、FTBQ、JEI、Jade、物品目录、AI、仅搜索和 Worker 隔离的版本支持情况。
+三条版本线均已完成当前 v1.4.0 发布测试。
+
+页面说明手册框架与内容模组的区别，并列出 Patchouli、GuideME/Guide-API、Modonomicon/APP、1.12.2 Mantle/匠魂手册、自定义 Markdown、Wiki、FTBQ、JEI、Jade、物品目录、AI、仅搜索和 Worker 隔离的版本支持情况。
 
 ## 赞助渠道
 
@@ -76,8 +78,9 @@ The site is a static Chinese/English landing and download page built with plain 
 - Current release: [`v1.4.0`](https://github.com/ct-yx/modpedia/releases/tag/v1.4.0)
 
 The download section contains three JARs and a vertical feature matrix for NeoForge 1.21.1,
-Forge 1.20.1, and the Cleanroom 0.3+ / 1.12.2 compatibility line. The CurseForge 1.12.2 file
-uses the Forge 1.12.2 platform marker because Cleanroom remains Forge-API compatible.
+Forge 1.20.1, and the Forge 1.12.2 / Cleanroom 0.3+ compatibility line. The same 1.12.2 JAR
+supports both targets; its CurseForge file uses the Forge 1.12.2 platform marker because Cleanroom
+is Forge-API compatible. The 1.12.2 line also supports Mantle/Tinkers' Construct manuals.
 
 The site must not contain local JARs, databases, conversations, API keys, diagnostics, user paths,
 or build caches. Before publishing a modpack, remove `config/modpedia/runtime/` and keep only the

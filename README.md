@@ -7,13 +7,15 @@ ModPedia 是面向 Minecraft 整合包的本地模组知识助手：读取已安
 
 English: [README.en.md](README.en.md) · 网站：[GitHub Pages](https://ct-yx.github.io/modpedia/)
 
+面向玩家的完整模组介绍：[中文](docs/MOD_INTRODUCTION.md) · [English](docs/MOD_INTRODUCTION.en.md)
+
 ## v1.4.0 发布基线
 
 | 版本资产 | Minecraft / 加载器 | Java | Worker |
 | --- | --- | --- | --- |
 | `modpedia-1.4.0-mc1.21.1-neoforge.jar` | 1.21.1 / NeoForge 21.1.x | 21 | `worker-baseline-3` |
 | `modpedia-1.4.0-mc1.20.1-forge.jar` | 1.20.1 / Forge 47.x | 21 | `worker-baseline-3` |
-| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 / Cleanroom 0.3+ 兼容线 | 游戏 Java 8；Worker Java 21 | `worker-baseline-3` |
+| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 / Forge 14.23.5.2847 + Cleanroom 0.3+ 兼容线 | 游戏 Java 8；Worker Java 21 | `worker-baseline-3` |
 
 三个版本共用同一产品协议和 Worker 设计，但客户端适配层分别针对对应加载器编译。完整的
 `v1.1.0 → v1.4.0` 对比见 [`docs/RELEASE_1.4.0.md`](docs/RELEASE_1.4.0.md)，下载矩阵见网站的
@@ -33,13 +35,14 @@ English: [README.en.md](README.en.md) · 网站：[GitHub Pages](https://ct-yx.g
 
 ### 手册框架与内容模组
 
-手册框架是前置性的，**框架本身不一定包含正文**。Patchouli、GuideME、Modonomicon/APP
+手册框架是前置性的，**框架本身不一定包含正文**。Patchouli、GuideME、Modonomicon/APP、Mantle
 缺失时 ModPedia 仍可进入游戏；要获得正文，需要安装真正提供书籍内容的内容模组或整合包作者来源。
 
 | 来源 | 当前支持内容 | 归属 |
 | --- | --- | --- |
 | Patchouli | 书籍、分类、条目、页面和常见页面节点；`zh_cn → en_us → neutral` 回退 | `mod_manual` 或按覆盖归入 `wiki` |
 | GuideME / Guide-API | Markdown、文本、语言目录和页面索引；含 1.12.2 兼容适配 | `mod_manual` |
+| Mantle / Tinkers' Construct（1.12.2） | 地幔/匠魂书籍、章节和页面来源；支持正文检索与页面跳转 | `mod_manual` |
 | Modonomicon / APP JSON | 书籍、分类、条目、页面、配方/物品/链接节点和未知节点 Markdown 降级 | 默认 `mod_manual`，可声明为 `wiki` |
 | 自定义 Markdown | `custom/**/*.md` 和 `sources/<source-id>/documents/**/*.md` | 默认 `wiki` |
 | FTB Quests Wiki | 内置或本地 Wiki Markdown，和任务静态定义分开检索 | `wiki` |
@@ -120,7 +123,7 @@ APP/Modonomicon 书籍的根 JSON 可以声明：
 - 发布/Pages 主分支：`main`；三条代码分支只维护自身加载器代码和测试。
 - NeoForge 1.21.1：分支 `mainline-1.21.1`。
 - Forge 1.20.1：分支 `migration/forge-1.20.1`。
-- Cleanroom 0.3+：分支 `migration/1.12.2-common`。
+- Forge 1.12.2 / Cleanroom 0.3+：分支 `migration/1.12.2-common`。
 - Worker 依赖或协议变化先按 [`docs/WORKER_CHANGE_PROTOCOL.md`](docs/WORKER_CHANGE_PROTOCOL.md) 生成摘要，在 Worker 对话完成修改，再同步各客户端适配层。
 - 设计、架构、知识库和后续路线见 [`docs/`](docs/)。
 

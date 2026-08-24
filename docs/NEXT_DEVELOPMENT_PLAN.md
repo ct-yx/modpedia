@@ -12,7 +12,7 @@
 | 项目 | 当前值 |
 | --- | --- |
 | 发布版本 | **v1.4.0** |
-| Minecraft / 加载器 | **1.21.1 NeoForge、1.20.1 Forge、1.12.2 Cleanroom 0.3+** |
+| Minecraft / 加载器 | **1.21.1 NeoForge、1.20.1 Forge、1.12.2 Forge / Cleanroom 0.3+** |
 | Java | **游戏按版本；Worker 21** |
 | 知识库 | knowledge.db Schema v7 |
 | FTS | SQLite FTS5 external-content |

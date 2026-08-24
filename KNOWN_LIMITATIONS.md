@@ -2,13 +2,13 @@
 
 ## 发布范围
 
-- `v1.4.0` 同时提供 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2 兼容线。
+- `v1.4.0` 同时提供 NeoForge 1.21.1、Forge 1.20.1，以及 Forge 1.12.2 / Cleanroom 0.3+ 兼容线；三条版本线均已完成当前发布测试。
 - 三个版本的核心协议、Worker 和知识库设计一致，但客户端 GUI、事件、注册表和第三方联动使用各自加载器适配层。
-- 1.12.2 代码以 Forge 1.12.2 API 编译，Cleanroom 0.3+ 是目标兼容运行线；不同 Cleanroom 构建仍需实际实例回归。
+- 1.12.2 文件使用 Forge 1.12.2 API 编译，兼容 Forge 1.12.2 和 Cleanroom 0.3+；不同第三方整合包或改版构建仍可能有额外差异。
 
 ## 手册与 Wiki
 
-- Patchouli、GuideME、Modonomicon/APP 是手册框架，框架 JAR 可能没有正文。实际内容由内容模组或整合包作者来源提供。
+- Patchouli、GuideME、Modonomicon/APP 和 Mantle 是手册框架或手册运行库，框架 JAR 可能没有正文。实际内容由内容模组或整合包作者来源提供；1.12.2 的 Mantle/Tinkers' Construct 书籍已纳入当前发布测试。
 - APP/Modonomicon 未识别的页面节点会保留为 Markdown 文本或结构化降级，不保证每个第三方自定义节点都能还原原始视觉布局。
 - 图片和媒体元数据会随 Wiki 来源文件保留，但当前 FTS5 文本搜索只建立 Markdown 正文索引。
 - 来源跳转依赖目标手册模组在当前客户端提供可用 API；目标模组缺失时保留文本来源，不阻塞搜索。

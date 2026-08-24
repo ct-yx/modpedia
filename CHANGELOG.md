@@ -6,7 +6,7 @@
 
 ### 新增
 
-- 发布 NeoForge 1.21.1、Forge 1.20.1、Cleanroom 0.3+ / 1.12.2 三份独立 Mod JAR；三个构建使用对应客户端适配层，共用 Worker 协议和知识库设计。
+- 发布 NeoForge 1.21.1、Forge 1.20.1、Forge 1.12.2 / Cleanroom 0.3+ 三份独立 Mod JAR；三个构建使用对应客户端适配层，共用 Worker 协议和知识库设计。
 - 增加独立 Worker JVM、固定 `worker-baseline-3`、用户级共享 Worker 库和实例级运行时目录隔离，减少多个整合包重复占用依赖。
 - 增加 Patchouli、GuideME/Guide-API、Modonomicon/APP JSON、自定义 Markdown、整合包作者 Wiki 和 FTBQ Wiki 的可扩展来源说明；支持来源分类、语言回退、原始路径和正文跳转。
 - 增加 FTB Quests 静态任务定义、依赖、要求、奖励、候选下一步、阻塞原因和时间线；运行时玩家进度按任务问题读取，不写入全局知识库。
@@ -36,7 +36,7 @@
 ### 验证与资产
 
 - 三版本纯 Java 自测试和发布构建通过；发布前继续执行 `./gradlew test`、`./gradlew build` 和 `git diff --check`。
-- Release 资产：`modpedia-1.4.0-mc1.21.1-neoforge.jar`、`modpedia-1.4.0-mc1.20.1-forge.jar`、`modpedia-1.4.0-mc1.12.2-cleanroom.jar`、`SHA256SUMS`、安装说明和已知限制。
+- Release 资产：`modpedia-1.4.0-mc1.21.1-neoforge.jar`、`modpedia-1.4.0-mc1.20.1-forge.jar`、`modpedia-1.4.0-mc1.12.2-cleanroom.jar`（Forge 1.12.2 / Cleanroom 0.3+）、`SHA256SUMS`、安装说明和已知限制。
 - 详细的 v1.1.0 对比、来源支持和仍需人工回归项目见 [`docs/RELEASE_1.4.0.md`](docs/RELEASE_1.4.0.md)。
 
 ## v1.2.0-fix

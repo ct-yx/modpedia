@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-ModPedia 是跨 Minecraft 1.21.1/NeoForge、1.20.1/Forge 和 1.12.2/Cleanroom 0.3+ 的本地知识助手：
+ModPedia 是跨 Minecraft 1.21.1/NeoForge、1.20.1/Forge 和 1.12.2/Forge、Cleanroom 0.3+ 的本地知识助手：
 
 ```text
 已安装模组手册 / Wiki / 自定义 Markdown
@@ -30,7 +30,7 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 
 | 项目 | 值 |
 | --- | --- |
-| Minecraft / 加载器 | 1.21.1 NeoForge；1.20.1 Forge；1.12.2 Cleanroom 0.3+ |
+| Minecraft / 加载器 | 1.21.1 NeoForge；1.20.1 Forge；1.12.2 Forge / Cleanroom 0.3+ |
 | Java | 游戏按版本；Worker Java 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |

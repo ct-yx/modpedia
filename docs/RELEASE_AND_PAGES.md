@@ -41,7 +41,7 @@ SHA256SUMS                    # 由 Release 工作流临时生成，不提交仓
 
 Release 工作流只从当前标签读取 `CHANGELOG.md` 中同名的第一个 `##` 区块，因此新版本
 必须先在文件顶部增加对应条目；不会把后续历史版本的更新日志带入本次发布。工作流随后分别构建
-NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2，并上传三份 JAR 与校验文件。
+NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三份 JAR 与校验文件。
 
 ## 文件规则
 

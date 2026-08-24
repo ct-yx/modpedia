@@ -1,9 +1,12 @@
 # ModPedia 开发日志
 
-## 2026-08-25 · v1.4.0 三版本发布准备
+## 2026-08-25 · v1.4.0 三版本发布与回归
 
-- 以 `v1.1.0` 为对比基线，核对 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2 三条代码分支。
+- 以 `v1.1.0` 为对比基线，核对 NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+ 三条代码分支。
 - 三版本纯 Java 自测试和发布构建通过；JAR 元数据统一为 `1.4.0`、`ModPedia · 模组百科`、Apache License 2.0。
+- 三个版本均已完成当前发布测试，包含客户端启动、Worker 握手、知识库导入、UI、手册来源、可选联动和发布 JAR 加载检查。
+- 1.12.2 回归额外覆盖 Mantle/Tinkers' Construct（地幔/匠魂）书籍的扫描、检索和页面跳转。
+- `v1.4.0` GitHub Release、CurseForge 三文件发布和 SHA-256 资产校验均完成。
 - 新增 [`RELEASE_1.4.0.md`](RELEASE_1.4.0.md)，记录手册/Wiki/自定义来源、Worker、AI、任务、物品、JEI、Jade、UI 和修复项。
 - 更新中英文 README、安装说明、已知限制、开发清单、架构、知识库、路线和 GitHub Pages；发布页新增三版本功能矩阵。
 - Release/CurseForge 工作流改为从三条代码分支分别构建并发布，当前 `CHANGELOG.md` 只提取 `v1.4.0` 段落。
@@ -13,7 +16,7 @@
 ```text
 NeoForge 1.21.1: ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version=1.4.0
 Forge 1.20.1:    ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version=1.4.0
-Cleanroom 1.12.2: ./gradlew clean build --no-daemon -Pmod_version=1.4.0
+Forge 1.12.2 / Cleanroom: ./gradlew clean build --no-daemon -Pmod_version=1.4.0
 ```
 
 

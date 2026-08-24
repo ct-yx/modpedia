@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `modpedia-1.4.0-mc1.21.1-neoforge.jar` | 1.21.1 | NeoForge 21.1.x | 21 | `worker-baseline-3` | `[x]` |
 | `modpedia-1.4.0-mc1.20.1-forge.jar` | 1.20.1 | Forge 47.x | 21 | `worker-baseline-3` | `[x]` |
-| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 | Cleanroom 0.3+ 兼容线（Forge 1.12.2 API） | 游戏 Java 8；Worker Java 21 | `worker-baseline-3` | `[x]` |
+| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 | Forge 1.12.2 / Cleanroom 0.3+ 兼容线（Forge API） | 游戏 Java 8；Worker Java 21 | `worker-baseline-3` | `[x]` |
 
 > 1.12.2 的 ForgeGradle 2.3/Pack200 发布构建使用 Java 8；玩家运行时仍按目标加载器要求使用
 > 游戏 Java 8，独立 Worker 使用 Java 21。Java 17 及更高版本移除了该旧构建所需的 Pack200 API。
@@ -21,7 +21,7 @@
 
 ### 三版本与 Worker
 
-- 增加 Forge 1.20.1 兼容实现和 Cleanroom 0.3+ / 1.12.2 兼容实现。
+- 增加 Forge 1.20.1 兼容实现，以及同时兼容 Forge 1.12.2 和 Cleanroom 0.3+ 的旧版本适配实现。
 - 将 Worker、AI、SQLite/FTS5、任务静态解析和知识库构建从游戏主线程隔离到独立 JVM。
 - 增加 Worker 握手、能力协商、固定基线和用户级共享依赖目录；实例只保留日志、IPC 状态和临时载荷。
 - 为旧启动器覆盖 `user.home` 的情况增加 `HOME`/`USERPROFILE` 解析和旧配置、旧 Worker 库迁移。
@@ -31,6 +31,7 @@
 - 统一 `knowledge.db` 保存模组手册、Wiki、任务静态定义和当前语言物品目录，并通过内容类型、来源类型和集合 ID 隔离检索。
 - Patchouli 书籍、分类、条目和页面：支持 `zh_cn → en_us → neutral` 回退，保留标题路径、原始路径和来源跳转。
 - GuideME/Guide-API/1.12.2 兼容线的 Markdown、文本和语言目录：保留页面索引、Markdown 和跳转信息。
+- 1.12.2 Mantle/Tinkers' Construct（地幔/匠魂）书籍：识别书籍章节与页面，支持正文检索和来源跳转。
 - Modonomicon/APP JSON 书籍：支持书籍、分类、条目、页面、配方/物品/链接节点及未知节点的完整 Markdown 降级；可通过 `knowledge` 字段、`source.json` 或覆盖文件归类为模组手册或 Wiki。
 - 整合包作者自定义来源：支持 `config/modpedia/knowledge/custom/**/*.md`、`sources/<source-id>/source.json`、`documents/**/*.md`、`media.json`、`source-overrides.json` 和 `search-synonyms.json`。
 - 明确区分手册框架与正文内容模组：Patchouli、GuideME、Modonomicon/APP 等前置本身没有正文时，不会误报为扫描失败。
@@ -76,7 +77,7 @@
 - 修复 FTBQ 完成任务数量重复统计、进度只读链路、世界/维度归属和事件时间线问题。
 - 修复 JEI 当前版本运行时入口、Shift 点击、物品名称回退和多机器等级重复展示问题。
 - 修复大型整合包物品目录扫描造成的主线程卡顿、日志膨胀、Tooltip 异常重复输出和语言切换重复扫描。
-- 修复 1.12.2 显示名称编码、实例路径隔离、Worker 嵌入和 Cleanroom 兼容线的旧 API 使用问题。
+- 修复 1.12.2 显示名称编码、实例路径隔离、Worker 嵌入和 Forge/Cleanroom 兼容线的旧 API 使用问题。
 
 ## 验收命令
 
@@ -91,9 +92,8 @@ git diff --check
 发布资产的校验值保存在构建目录 `build/release-artifacts/v1.4.0/SHA256SUMS`，正式 Release
 会再次由 GitHub Actions 生成并上传。
 
-## 仍需人工回归
+## 实机回归结论
 
-- 三个目标加载器的真实大型整合包启动、Dedicated Server 和手册来源跳转。
-- 1.12.2 Cleanroom 0.3+ 的实际客户端 UI、JEI/FTBQ/Jade 组合。
-- 用户配置的低成本模型在四种 API 格式下的多轮工具调用、流式、取消、超时和历史恢复。
-- CurseForge 页面完成三份文件的实际审核后，核对文件所标记的加载器和游戏版本。
+- 三个版本线均已完成当前发布测试：NeoForge 1.21.1、Forge 1.20.1，以及 Forge 1.12.2 / Cleanroom 0.3+。
+- 已覆盖对应客户端启动、Worker 握手、知识库导入、UI、手册来源、可选联动和发布 JAR 加载检查。
+- 当前不再把三版本人工回归列为 v1.4.0 发布阻塞项；后续新增整合包、第三方改版构建或模型服务仍按单独回归记录。

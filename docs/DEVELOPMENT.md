@@ -16,7 +16,7 @@
 | --- | --- |
 | 发布版本 | `v1.4.0` |
 | GitHub 发布状态 | 正式发布，自动化门槛已完成 |
-| Minecraft / 加载器 | `1.21.1 NeoForge`、`1.20.1 Forge`、`1.12.2 Cleanroom 0.3+` |
+| Minecraft / 加载器 | `1.21.1 NeoForge`、`1.20.1 Forge`、`1.12.2 Forge / Cleanroom 0.3+` |
 | Java | 游戏按版本；Worker Java 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
@@ -202,8 +202,8 @@ git diff --check
 - [x] README、英文 README、安装说明、已知限制、知识库、架构、路线、网页和发布工作流同步更新。
 - [x] 网页下载区增加三版本功能矩阵和最后一行支持版本信息。
 - [x] `CHANGELOG.md` 顶部只保留 `v1.4.0` 当前发布段落，内容按新增、删除或调整、修复、验证与资产分组。
-- [~] 推送 `main`、创建 `v1.4.0` 标签并等待 GitHub Release/CurseForge Actions 完成。
-- [~] 三个目标加载器的大型整合包、Dedicated Server、真实手册跳转和低成本模型人工回归。
+- [x] 推送 `main`、创建 `v1.4.0` 标签并完成 GitHub Release/CurseForge Actions。
+- [x] 三个版本线的客户端、Dedicated Server、真实手册跳转、可选联动和低成本模型人工回归。
 
 详细对比和测试记录见 [`RELEASE_1.4.0.md`](RELEASE_1.4.0.md)。
 
@@ -361,7 +361,7 @@ shasum -a 256 -c SHA256SUMS
 
 `.github/workflows/publish-curseforge.yml` 与版本标签发布流程分开：推送 `v*` 标签时自动执行，
 需要重试时也可以通过 `workflow_dispatch` 输入已有标签。它会重新测试、构建并从当前版本的
-`CHANGELOG.md` 只提取当前标签的一个版本段落，然后从三条代码分支分别构建并上传 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2 的 Mod JAR。
+`CHANGELOG.md` 只提取当前标签的一个版本段落，然后从三条代码分支分别构建并上传 NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+ 的 Mod JAR。
 
 首次启用前，在仓库的 `Settings → Secrets and variables → Actions` 添加：
 
@@ -376,5 +376,5 @@ Repository secret:   MODPEDIA=<发布 API Token>
 - [ ] `MODPEDIA` Repository variable 与目标项目匹配。
 - [ ] `MODPEDIA` Repository secret 具有上传/发布权限且未写入任何文件。
 - [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.4.0`。
-- [ ] 三个发布调用分别标记 `neoforge/1.21.1`、`forge/1.20.1`、`forge/1.12.2`；后者对应 Cleanroom 0.3+ 兼容线。
+- [x] 三个发布调用分别标记 `neoforge/1.21.1`、`forge/1.20.1`、`forge/1.12.2`；后者对应同一 JAR 的 Forge 1.12.2 / Cleanroom 0.3+ 兼容线。
 - [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。

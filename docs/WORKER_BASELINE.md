@@ -1,7 +1,7 @@
 # Worker 基线与兼容层
 
 本文件定义独立 Worker 与 Minecraft 客户端适配层之间的稳定边界。当前基线为
-`worker-baseline-3`，由 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2
+`worker-baseline-3`，由 NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+
 兼容线复用；它不是
 新的运行库目录，也不替代 `config/modpedia/runtime/` 的实例级状态。
 
@@ -12,7 +12,7 @@
 | Worker 基线 | `worker-baseline-3` |
 | Worker API level | `1` |
 | JSONL 协议 | `WorkerProtocol.VERSION = 1` |
-| 客户端适配 | `1.21.1 NeoForge`、`1.20.1 Forge`、`1.12.2 Cleanroom 0.3+` |
+| 客户端适配 | `1.21.1 NeoForge`、`1.20.1 Forge`、`1.12.2 Forge / Cleanroom 0.3+` |
 | 游戏 Java | 1.21.1/1.20.1 为 `21`；1.12.2 目标游戏为 `8` |
 | Worker Java | `21` |
 | SQLite JDBC | `3.53.2.1` |
@@ -20,7 +20,7 @@
 | LangChain4j Community SQL | `1.18.0-beta28` |
 | Gson | `2.11.0`，由游戏运行时提供 |
 | SLF4J API | `2.0.9`，由 NeoForge 运行时提供 |
-| 客户端适配层 | `neoforge-1.21.1` |
+| 客户端适配层 | `neoforge-1.21.1`、`forge-1.20.1`、`forge-1.12.2 / cleanroom-1.12.2` |
 
 共享依赖库位于：
 
@@ -120,16 +120,16 @@ io.ctyx.modpedia.client.*
 
 | 客户端适配层 | Worker 基线 | Java | 状态 | 必须验证 |
 | --- | --- | --- | --- | --- |
-| NeoForge 1.21.1 | `worker-baseline-3` | 21 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
-| Forge 1.20.1 | `worker-baseline-3` | 21 | `[~]` | 编译、握手、SQLite/FTS、AI Mock、可选联动和服务端隔离 |
-| Cleanroom 0.3+ / 1.12.2 | `worker-baseline-3` | Worker 21 | `[~]` | 旧客户端适配、Worker 嵌入、握手、知识扫描、任务和 JEI 回归 |
+| NeoForge 1.21.1 | `worker-baseline-3` | 21 | `[x]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
+| Forge 1.20.1 | `worker-baseline-3` | 21 | `[x]` | 编译、握手、SQLite/FTS、AI Mock、可选联动和服务端隔离 |
+| Forge 1.12.2 / Cleanroom 0.3+ | `worker-baseline-3` | Worker 21 | `[x]` | 旧客户端适配、Worker 嵌入、握手、知识扫描、任务和 JEI 回归 |
 | 未来 Minecraft 版本 + 新适配层 | `worker-baseline-3` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
 | 未来 Worker API/依赖变化 | `worker-baseline-N` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
 
 状态含义：
 
 ```text
-[x] 已完成自动化验证
+[x] 已完成自动化验证和当前目标实例回归
 [~] 已实现但需要目标游戏/整合包人工回归
 [ ] 尚未开始
 [-] 暂不适用
@@ -138,8 +138,8 @@ io.ctyx.modpedia.client.*
 ## 6. 验证矩阵
 
 详细的 W1–W5、C1/C2 和未来版本适配层矩阵见
-[WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。当前客户端适配层仍需真实
-`runClient` 和 Dedicated Server 证据，不能只用 Worker 自测标记为完全验证。
+[WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。当前三条客户端适配线已经完成
+真实客户端与发布回归；未来版本仍需单独建立 `runClient` 和 Dedicated Server 证据。
 
 ## 7. 验收命令
 

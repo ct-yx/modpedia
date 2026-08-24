@@ -7,13 +7,15 @@ ModPedia is a local knowledge assistant for Minecraft modpacks. It reads manuals
 
 中文：[README.md](README.md) · Website: [GitHub Pages](https://ct-yx.github.io/modpedia/)
 
+Full player-facing mod introduction: [中文](docs/MOD_INTRODUCTION.md) · [English](docs/MOD_INTRODUCTION.en.md)
+
 ## v1.4.0 release baseline
 
 | Release asset | Minecraft / loader | Java | Worker |
 | --- | --- | --- | --- |
 | `modpedia-1.4.0-mc1.21.1-neoforge.jar` | 1.21.1 / NeoForge 21.1.x | 21 | `worker-baseline-3` |
 | `modpedia-1.4.0-mc1.20.1-forge.jar` | 1.20.1 / Forge 47.x | 21 | `worker-baseline-3` |
-| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 / Cleanroom 0.3+ compatibility line | game Java 8; Worker Java 21 | `worker-baseline-3` |
+| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 / Forge 14.23.5.2847 + Cleanroom 0.3+ compatibility line | game Java 8; Worker Java 21 | `worker-baseline-3` |
 
 The three builds share the product protocol and Worker design, while their client adapters are compiled for their respective loaders. The full `v1.1.0 → v1.4.0` comparison is in [`docs/RELEASE_1.4.0.md`](docs/RELEASE_1.4.0.md). The website contains the [feature matrix](https://ct-yx.github.io/modpedia/#feature-matrix).
 
@@ -31,7 +33,7 @@ Stable technical identifiers: `mod_id=modpedia`, package `io.ctyx.modpedia`, aut
 
 ### Manual frameworks and content mods
 
-Manual frameworks are prerequisites, not necessarily content. Patchouli, GuideME, and Modonomicon/APP
+Manual frameworks are prerequisites, not necessarily content. Patchouli, GuideME, Modonomicon/APP, and Mantle
 can be absent without preventing ModPedia from loading. To obtain actual text, install content mods
 that provide books or add pack-author sources.
 
@@ -39,6 +41,7 @@ that provide books or add pack-author sources.
 | --- | --- | --- |
 | Patchouli | Books, categories, entries, pages, common page nodes, and `zh_cn → en_us → neutral` fallback | `mod_manual` or overridden to `wiki` |
 | GuideME / Guide-API | Markdown, text, language directories, and page indexes; includes the 1.12.2 adapter | `mod_manual` |
+| Mantle / Tinkers' Construct (1.12.2) | Mantle/Tinkers' Construct books, sections, and page sources with search and navigation | `mod_manual` |
 | Modonomicon / APP JSON | Books, categories, entries, pages, recipe/item/link nodes, and Markdown fallback for unknown nodes | `mod_manual` by default; can be `wiki` |
 | Custom Markdown | `custom/**/*.md` and `sources/<source-id>/documents/**/*.md` | `wiki` by default |
 | FTB Quests Wiki | Built-in or local Wiki Markdown, separate from static task definitions | `wiki` |
@@ -120,7 +123,7 @@ Before publishing a modpack:
 - Release/Pages branch: `main`; the three code branches maintain only their loader code and tests.
 - NeoForge 1.21.1: branch `mainline-1.21.1`.
 - Forge 1.20.1: branch `migration/forge-1.20.1`.
-- Cleanroom 0.3+: branch `migration/1.12.2-common`.
+- Forge 1.12.2 / Cleanroom 0.3+: branch `migration/1.12.2-common`.
 - If Worker dependencies or the protocol change, use [`docs/WORKER_CHANGE_PROTOCOL.md`](docs/WORKER_CHANGE_PROTOCOL.md) to prepare a summary; make the Worker change in the Worker task and then update client adapters.
 - Architecture, knowledge-base details, and the next roadmap are in [`docs/`](docs/).
 

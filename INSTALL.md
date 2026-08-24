@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `modpedia-1.4.0-mc1.21.1-neoforge.jar` | Minecraft 1.21.1 + NeoForge 21.1.x | 21 |
 | `modpedia-1.4.0-mc1.20.1-forge.jar` | Minecraft 1.20.1 + Forge 47.x | 21 |
-| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | Minecraft 1.12.2 + Cleanroom 0.3+ 兼容线 | 游戏 Java 8；Worker Java 21 |
+| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | Minecraft 1.12.2 + Forge 14.23.5.2847 / Cleanroom 0.3+ | 游戏 Java 8；Worker Java 21 |
 
 只安装与当前 Minecraft/加载器匹配的一份 JAR。三个文件不是同一个环境的替换包。
 
@@ -18,7 +18,7 @@
 4. 首次启动时等待加载屏幕完成手册来源和当前语言物品目录预填充。
 5. 进入世界后按 `K` 打开助手；按 `F9` 请求当前实例知识库重建。
 
-ModPedia 的 UI 不依赖 ModernUI。Patchouli、GuideME、Modonomicon/APP、FTB Quests、JEI、Jade 都是可选联动；缺失时核心助手仍应加载。手册框架本身不保证包含正文，请同时安装提供实际书籍的内容模组。
+ModPedia 的 UI 不依赖 ModernUI。Patchouli、GuideME、Modonomicon/APP、Mantle/Tinkers' Construct、FTB Quests、JEI、Jade 都是可选联动；缺失时核心助手仍应加载。手册框架本身不保证包含正文，请同时安装提供实际书籍的内容模组。
 
 ## 工作模式
 
