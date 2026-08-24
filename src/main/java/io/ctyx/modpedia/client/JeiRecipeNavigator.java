@@ -47,26 +47,36 @@ public final class JeiRecipeNavigator {
                 return false;
             }
             Object runtime = runtimeForIntegration();
-            if (runtime == null) {
-                return false;
+            if (runtime != null && openWithRuntime(runtime, stack)) {
+                return true;
             }
-            Object recipesGui = invokeNoArg(runtime, "getRecipesGui");
-            if (recipesGui == null) {
-                return false;
-            }
-
-            Object focus = createFocus(runtime, stack);
-            if (focus == null) {
-                return false;
-            }
-            // JEI 19.x 的 IRecipesGui.show(List) 接收的是 IFocus 列表，不能把
-            // ItemStack 直接塞进去；优先调用 default show(IFocus)，旧版本再退回
-            // 到 show(List<IFocus<?>>)。
-            return invokeFocusMethod(recipesGui, focus)
-                    || invokeListMethod(recipesGui, List.of(focus));
+            // JEI 可能在助手首次打开后才完成 Internal.jeiRuntime 的注入，或者
+            // 重载页面时替换旧 runtime。第一次读取为空/失效时立即刷新一次，
+            // 避免用户必须重复 Shift+左键才能跳转。
+            cachedRuntime = null;
+            lastRuntimeLookupAt = 0L;
+            runtime = refreshRuntimeForIntegration();
+            return runtime != null && openWithRuntime(runtime, stack);
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    private static boolean openWithRuntime(Object runtime, ItemStack stack)
+            throws ReflectiveOperationException {
+        Object recipesGui = invokeNoArg(runtime, "getRecipesGui");
+        if (recipesGui == null) {
+            return false;
+        }
+        Object focus = createFocus(runtime, stack);
+        if (focus == null) {
+            return false;
+        }
+        // JEI 15.x/19.x 的 IRecipesGui.show(List) 接收的是 IFocus 列表，不能把
+        // ItemStack 直接塞进去；优先调用 default show(IFocus)，旧版本再退回
+        // 到 show(List<IFocus<?>>)。
+        return invokeFocusMethod(recipesGui, focus)
+                || invokeListMethod(recipesGui, List.of(focus));
     }
 
     /**

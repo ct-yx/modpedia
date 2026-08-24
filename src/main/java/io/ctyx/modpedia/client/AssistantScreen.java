@@ -412,12 +412,17 @@ public final class AssistantScreen extends Screen {
             return true;
         }
         if (messageBounds().contains(mouseX, mouseY)) {
-            if (hasShiftDown()) {
-                for (ItemHit hit : itemHits) {
-                    if (hit.bounds().contains(mouseX, mouseY)) {
-                        JeiRecipeNavigator.open(hit.reference().id());
-                        return true;
+            if (recipeShortcutDown()) {
+                ItemHit hit = itemHitAt(mouseX, mouseY);
+                if (hit != null) {
+                    beginExternalNavigation(this);
+                    boolean opened = JeiRecipeNavigator.open(hit.reference().id());
+                    if (opened) {
+                        captureExternalNavigation(this);
+                    } else {
+                        cancelExternalNavigation(this);
                     }
+                    return true;
                 }
             }
             for (SourceCard card : sourceCards) {
@@ -853,7 +858,15 @@ public final class AssistantScreen extends Screen {
                 );
             }
             graphics.drawString(font, line.sequence(), bubbleX + 12, textY, TEXT_COLOR, false);
-                recordItemHits(line, bubbleX + 12, textY);
+            recordItemHits(
+                    graphics,
+                    line,
+                    bubbleX + 12,
+                    textY,
+                    mouseX,
+                    mouseY,
+                    recipeShortcutDown()
+            );
             textY += font.lineHeight;
             if (!line.annotations().isEmpty()) {
                 int annotationWidth = Math.max(1, layout.width() - 20);
@@ -1653,9 +1666,13 @@ public final class AssistantScreen extends Screen {
     }
 
     private void recordItemHits(
+            GuiGraphics graphics,
             MarkdownRenderer.RenderedLine line,
             int textLeft,
-            int textTop
+            int textTop,
+            int mouseX,
+            int mouseY,
+            boolean recipeShortcutDown
     ) {
         if (line.items().isEmpty() || line.source().kind() == MarkdownLine.Kind.CODE) {
             return;
@@ -1671,14 +1688,58 @@ public final class AssistantScreen extends Screen {
             if (start < 0) {
                 start = text.indexOf(display);
             }
+            // 行内 Markdown、字体换行和语言切换可能让显示文本与引用快照短暂不同。
+            // 稳定 ID 是第二候选，避免正文已经显示物品却没有可点击命中区。
+            if (start < 0 && !reference.id().isBlank()
+                    && !reference.id().equals(display)) {
+                display = reference.id();
+                start = text.indexOf(display, searchFrom);
+                if (start < 0) {
+                    start = text.indexOf(display);
+                }
+            }
             if (start < 0) {
                 continue;
             }
             int left = textLeft + font.width(text.substring(0, start));
             Bounds hit = new Bounds(left, textTop, Math.max(1, font.width(display)), font.lineHeight);
             itemHits = append(itemHits, new ItemHit(hit, reference));
+            if (recipeShortcutDown && hit.contains(mouseX, mouseY)) {
+                graphics.fill(
+                        hit.left(),
+                        hit.bottom() - 2,
+                        hit.right(),
+                        hit.bottom(),
+                        glassStyle.accentColor()
+                );
+            }
             searchFrom = start + display.length();
         }
+    }
+
+    private ItemHit itemHitAt(double mouseX, double mouseY) {
+        for (int index = itemHits.size() - 1; index >= 0; index--) {
+            ItemHit hit = itemHits.get(index);
+            if (hit.bounds().contains(mouseX, mouseY)
+                    && "item".equalsIgnoreCase(hit.reference().kind())
+                    && !hit.reference().id().isBlank()) {
+                return hit;
+            }
+        }
+        return null;
+    }
+
+    /** Shift 是配方跳转修饰键；直接读取 GLFW 状态覆盖 Forge Screen 状态更新延迟。 */
+    private boolean recipeShortcutDown() {
+        if (hasShiftDown()) {
+            return true;
+        }
+        if (minecraft == null || minecraft.getWindow() == null) {
+            return false;
+        }
+        long window = minecraft.getWindow().getWindow();
+        return GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS
+                || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
     }
 
     private Bounds previewBounds() {
