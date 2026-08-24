@@ -111,6 +111,8 @@ public final class WorkerServer {
     private volatile boolean running = true;
     /** 旧客户端没有该可选能力时，物品查询直接使用静态 item_catalog。 */
     private volatile boolean clientSupportsRuntimeItemContext;
+    /** 没有材料事实读取器时，模型不得从名称推导部件兼容性。 */
+    private volatile boolean clientSupportsRuntimeMaterialFacts;
     private BufferedWriter writer;
     private ConversationStore conversationStore;
     private WorkerChatService chatService;
@@ -156,6 +158,8 @@ public final class WorkerServer {
                     this::send,
                     this::requestRuntimeContext,
                     this::requestRuntimeItemContext,
+                    this::cacheRuntimeItemContexts,
+                    this::requestRuntimeMaterialFacts,
                     this::requestRecipe,
                     this::isCancelled
             );
@@ -200,6 +204,10 @@ public final class WorkerServer {
         clientSupportsRuntimeItemContext = valid && WorkerCompatibility.supportsOptionalCapability(
                 hello,
                 WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+        );
+        clientSupportsRuntimeMaterialFacts = valid && WorkerCompatibility.supportsOptionalCapability(
+                hello,
+                WorkerProtocol.RUNTIME_MATERIAL_FACTS_CAPABILITY
         );
         JsonObject response = WorkerProtocol.message(
                 WorkerProtocol.HELLO_ACK,
@@ -285,8 +293,14 @@ public final class WorkerServer {
                 sendConversationState("new", requestId);
             });
             case WorkerProtocol.CONVERSATION_SELECT -> submitOperation(requestId, () -> {
-                conversationStore.select(WorkerProtocol.string(message, "conversation_id"));
-                sendConversationState("select", requestId);
+                boolean selected = conversationStore.select(
+                        WorkerProtocol.string(message, "conversation_id")
+                );
+                if (selected) {
+                    sendConversationState("select", requestId);
+                } else {
+                    sendError(requestId, "会话不存在或已被清理");
+                }
             });
             case WorkerProtocol.CONVERSATION_RENAME -> submitOperation(requestId, () -> {
                 conversationStore.rename(
@@ -494,7 +508,7 @@ public final class WorkerServer {
     }
 
     /**
-     * 按需向客户端读取最多三个已确认物品的运行时 Tooltip。这个请求复用任务的
+     * 按需向客户端读取最多五个已确认物品的运行时 Tooltip。这个请求复用任务的
      * runtime_context waiter，但使用独立 request_kind；世界未就绪、旧客户端、
      * 超时或任何单项错误都只返回空列表，让搜索继续使用静态 item_catalog。
      */
@@ -562,6 +576,102 @@ public final class WorkerServer {
         } finally {
             runtimeWaiters.remove(itemRequestId);
         }
+    }
+
+    /**
+     * 运行时 Tooltip 只由 Worker 的知识库线程写入，避免 AI 线程和知识库重建并发
+     * 改写 SQLite；只记录条数，不把 Tooltip 原文写入日志。
+     */
+    private void cacheRuntimeItemContexts(List<RuntimeItemContext> contexts) {
+        if (contexts == null || contexts.isEmpty()) {
+            return;
+        }
+        List<RuntimeItemContext> snapshot = List.copyOf(contexts);
+        try {
+            knowledgeOperations.execute(() -> {
+                try {
+                    int cached = KnowledgeDatabase.cacheRuntimeItemContexts(knowledgeRoot, snapshot);
+                    LOG.fine("Runtime item context cache completed: items=" + cached);
+                } catch (IOException | RuntimeException failure) {
+                    LOG.log(Level.FINE, "Runtime item context cache skipped", failure);
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            // Worker 正在退出时丢弃缓存，不影响当前回答。
+        }
+    }
+
+    /**
+     * 按需向客户端读取材料的实际统计类型。材料事实只在当前工具回合内使用，
+     * 不写入 knowledge.db、会话或日志；旧客户端直接返回 unavailable。
+     */
+    private JsonObject requestRuntimeMaterialFacts(
+            String requestId,
+            String conversationId,
+            String toolType,
+            List<String> materials,
+            List<String> parts
+    ) {
+        JsonObject unavailable = new JsonObject();
+        unavailable.addProperty("status", "unavailable");
+        unavailable.addProperty("request_kind", WorkerProtocol.RUNTIME_MATERIAL_FACTS_KIND);
+        unavailable.add("facts", new com.google.gson.JsonArray());
+        if (!clientSupportsRuntimeMaterialFacts || isCancelled(requestId)
+                || materials == null || materials.isEmpty()
+                || parts == null || parts.isEmpty()) {
+            return unavailable;
+        }
+        String materialRequestId = requestId + ":materials:" + UUID.randomUUID();
+        CompletableFuture<JsonObject> waiter = new CompletableFuture<>();
+        runtimeWaiters.put(materialRequestId, waiter);
+        JsonObject request = WorkerProtocol.message(
+                WorkerProtocol.RUNTIME_CONTEXT_REQUEST,
+                materialRequestId
+        );
+        request.addProperty("request_kind", WorkerProtocol.RUNTIME_MATERIAL_FACTS_KIND);
+        request.addProperty("chat_request_id", requestId == null ? "" : requestId);
+        request.addProperty("conversation_id", conversationId == null ? "" : conversationId);
+        request.addProperty("tool_type", toolType == null ? "" : toolType);
+        request.add("materials", strings(materials, WorkerProtocol.MAX_RUNTIME_MATERIAL_FACTS));
+        request.add("parts", strings(parts, 8));
+        sendQuietly(request);
+        try {
+            JsonObject response = waiter.get(3L, TimeUnit.SECONDS);
+            if (response == null
+                    || (!WorkerProtocol.string(response, "request_kind").isBlank()
+                    && !WorkerProtocol.RUNTIME_MATERIAL_FACTS_KIND.equals(
+                    WorkerProtocol.string(response, "request_kind")))
+                    || WorkerProtocol.utf8Length(response.toString())
+                    > WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_BYTES) {
+                return unavailable;
+            }
+            return response;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return unavailable;
+        } catch (Exception ignored) {
+            return unavailable;
+        } finally {
+            runtimeWaiters.remove(materialRequestId);
+        }
+    }
+
+    private static com.google.gson.JsonArray strings(List<String> values, int limit) {
+        com.google.gson.JsonArray result = new com.google.gson.JsonArray();
+        if (values == null) {
+            return result;
+        }
+        int count = 0;
+        for (String value : values) {
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            result.add(value.strip());
+            if (++count >= limit) {
+                break;
+            }
+        }
+        return result;
     }
 
     /**
@@ -732,6 +842,22 @@ public final class WorkerServer {
                 }
             }
             long payloadReadMillis = elapsedMillis(readStarted);
+            // 空载荷通常表示客户端在注册表扫描尚未产生首条数据时进入了
+            // 世界。保留上一份有效目录，避免一次时序竞态把当前语言目录清空。
+            if (entries.isEmpty()) {
+                JsonObject completed = WorkerProtocol.message(WorkerProtocol.COMPLETED, requestId);
+                completed.addProperty("operation", WorkerProtocol.KNOWLEDGE_ITEMS_SYNC);
+                completed.addProperty("language", WorkerProtocol.string(message, "language"));
+                completed.addProperty("item_count", 0);
+                completed.addProperty("updated_count", 0);
+                completed.addProperty("reused_count", 0);
+                completed.addProperty("removed_count", 0);
+                completed.addProperty("preserved", true);
+                completed.addProperty("payload_read_ms", payloadReadMillis);
+                completed.addProperty("database_write_ms", 0);
+                send(completed);
+                return;
+            }
             long databaseStarted = System.nanoTime();
             KnowledgeDatabase.ItemCatalogSyncResult result = KnowledgeDatabase.syncItemCatalog(
                     knowledgeRoot,
@@ -755,6 +881,10 @@ public final class WorkerServer {
                             + ", database_write_ms=" + databaseWriteMillis
             );
         } catch (Throwable failure) {
+            LOG.log(Level.WARNING,
+                    "Item catalog sync failed: request_id=" + requestId
+                            + ", item_count=" + WorkerProtocol.integer(message, "item_count", -1)
+                            + ", reason=" + messageOf(failure));
             sendError(requestId, "物品目录同步失败：" + messageOf(failure));
         } finally {
             if (payload != null) {

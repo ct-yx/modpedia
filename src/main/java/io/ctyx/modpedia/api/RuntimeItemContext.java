@@ -3,8 +3,9 @@ package io.ctyx.modpedia.api;
 /**
  * 当前客户端为一个已确认物品读取到的临时 Tooltip。
  *
- * <p>这个对象只存在于一次 AI 请求的内存和 IPC 载荷中，不属于
- * {@code knowledge.db} 的静态物品目录。</p>
+ * <p>它首先存在于一次 AI 请求的内存和 IPC 载荷中；Worker 在成功读取后可将
+ * Tooltip 缓存回 {@code knowledge.db} 的 {@code item_catalog}，客户端不会直接
+ * 访问数据库。</p>
  */
 public record RuntimeItemContext(
         String itemId,

@@ -21,6 +21,7 @@ public final class AiCostOptimizationSelfTest {
     public static void main(String[] args) {
         testPromptBudget();
         testRequestOutputBudget();
+        testMaterialQuestionRouting();
         testHistoricalToolCompaction();
         System.out.println("ModPedia AI cost optimization self-test passed");
     }
@@ -125,6 +126,29 @@ public final class AiCostOptimizationSelfTest {
         check(compacted.stream().anyMatch(message -> message instanceof AiMessage ai
                         && ai.text() != null && ai.text().equals("旧回答")),
                 "旧回答文本应保留，历史对话仍可读");
+    }
+
+    private static void testMaterialQuestionRouting() {
+        check(MaterialQuestionClassifier.isMaterialQuestion("烈焰棒能不能做手柄？"),
+                "材料部件问题必须进入事实校验链路");
+        check(MaterialQuestionClassifier.isMaterialQuestion("计算一下第二个版本的伤害"),
+                "引用前文材料版本的伤害问题也必须进入事实校验链路");
+        ChatRequest original = ChatRequest.builder()
+                .messages(UserMessage.from("推荐一套材料搭配"))
+                .toolSpecifications(
+                        ToolSpecification.builder().name("search_knowledge").build(),
+                        ToolSpecification.builder().name(MaterialFactsTool.TOOL_NAME).build(),
+                        ToolSpecification.builder().name("calculate").build()
+                )
+                .build();
+        ChatRequest routed = AiToolRouter.requireSearchOnFirstRequest(
+                original, new AtomicBoolean(true), false, true,
+                AiTokenBudget.STANDARD_ANSWER, false
+        );
+        check(routed.toolChoice() != null
+                        && routed.toolSpecifications().size() == 1
+                        && MaterialFactsTool.TOOL_NAME.equals(routed.toolSpecifications().getFirst().name()),
+                "材料问题首轮只能调用材料事实工具，不能直接凭名称推荐组合");
     }
 
     private static void check(boolean condition, String message) {

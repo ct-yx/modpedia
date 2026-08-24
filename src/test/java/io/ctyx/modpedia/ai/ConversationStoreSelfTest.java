@@ -35,6 +35,11 @@ public final class ConversationStoreSelfTest {
             ConversationRecord created = store.create();
             String second = created.id();
             store.rename(second, "第二个测试会话");
+            check(store.summaries().stream().noneMatch(summary -> second.equals(summary.id())),
+                    "未修改的新会话不应出现在历史摘要");
+            store.appendMessage(second, new ChatMessage(MessageRole.USER, "第二个会话消息", List.of()));
+            check(store.summaries().stream().anyMatch(summary -> second.equals(summary.id())),
+                    "写入首条消息后新会话应进入历史摘要");
             check(store.select(first), "应能切换到第一个会话");
             check(store.active().messages().size() == 2, "切换后应恢复 UI 消息");
             check("[memory-json]".equals(store.memoryMessagesJson(first)), "应保存 ChatMemory 序列化内容");

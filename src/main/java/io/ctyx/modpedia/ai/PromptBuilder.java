@@ -41,6 +41,9 @@ public final class PromptBuilder {
                     .append("首次或语言不确定时 search_knowledge 的 language 必须为 auto，不要固定当前语言；")
                     .append("使用玩家语言，交叉搜索中文和英文。只引用本轮 3 到 5 个来源，格式为 ")
                     .append("[来源: document_id | 标注: 支持的内容]。复杂计算不要依靠心算。")
+                    .append("涉及材料搭配或工具部件兼容性时先调用 validate_material_candidates；")
+                    .append("只使用 verified_candidates，不得把材料名和部件名自行拼接。")
+                    .append("只有已验证的数值才能交给 calculate，缺少数值就列出缺口。")
                     .append("未指定其他模组时，‘如何开始使用这个模组’指向 ModPedia 的 assistant-usage。");
         }
         if (!answerFormat.isBlank()) {

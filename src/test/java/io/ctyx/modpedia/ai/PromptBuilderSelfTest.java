@@ -15,6 +15,9 @@ public final class PromptBuilderSelfTest {
         String prompt = builder.build(SearchLanguage.EN_US, SearchIntensity.STANDARD, 3, 8, 16_000);
         check(prompt.contains("search_knowledge"), "提示词应声明搜索工具");
         check(prompt.contains("calculate"), "提示词应声明本地计算工具");
+        check(prompt.contains("validate_material_candidates"), "提示词应声明材料事实验证工具");
+        check(prompt.contains("verified_candidates"), "提示词应要求只使用已验证材料组合");
+        check(prompt.contains("不得把材料名和部件名自行拼接"), "提示词应禁止材料名与部件名机械拼接");
         check(prompt.contains("不要依靠心算") || prompt.contains("arithmetic"), "提示词应要求复杂计算调用本地工具");
         check(prompt.contains("ModPedia") && prompt.contains("assistant-usage"),
                 "提示词应把未指定模组的自助问题指向 ModPedia 使用说明");

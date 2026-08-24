@@ -47,6 +47,7 @@ public final class ConversationStore {
     // Worker 只接收显式路径；客户端运行时路径由 AiAssistantSession 适配层提供。
     public synchronized List<ConversationSummary> summaries() {
         return records.values().stream()
+                .filter(record -> !isEmptyDraft(record))
                 .sorted(Comparator.comparingLong(ConversationRecord::updatedAt).reversed())
                 .map(record -> new ConversationSummary(
                         record.id(),
@@ -85,7 +86,8 @@ public final class ConversationStore {
         );
         records.put(id, record);
         activeId = id;
-        persist(record);
+        // 新会话先作为内存草稿存在。首条用户消息写入后，replace() 才会创建文件
+        // 和出现在历史摘要中，避免“新建但未修改”的空会话污染历史记录。
         persistIndex();
         return record;
     }
@@ -131,6 +133,7 @@ public final class ConversationStore {
         }
         if (id.equals(activeId)) {
             activeId = records.values().stream()
+                    .filter(record -> !isEmptyDraft(record))
                     .max(Comparator.comparingLong(ConversationRecord::updatedAt))
                     .map(ConversationRecord::id)
                     .orElse(null);
@@ -246,6 +249,10 @@ public final class ConversationStore {
                                 ConversationRecord.class
                         );
                         if (record != null && !record.id().isBlank()) {
+                            if (isEmptyDraft(record)) {
+                                Files.deleteIfExists(file);
+                                continue;
+                            }
                             ConversationRecord migrated = migrateCitationMessages(record);
                             ConversationRecord bounded = fitForStorage(migrated);
                             records.put(bounded.id(), bounded);
@@ -330,11 +337,19 @@ public final class ConversationStore {
     private void replace(ConversationRecord record) {
         ConversationRecord bounded = fitForStorage(record);
         records.put(bounded.id(), bounded);
-        persist(bounded);
+        if (isEmptyDraft(bounded)) {
+            deleteRecordFile(bounded.id());
+        } else {
+            persist(bounded);
+        }
         persistIndex();
     }
 
     private void persist(ConversationRecord record) {
+        if (isEmptyDraft(record)) {
+            deleteRecordFile(record.id());
+            return;
+        }
         try {
             Files.createDirectories(root);
             restrictDirectory(root);
@@ -356,6 +371,23 @@ public final class ConversationStore {
             writeAtomically(root.resolve(INDEX_FILE), GSON.toJson(new IndexData(activeId)));
         } catch (IOException ignored) {
             // 会话文件仍然保留，下一次启动可按更新时间恢复。
+        }
+    }
+
+    private boolean isEmptyDraft(ConversationRecord record) {
+        return record != null
+                && record.messages().isEmpty()
+                && (record.memoryMessagesJson() == null || record.memoryMessagesJson().isBlank());
+    }
+
+    private void deleteRecordFile(String id) {
+        if (id == null || id.isBlank()) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(fileFor(id));
+        } catch (IOException ignored) {
+            // 下次加载时仍会过滤空草稿。
         }
     }
 

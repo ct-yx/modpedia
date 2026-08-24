@@ -532,6 +532,113 @@ public final class SearchKnowledgeToolSelfTest {
             check(timedOut.get("runtime_item_context_count").getAsInt() == 0,
                     "运行时读取超时必须立即降级到静态目录");
 
+            // 全量目录仍在主菜单分批构建时，数据库可能还没有该物品；
+            // 已确认的 item ID 仍必须直接走客户端运行时 Tooltip 兜底。
+            Path emptyCatalogRoot = Files.createTempDirectory("modpedia-runtime-item-empty-catalog-");
+            KnowledgeDatabase.sync(
+                    emptyCatalogRoot,
+                    List.of(input(
+                            "fixture:dynamic-guide",
+                            "动态物品指南",
+                            "目录尚未完成时仍应允许查询当前物品。"
+                    )),
+                    true
+            );
+            AtomicInteger emptyCatalogCalls = new AtomicInteger();
+            SearchKnowledgeTool emptyCatalog = new SearchKnowledgeTool(
+                    new RetrievalService(emptyCatalogRoot), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(emptyCatalogRoot), null,
+                    "runtime-item-empty-catalog",
+                    (language, itemIds) -> {
+                        emptyCatalogCalls.incrementAndGet();
+                        return List.of(new RuntimeItemContext(
+                                itemIds.get(0), language, "目录未完成物品", "- 当前世界 Tooltip",
+                                true, 1234L
+                        ));
+                    },
+                    contexts -> {
+                        try {
+                            KnowledgeDatabase.cacheRuntimeItemContexts(emptyCatalogRoot, contexts);
+                        } catch (Exception failure) {
+                            throw new RuntimeException(failure);
+                        }
+                    },
+                    ignored -> { }
+            );
+            JsonObject emptyCatalogResult = parse(emptyCatalog.search(
+                    "[[item:fixture:pending|目录未完成物品]] 查询当前信息",
+                    "zh_cn", 8, "identify", List.of()
+            ));
+            check(emptyCatalogCalls.get() == 1,
+                    "静态目录为空时，确认物品必须触发运行时 Tooltip 兜底");
+            check(emptyCatalogResult.get("runtime_item_context_count").getAsInt() == 1,
+                    "目录未完成时应把运行时物品信息放入本轮工具结果");
+
+            try (KnowledgeDatabase.Reader reader = KnowledgeDatabase.openReader(
+                    KnowledgeDatabase.path(emptyCatalogRoot))) {
+                check(reader.lookupItems(List.of("fixture:pending"), SearchLanguage.ZH_CN)
+                                .getFirst().descriptionMarkdown().contains("当前世界 Tooltip"),
+                        "按需读取到的 Tooltip 应缓存到统一 item_catalog");
+            }
+
+            // 玩家只输入显示名称时，目录先解析出 ID，再按同一规则触发运行时读取。
+            AtomicInteger displayNameCalls = new AtomicInteger();
+            SearchKnowledgeTool displayNameTool = new SearchKnowledgeTool(
+                    new RetrievalService(root), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(root), null,
+                    "runtime-item-display-name",
+                    (language, itemIds) -> {
+                        displayNameCalls.incrementAndGet();
+                        return List.of(new RuntimeItemContext(
+                                "fixture:dynamic", language, "动态物品", "- 名称查询 Tooltip",
+                                true, 1234L
+                        ));
+                    },
+                    ignored -> { }
+            );
+            JsonObject displayNameResult = parse(displayNameTool.search(
+                    "动态物品 查询当前状态", "zh_cn", 8, "identify", List.of()));
+            check(displayNameCalls.get() == 1
+                            && displayNameResult.get("runtime_item_context_count").getAsInt() == 1,
+                    "仅有显示名称时也应先从目录解析 ID 再按需读取 Tooltip");
+
+            // 单次客户端读取最多五个 ID；搜索强度的 maxRounds 控制同一 AI 请求
+            // 可以发起的读取次数，而不是放开单次请求的物品数量。
+            AtomicInteger limitedCalls = new AtomicInteger();
+            List<List<String>> limitedRequests = new ArrayList<>();
+            SearchKnowledgeTool limited = new SearchKnowledgeTool(
+                    new RetrievalService(root), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
+                    new io.ctyx.modpedia.task.TaskKnowledgeStore(root), null,
+                    "runtime-item-limit",
+                    (language, itemIds) -> {
+                        limitedCalls.incrementAndGet();
+                        limitedRequests.add(List.copyOf(itemIds));
+                        return itemIds.stream()
+                                .map(id -> new RuntimeItemContext(id, language, id, "- Tooltip " + id,
+                                        true, 1234L))
+                                .toList();
+                    },
+                    ignored -> { }
+            );
+            String firstFive = "[[item:fixture:one|一]] [[item:fixture:two|二]] "
+                    + "[[item:fixture:three|三]] [[item:fixture:four|四]] "
+                    + "[[item:fixture:five|五]] [[item:fixture:six|六]]";
+            String nextFive = "[[item:fixture:seven|七]] [[item:fixture:eight|八]] "
+                    + "[[item:fixture:nine|九]] [[item:fixture:ten|十]] "
+                    + "[[item:fixture:eleven|十一]]";
+            JsonObject limitedFirst = parse(limited.search(
+                    firstFive + " 查询", "zh_cn", 8, "identify", List.of()));
+            JsonObject limitedSecond = parse(limited.search(
+                    nextFive + " 查询", "zh_cn", 8, "identify", List.of()));
+            parse(limited.search("[[item:fixture:twelve|十二]] 再查询",
+                    "zh_cn", 8, "identify", List.of()));
+            check(limitedCalls.get() == 2 && limitedRequests.get(0).size() == 5
+                            && limitedRequests.get(1).size() == 5,
+                    "搜索强度为两轮时应发起两次、每次最多五个物品的读取");
+            check(limitedFirst.get("runtime_item_context_request_limit").getAsInt() == 2
+                            && limitedSecond.get("runtime_item_context_request_count").getAsInt() == 2,
+                    "工具结果应公开运行时物品读取次数和搜索强度上限");
+
             AtomicInteger staticCalls = new AtomicInteger();
             SearchKnowledgeTool staticOnly = new SearchKnowledgeTool(
                     new RetrievalService(root), SearchLanguage.ZH_CN, 8, 8_000, 1, 2,
@@ -552,13 +659,6 @@ public final class SearchKnowledgeToolSelfTest {
             check(staticResult.get("item_context_count").getAsInt() == 1
                             && staticResult.get("runtime_item_context_count").getAsInt() == 0,
                     "静态 item_context 和运行时上下文必须分开返回");
-
-            try (KnowledgeDatabase.Reader reader = KnowledgeDatabase.openReader(
-                    KnowledgeDatabase.path(root))) {
-                check(reader.lookupItems(List.of("fixture:dynamic"), SearchLanguage.ZH_CN)
-                                .getFirst().descriptionMarkdown().isBlank(),
-                        "运行时 Tooltip 不得写入 knowledge.db 的 item_catalog");
-            }
 
             RuntimeItemContext context = new RuntimeItemContext(
                     "fixture:dynamic", "zh_cn", "动态物品", "- mock tooltip", true, 12L);

@@ -96,8 +96,11 @@ public final class SearchKnowledgeTool {
     private final TaskRuntimeReader taskRuntimeReader;
     private final String runtimeRequestKey;
     private final RuntimeItemContextRequester runtimeItemContextRequester;
+    private final Consumer<List<RuntimeItemContext>> runtimeItemContextCache;
     private final AtomicInteger roundCounter;
     private final Consumer<SearchTrace> traceSink;
+    /** 运行时物品查询次数沿用搜索强度的 maxRounds，避免单个问题无限读取。 */
+    private int runtimeItemContextRequestCount;
     private boolean taskRuntimeRead;
     private TaskRuntimeSnapshot runtimeSnapshot;
     private int runtimeStateCount;
@@ -197,6 +200,37 @@ public final class SearchKnowledgeTool {
             RuntimeItemContextRequester runtimeItemContextRequester,
             Consumer<SearchTrace> traceSink
     ) {
+        this(
+                retrievalService,
+                defaultLanguage,
+                maxResults,
+                maxContextChars,
+                round,
+                maxRounds,
+                taskStore,
+                taskRuntimeReader,
+                runtimeRequestKey,
+                runtimeItemContextRequester,
+                null,
+                traceSink
+        );
+    }
+
+    /** AI 会话完整构造器；运行时 Tooltip 回调可由 WorkerServer异步缓存到 item_catalog。 */
+    public SearchKnowledgeTool(
+            RetrievalService retrievalService,
+            SearchLanguage defaultLanguage,
+            int maxResults,
+            int maxContextChars,
+            int round,
+            int maxRounds,
+            TaskKnowledgeStore taskStore,
+            TaskRuntimeReader taskRuntimeReader,
+            String runtimeRequestKey,
+            RuntimeItemContextRequester runtimeItemContextRequester,
+            Consumer<List<RuntimeItemContext>> runtimeItemContextCache,
+            Consumer<SearchTrace> traceSink
+    ) {
         this.retrievalService = retrievalService;
         this.defaultLanguage = defaultLanguage == null || defaultLanguage == SearchLanguage.AUTO
                 ? SearchLanguage.ZH_CN
@@ -213,6 +247,7 @@ public final class SearchKnowledgeTool {
                 ? "tool-" + System.identityHashCode(this)
                 : runtimeRequestKey.strip();
         this.runtimeItemContextRequester = runtimeItemContextRequester;
+        this.runtimeItemContextCache = runtimeItemContextCache;
         this.traceSink = traceSink == null ? ignored -> { } : traceSink;
     }
 
@@ -274,11 +309,6 @@ public final class SearchKnowledgeTool {
                 normalizedQuery,
                 requestedLanguage
         );
-        List<RuntimeItemContext> runtimeItemContext = requestRuntimeItemContext(
-                itemQuery,
-                itemContext,
-                requestedLanguage
-        );
         String knowledgeQuery = itemQuery.searchableText();
         if (!itemContext.isEmpty()) {
             knowledgeQuery = knowledgeQuery + " " + itemContext.stream()
@@ -290,8 +320,16 @@ public final class SearchKnowledgeTool {
         if (!seenQueries.add(queryKey)) {
             return finish(output, currentRound, SearchStatus.NO_MATCH, List.of(), false,
                     "重复查询，请改写关键词或针对缺失的资料类型继续搜索", normalizedQuery, normalizedLanguage,
-                    normalizedFocus, itemContext, runtimeItemContext);
+                    normalizedFocus, itemContext, runtimeItemContextsFor(itemQuery, itemContext));
         }
+
+        // 先判断重复查询，再触发客户端读取；否则模型重复提交同一问题时，
+        // 可能为了寻找下一批物品而再次占用客户端主线程和搜索预算。
+        List<RuntimeItemContext> runtimeItemContext = requestRuntimeItemContext(
+                itemQuery,
+                itemContext,
+                requestedLanguage
+        );
 
         List<SearchResponse> responses = searchLanguages(
                 knowledgeQuery,
@@ -1163,16 +1201,23 @@ public final class SearchKnowledgeTool {
     }
 
     /**
-     * 只对已确认 ID 且静态 Tooltip 为空的物品发起一次客户端读取。显示名称查询
-     * 不会触发运行时读取，旧客户端或失败回调自然退回 item_catalog。
+     * 只对已确认 ID 且静态简介为空的物品发起运行时读取。每次读取最多五个物品，
+     * 总请求次数受搜索强度的 maxRounds 限制；成功结果同时交给 Worker 缓存器，
+     * 后续问题优先命中 item_catalog，不再反复占用客户端主线程。
      */
     private List<RuntimeItemContext> requestRuntimeItemContext(
             ItemQueryParser.Parsed itemQuery,
             List<ItemCatalogEntry> itemContext,
             SearchLanguage language
     ) {
-        if (runtimeItemContextRequester == null || itemQuery == null || itemQuery.itemIds().isEmpty()) {
+        if (runtimeItemContextRequester == null || itemQuery == null) {
             return List.of();
+        }
+        if (runtimeItemContextRequestCount >= maxRounds) {
+            return runtimeItemCandidates(itemQuery, itemContext).stream()
+                    .map(runtimeItemContexts::get)
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
         }
         Set<String> staticallySufficient = itemContext == null
                 ? Set.of()
@@ -1181,7 +1226,7 @@ public final class SearchKnowledgeTool {
                 .map(ItemCatalogEntry::itemId)
                 .collect(java.util.stream.Collectors.toSet());
         List<String> pending = new ArrayList<>();
-        for (String itemId : itemQuery.itemIds()) {
+        for (String itemId : runtimeItemCandidates(itemQuery, itemContext)) {
             if (itemId == null || itemId.isBlank() || staticallySufficient.contains(itemId)
                     || runtimeItemContextRequestedIds.contains(itemId)) {
                 continue;
@@ -1193,24 +1238,65 @@ public final class SearchKnowledgeTool {
             }
         }
         if (!pending.isEmpty()) {
+            runtimeItemContextRequestCount++;
             try {
                 List<RuntimeItemContext> returned = runtimeItemContextRequester.request(
                         language == null ? defaultLanguage.code() : language.code(),
                         List.copyOf(pending)
                 );
                 if (returned != null) {
-                    returned.stream()
+                    List<RuntimeItemContext> usable = returned.stream()
                             .filter(RuntimeItemContext::usable)
                             .filter(context -> pending.contains(context.itemId()))
-                            .forEach(context -> runtimeItemContexts.putIfAbsent(
-                                    context.itemId(), context
-                            ));
+                            .toList();
+                    usable.forEach(context -> runtimeItemContexts.putIfAbsent(
+                            context.itemId(), context
+                    ));
+                    if (!usable.isEmpty() && runtimeItemContextCache != null) {
+                        try {
+                            runtimeItemContextCache.accept(List.copyOf(usable));
+                        } catch (Throwable ignored) {
+                            // 缓存失败不影响当前工具结果；下次仍可按需读取。
+                        }
+                    }
                 }
             } catch (Throwable ignored) {
                 // 运行时 Tooltip 是增强数据；任何失败都保留静态搜索结果。
             }
         }
-        return itemQuery.itemIds().stream()
+        return runtimeItemCandidates(itemQuery, itemContext).stream()
+                .map(runtimeItemContexts::get)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    /**
+     * 运行时读取既支持模型传回的协议令牌/裸 ID，也支持玩家只输入显示名称后
+     * 由 item_catalog 解析出的 ID。显示名称有多个候选时按目录顺序保留候选，
+     * 仍由单次最多五个物品和搜索强度预算共同限制，不把整个目录读进内存。
+     */
+    private static List<String> runtimeItemCandidates(
+            ItemQueryParser.Parsed itemQuery,
+            List<ItemCatalogEntry> itemContext
+    ) {
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        if (itemQuery != null) {
+            candidates.addAll(itemQuery.itemIds());
+        }
+        if (itemContext != null) {
+            itemContext.stream()
+                    .filter(entry -> entry != null && !entry.itemId().isBlank())
+                    .map(ItemCatalogEntry::itemId)
+                    .forEach(candidates::add);
+        }
+        return List.copyOf(candidates);
+    }
+
+    private List<RuntimeItemContext> runtimeItemContextsFor(
+            ItemQueryParser.Parsed itemQuery,
+            List<ItemCatalogEntry> itemContext
+    ) {
+        return runtimeItemCandidates(itemQuery, itemContext).stream()
                 .map(runtimeItemContexts::get)
                 .filter(java.util.Objects::nonNull)
                 .toList();
@@ -1435,6 +1521,8 @@ public final class SearchKnowledgeTool {
         output.add("item_context", itemContexts);
         output.addProperty("runtime_item_context_count", runtimeItemContexts.size());
         output.addProperty("runtime_item_context_truncated", runtimeItemContextTruncated);
+        output.addProperty("runtime_item_context_request_count", runtimeItemContextRequestCount);
+        output.addProperty("runtime_item_context_request_limit", maxRounds);
         output.add("runtime_item_context", runtimeItemContexts);
         output.add("results", documents);
         if (!hint.isBlank()) {

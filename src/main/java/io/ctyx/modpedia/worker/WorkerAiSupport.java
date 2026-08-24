@@ -52,6 +52,19 @@ final class WorkerAiSupport {
         );
     }
 
+    static ChatRequest requireSearchOnFirstRequest(
+            ChatRequest request,
+            AtomicBoolean firstRequest,
+            boolean taskQuestion,
+            boolean materialQuestion,
+            int answerTokens,
+            boolean useCompletionTokens
+    ) {
+        return AiToolRouter.requireSearchOnFirstRequest(
+                request, firstRequest, taskQuestion, materialQuestion, answerTokens, useCompletionTokens
+        );
+    }
+
     static int memoryTokenBudget(int contextChars) {
         int normalized = Math.max(4_000, Math.min(64_000, contextChars));
         return Math.max(8_000, (normalized + 1) / 2 + 2_048);

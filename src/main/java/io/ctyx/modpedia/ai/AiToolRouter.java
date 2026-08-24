@@ -48,6 +48,20 @@ public final class AiToolRouter {
             int answerTokens,
             boolean useCompletionTokens
     ) {
+        return requireSearchOnFirstRequest(
+                request, firstRequest, taskQuestion, false, answerTokens, useCompletionTokens
+        );
+    }
+
+    /** 材料/工具问题首轮先验证部件兼容性，避免模型从名称拼出不存在的材料组合。 */
+    public static ChatRequest requireSearchOnFirstRequest(
+            ChatRequest request,
+            AtomicBoolean firstRequest,
+            boolean taskQuestion,
+            boolean materialQuestion,
+            int answerTokens,
+            boolean useCompletionTokens
+    ) {
         if (request == null || firstRequest == null || !firstRequest.compareAndSet(true, false)) {
             return limitOutput(request, answerTokens, useCompletionTokens);
         }
@@ -55,6 +69,17 @@ public final class AiToolRouter {
                 ? AiTokenBudget.REASONING_FIRST_TOOL_CALL
                 : AiTokenBudget.FIRST_TOOL_CALL;
         ChatRequest routed = limitOutput(request, firstToolBudget, useCompletionTokens);
+        if (materialQuestion) {
+            List<ToolSpecification> materialTools = routed.toolSpecifications().stream()
+                    .filter(tool -> MaterialFactsTool.TOOL_NAME.equals(tool.name()))
+                    .toList();
+            if (!materialTools.isEmpty()) {
+                return routed.toBuilder()
+                        .toolSpecifications(materialTools)
+                        .toolChoice(ToolChoice.REQUIRED)
+                        .build();
+            }
+        }
         if (taskQuestion) {
             List<ToolSpecification> taskTools = routed.toolSpecifications().stream()
                     .filter(tool -> TASK_TOOL_NAME.equals(tool.name()))

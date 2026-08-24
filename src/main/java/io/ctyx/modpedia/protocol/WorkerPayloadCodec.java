@@ -215,7 +215,7 @@ public final class WorkerPayloadCodec {
         );
     }
 
-    /** 只读取协议约定的最多三个临时 Tooltip，重复 ID 只保留第一项。 */
+    /** 只读取协议约定的最多五个临时 Tooltip，重复 ID 只保留第一项。 */
     public static List<RuntimeItemContext> runtimeItemContexts(JsonObject value) {
         List<RuntimeItemContext> result = new ArrayList<>();
         java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();

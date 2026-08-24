@@ -616,6 +616,12 @@ def calculationToolSelfTest = tasks.register('calculationToolSelfTest', JavaExec
     mainClass = 'io.ctyx.modpedia.ai.CalculationToolSelfTest'
 }
 
+def materialCandidateGateSelfTest = tasks.register('materialCandidateGateSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.ai.MaterialCandidateGateSelfTest'
+}
+
 def recipeQueryToolSelfTest = tasks.register('recipeQueryToolSelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -703,6 +709,7 @@ tasks.named('test', Test) {
     dependsOn aiLangChainSelfTest
     dependsOn aiProtocolSelfTest
     dependsOn calculationToolSelfTest
+    dependsOn materialCandidateGateSelfTest
     dependsOn recipeQueryToolSelfTest
     dependsOn recipeMachineNormalizerSelfTest
     dependsOn markdownRendererSelfTest

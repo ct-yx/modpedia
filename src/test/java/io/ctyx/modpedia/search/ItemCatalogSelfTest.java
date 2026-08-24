@@ -2,6 +2,7 @@ package io.ctyx.modpedia.search;
 
 import com.google.gson.JsonParser;
 import io.ctyx.modpedia.ai.SearchKnowledgeTool;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
 
 import java.nio.file.Files;
@@ -61,6 +62,51 @@ public final class ItemCatalogSelfTest {
                     "物品目录应保存完整 Tooltip Markdown");
             check(reader.lookupItemsByDisplayName(List.of("示例机器"), SearchLanguage.ZH_CN).size() == 1,
                     "物品目录应支持按当前语言显示名称精确查询");
+        }
+
+        Path runtimeCacheRoot = root.resolve("runtime-cache");
+        KnowledgeDatabase.ensureDatabase(runtimeCacheRoot);
+        KnowledgeDatabase.syncItemCatalog(
+                runtimeCacheRoot,
+                "zh_cn",
+                List.of(entry("example:dynamic", "zh_cn", "动态机器", "", "example", "dynamic-base-v1"))
+        );
+        check(KnowledgeDatabase.cacheRuntimeItemContexts(
+                runtimeCacheRoot,
+                List.of(
+                        new RuntimeItemContext(
+                                "example:dynamic", "zh_cn", "动态机器", "- 当前世界 Tooltip",
+                                true, 1234L
+                        ),
+                        new RuntimeItemContext(
+                                "example:variant@3", "zh_cn", "变体机器", "- metadata=3 Tooltip",
+                                true, 1234L
+                        )
+                )
+        ) == 2, "运行时 Tooltip 应写入 item_catalog");
+        try (KnowledgeDatabase.Reader reader = KnowledgeDatabase.openReader(
+                KnowledgeDatabase.path(runtimeCacheRoot))) {
+            check(reader.lookupItems(List.of("example:dynamic"), SearchLanguage.ZH_CN)
+                            .getFirst().descriptionMarkdown().contains("当前世界 Tooltip"),
+                    "运行时缓存应立即可被目录读取");
+            check(reader.lookupItems(List.of("example:variant@3"), SearchLanguage.ZH_CN)
+                            .getFirst().descriptionMarkdown().contains("metadata=3 Tooltip"),
+                    "未进入基础快照的 metadata 变体也应保留运行时缓存");
+        }
+        // 后续启动只同步基础名称时，不得用空简介覆盖已经缓存的运行时 Tooltip。
+        KnowledgeDatabase.syncItemCatalog(
+                runtimeCacheRoot,
+                "zh_cn",
+                List.of(entry("example:dynamic", "zh_cn", "动态机器", "", "example", "dynamic-base-v2"))
+        );
+        try (KnowledgeDatabase.Reader reader = KnowledgeDatabase.openReader(
+                KnowledgeDatabase.path(runtimeCacheRoot))) {
+            check(reader.lookupItems(List.of("example:dynamic"), SearchLanguage.ZH_CN)
+                            .getFirst().descriptionMarkdown().contains("当前世界 Tooltip"),
+                    "基础目录重建不能清空已经缓存的运行时 Tooltip");
+            check(reader.lookupItems(List.of("example:variant@3"), SearchLanguage.ZH_CN)
+                            .getFirst().descriptionMarkdown().contains("metadata=3 Tooltip"),
+                    "基础目录重建不能删除未进入快照的运行时变体缓存");
         }
 
         KnowledgeDatabase.ItemCatalogSyncResult reused = KnowledgeDatabase.syncItemCatalog(

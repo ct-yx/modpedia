@@ -33,10 +33,15 @@ public final class WorkerProtocol {
     /** runtime_context_request 的可选物品 Tooltip 请求类型。 */
     public static final String RUNTIME_ITEM_CONTEXT_KIND = "item_tooltip";
     public static final String RUNTIME_ITEM_CONTEXT_CAPABILITY = "runtime_item_context";
-    public static final int MAX_RUNTIME_ITEM_CONTEXT_ITEMS = 3;
+    /** runtime_context_request 的可选材料/部件事实请求类型。 */
+    public static final String RUNTIME_MATERIAL_FACTS_KIND = "material_facts";
+    public static final String RUNTIME_MATERIAL_FACTS_CAPABILITY = "runtime_material_facts";
+    /** 每次 AI 工具查询最多向客户端读取五个已确认物品。 */
+    public static final int MAX_RUNTIME_ITEM_CONTEXT_ITEMS = 5;
     public static final int MAX_RUNTIME_ITEM_CONTEXT_BYTES = 64 * 1024;
     public static final int MAX_RUNTIME_ITEM_ID_CHARS = 256;
     public static final int MAX_RUNTIME_ITEM_TEXT_CHARS = 12_000;
+    public static final int MAX_RUNTIME_MATERIAL_FACTS = 64;
     public static final String RECIPE_QUERY_REQUEST = "recipe_query_request";
     public static final String RECIPE_QUERY_RESPONSE = "recipe_query_response";
     public static final String KNOWLEDGE_REBUILD = "knowledge.rebuild";

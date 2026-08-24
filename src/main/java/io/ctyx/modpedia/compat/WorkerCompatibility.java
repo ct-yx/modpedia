@@ -36,7 +36,8 @@ public final class WorkerCompatibility {
     );
     /** 可选能力不参与旧客户端的握手拒绝；缺失时 Worker 自动回退静态目录。 */
     public static final List<String> OPTIONAL_CAPABILITIES = List.of(
-            WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+            WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY,
+            WorkerProtocol.RUNTIME_MATERIAL_FACTS_CAPABILITY
     );
 
     private WorkerCompatibility() {

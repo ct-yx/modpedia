@@ -25,6 +25,7 @@ import io.ctyx.modpedia.ai.ConversationStore;
 import io.ctyx.modpedia.ai.ConversationRecord;
 import io.ctyx.modpedia.ai.FollowUpQuestionParser;
 import io.ctyx.modpedia.ai.LocalSearchMessageFormatter;
+import io.ctyx.modpedia.ai.MaterialFactsTool;
 import io.ctyx.modpedia.ai.PersistentChatMemoryStore;
 import io.ctyx.modpedia.ai.PromptBuilder;
 import io.ctyx.modpedia.ai.RecipeQueryTool;
@@ -88,6 +89,8 @@ public final class WorkerChatService {
     private final WorkerEventSink sink;
     private final RuntimeContextRequester runtimeContextRequester;
     private final RuntimeItemContextRequester runtimeItemContextRequester;
+    private final Consumer<List<RuntimeItemContext>> runtimeItemContextCache;
+    private final RuntimeMaterialFactsRequester runtimeMaterialFactsRequester;
     private final RecipeQueryRequester recipeQueryRequester;
     private final Predicate<String> requestCancelled;
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<SearchTrace>> requestTraces =
@@ -109,6 +112,7 @@ public final class WorkerChatService {
                 runtimeContextRequester,
                 null,
                 null,
+                null,
                 ignored -> false
         );
     }
@@ -127,6 +131,7 @@ public final class WorkerChatService {
                 settingsStore,
                 sink,
                 runtimeContextRequester,
+                null,
                 null,
                 null,
                 requestCancelled
@@ -150,6 +155,7 @@ public final class WorkerChatService {
                 sink,
                 runtimeContextRequester,
                 null,
+                null,
                 recipeQueryRequester,
                 requestCancelled
         );
@@ -162,6 +168,33 @@ public final class WorkerChatService {
             WorkerEventSink sink,
             RuntimeContextRequester runtimeContextRequester,
             RuntimeItemContextRequester runtimeItemContextRequester,
+            RuntimeMaterialFactsRequester runtimeMaterialFactsRequester,
+            RecipeQueryRequester recipeQueryRequester,
+            Predicate<String> requestCancelled
+    ) {
+        this(
+                knowledgeRoot,
+                conversationStore,
+                settingsStore,
+                sink,
+                runtimeContextRequester,
+                runtimeItemContextRequester,
+                null,
+                runtimeMaterialFactsRequester,
+                recipeQueryRequester,
+                requestCancelled
+        );
+    }
+
+    public WorkerChatService(
+            Path knowledgeRoot,
+            ConversationStore conversationStore,
+            AiSettingsStore settingsStore,
+            WorkerEventSink sink,
+            RuntimeContextRequester runtimeContextRequester,
+            RuntimeItemContextRequester runtimeItemContextRequester,
+            Consumer<List<RuntimeItemContext>> runtimeItemContextCache,
+            RuntimeMaterialFactsRequester runtimeMaterialFactsRequester,
             RecipeQueryRequester recipeQueryRequester,
             Predicate<String> requestCancelled
     ) {
@@ -174,6 +207,8 @@ public final class WorkerChatService {
         this.sink = sink;
         this.runtimeContextRequester = runtimeContextRequester;
         this.runtimeItemContextRequester = runtimeItemContextRequester;
+        this.runtimeItemContextCache = runtimeItemContextCache;
+        this.runtimeMaterialFactsRequester = runtimeMaterialFactsRequester;
         this.recipeQueryRequester = recipeQueryRequester;
         this.requestCancelled = requestCancelled == null ? ignored -> false : requestCancelled;
     }
@@ -231,6 +266,7 @@ public final class WorkerChatService {
         int results = settings.effectiveMaxResults();
         int contextChars = settings.effectiveMaxContextChars();
         boolean taskQuestion = TaskQuestionClassifier.isTaskQuestion(prompt);
+        boolean materialQuestion = io.ctyx.modpedia.ai.MaterialQuestionClassifier.isMaterialQuestion(prompt);
         SearchKnowledgeTool searchTool = createSearchTool(
                 requestId,
                 language,
@@ -239,10 +275,13 @@ public final class WorkerChatService {
                 rounds
         );
         RecipeQueryTool recipeTool = createRecipeTool(requestId, conversationId, results);
+        MaterialFactsTool materialFactsTool = createMaterialFactsTool(requestId, conversationId);
         if (settings.streaming()) {
-            stream(requestId, conversationId, prompt, language, settings, rounds, searchTool, recipeTool, taskQuestion);
+            stream(requestId, conversationId, prompt, language, settings, rounds, searchTool,
+                    materialFactsTool, recipeTool, taskQuestion, materialQuestion);
         } else {
-            block(requestId, conversationId, prompt, language, settings, rounds, searchTool, recipeTool, taskQuestion);
+            block(requestId, conversationId, prompt, language, settings, rounds, searchTool,
+                    materialFactsTool, recipeTool, taskQuestion, materialQuestion);
         }
     }
 
@@ -320,8 +359,10 @@ public final class WorkerChatService {
             AiSettings settings,
             int rounds,
             SearchKnowledgeTool searchTool,
+            MaterialFactsTool materialFactsTool,
             RecipeQueryTool recipeTool,
-            boolean taskQuestion
+            boolean taskQuestion,
+            boolean materialQuestion
     ) {
         if (cancelled(requestId)) {
             return;
@@ -329,7 +370,8 @@ public final class WorkerChatService {
         try {
             sendStatus(requestId, "organizing", "正在整理回答……");
             BlockingAssistantService service = buildBlockingService(
-                    AiClient.chatModel(settings), settings, language, rounds, searchTool, recipeTool, taskQuestion
+                    AiClient.chatModel(settings), settings, language, rounds, searchTool,
+                    materialFactsTool, recipeTool, taskQuestion, materialQuestion
             );
             finish(requestId, conversationId, service.chat(conversationId, prompt), searchTool.taskSummary());
         } catch (Throwable firstFailure) {
@@ -348,9 +390,11 @@ public final class WorkerChatService {
                     );
                     RecipeQueryTool retryRecipeTool = createRecipeTool(requestId, conversationId,
                             settings.effectiveMaxResults());
+                    MaterialFactsTool retryMaterialFactsTool = createMaterialFactsTool(
+                            requestId, conversationId);
                     BlockingAssistantService retry = buildBlockingService(
                             AiClient.chatModel(settings), settings, language, rounds, retryTool,
-                            retryRecipeTool, taskQuestion
+                            retryMaterialFactsTool, retryRecipeTool, taskQuestion, materialQuestion
                     );
                     finish(requestId, conversationId, retry.chat(conversationId, prompt), retryTool.taskSummary());
                     return;
@@ -380,8 +424,10 @@ public final class WorkerChatService {
             AiSettings settings,
             int rounds,
             SearchKnowledgeTool searchTool,
+            MaterialFactsTool materialFactsTool,
             RecipeQueryTool recipeTool,
-            boolean taskQuestion
+            boolean taskQuestion,
+            boolean materialQuestion
     ) {
         AtomicReference<StreamingHandle> activeHandle = new AtomicReference<>();
         AtomicBoolean terminal = new AtomicBoolean();
@@ -389,7 +435,8 @@ public final class WorkerChatService {
         try {
             StreamingChatModel model = AiClient.streamingChatModel(settings);
             StreamingAssistantService service = buildStreamingService(
-                    model, settings, language, rounds, searchTool, recipeTool, taskQuestion
+                    model, settings, language, rounds, searchTool, materialFactsTool,
+                    recipeTool, taskQuestion, materialQuestion
             );
             StringBuilder draft = new StringBuilder();
             TokenStream stream = service.chat(conversationId, prompt)
@@ -551,6 +598,7 @@ public final class WorkerChatService {
                                 languageCode,
                                 itemIds
                         ),
+                runtimeItemContextCache,
                 trace -> onSearchTrace(requestId, trace)
         );
     }
@@ -566,6 +614,22 @@ public final class WorkerChatService {
                         ),
                 results,
                 trace -> onRecipeTrace(requestId, trace)
+        );
+    }
+
+    private MaterialFactsTool createMaterialFactsTool(String requestId, String conversationId) {
+        return new MaterialFactsTool(
+                runtimeMaterialFactsRequester == null
+                        ? null
+                        : (toolType, materials, parts) -> runtimeMaterialFactsRequester.request(
+                                requestId,
+                                conversationId == null || conversationId.isBlank()
+                                        ? conversationFor(requestId)
+                                        : conversationId,
+                                toolType,
+                                materials,
+                                parts
+                        )
         );
     }
 
@@ -787,8 +851,10 @@ public final class WorkerChatService {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            MaterialFactsTool materialFactsTool,
             RecipeQueryTool recipeTool,
-            boolean taskQuestion
+            boolean taskQuestion,
+            boolean materialQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
         return AiServices.builder(BlockingAssistantService.class)
@@ -798,9 +864,9 @@ public final class WorkerChatService {
                         settings.effectiveMaxResults(), settings.effectiveMaxContextChars()
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
-                .tools(searchTool, CALCULATION_TOOL, recipeTool)
+                .tools(searchTool, materialFactsTool, CALCULATION_TOOL, recipeTool)
                 .chatRequestTransformer(request -> WorkerAiSupport.requireSearchOnFirstRequest(
-                        request, firstRequest, taskQuestion,
+                        request, firstRequest, taskQuestion, materialQuestion,
                         io.ctyx.modpedia.ai.AiTokenBudget.answerTokens(settings.intensity()),
                         settings.apiFormat().isChatCompletions()
                                 && AiClient.usesCompletionTokenParameter(settings.model())
@@ -821,8 +887,10 @@ public final class WorkerChatService {
             SearchLanguage language,
             int rounds,
             SearchKnowledgeTool searchTool,
+            MaterialFactsTool materialFactsTool,
             RecipeQueryTool recipeTool,
-            boolean taskQuestion
+            boolean taskQuestion,
+            boolean materialQuestion
     ) {
         AtomicBoolean firstRequest = new AtomicBoolean(true);
         return AiServices.builder(StreamingAssistantService.class)
@@ -832,9 +900,9 @@ public final class WorkerChatService {
                         settings.effectiveMaxResults(), settings.effectiveMaxContextChars()
                 ))
                 .chatMemoryProvider(id -> createMemory(String.valueOf(id), settings))
-                .tools(searchTool, CALCULATION_TOOL, recipeTool)
+                .tools(searchTool, materialFactsTool, CALCULATION_TOOL, recipeTool)
                 .chatRequestTransformer(request -> WorkerAiSupport.requireSearchOnFirstRequest(
-                        request, firstRequest, taskQuestion,
+                        request, firstRequest, taskQuestion, materialQuestion,
                         io.ctyx.modpedia.ai.AiTokenBudget.answerTokens(settings.intensity()),
                         settings.apiFormat().isChatCompletions()
                                 && AiClient.usesCompletionTokenParameter(settings.model())
@@ -896,6 +964,17 @@ public final class WorkerChatService {
                 String conversationId,
                 String language,
                 List<String> itemIds
+        );
+    }
+
+    @FunctionalInterface
+    public interface RuntimeMaterialFactsRequester {
+        JsonObject request(
+                String requestId,
+                String conversationId,
+                String toolType,
+                List<String> materials,
+                List<String> parts
         );
     }
 

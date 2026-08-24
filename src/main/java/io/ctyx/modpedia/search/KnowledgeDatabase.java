@@ -6,12 +6,15 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import io.ctyx.modpedia.knowledge.KnowledgeContentKind;
 import io.ctyx.modpedia.knowledge.KnowledgeDocument;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -367,6 +370,105 @@ public final class KnowledgeDatabase {
                 );
             } catch (SQLException | RuntimeException exception) {
                 throw new IOException("SQLite 物品目录同步失败", exception);
+            }
+        } finally {
+            WRITE_LOCK.unlock();
+        }
+    }
+
+    /**
+     * 缓存客户端按需读取到的 Tooltip，不做当前语言全量替换，也不删除其它物品。
+     * 该方法只由 Worker 调用；客户端运行时 Tooltip 不会直接打开 SQLite。
+     */
+    public static int cacheRuntimeItemContexts(
+            Path knowledgeRoot,
+            Collection<RuntimeItemContext> contexts
+    ) throws IOException {
+        Map<String, ItemCatalogEntry> entries = new LinkedHashMap<>();
+        if (contexts != null) {
+            for (RuntimeItemContext context : contexts) {
+                if (context == null || !context.usable()) {
+                    continue;
+                }
+                String itemId = context.itemId().strip().toLowerCase(java.util.Locale.ROOT);
+                String language = normalizeLanguage(context.language());
+                String displayName = context.displayName();
+                String description = context.tooltipMarkdown();
+                if (itemId.isBlank() || (displayName.isBlank() && description.isBlank())) {
+                    continue;
+                }
+                String sourceMod = sourceMod(itemId);
+                String fingerprint = runtimeFingerprint(
+                        itemId, language, displayName, description
+                );
+                entries.put(itemId, new ItemCatalogEntry(
+                        itemId, language, displayName, description, sourceMod, fingerprint
+                ));
+            }
+        }
+        if (entries.isEmpty()) {
+            return 0;
+        }
+
+        WRITE_LOCK.lock();
+        try {
+            ensureDatabase(knowledgeRoot);
+            try (Connection connection = open(path(knowledgeRoot), false)) {
+                connection.setAutoCommit(false);
+                try {
+                    try (PreparedStatement statement = connection.prepareStatement("""
+                            INSERT INTO item_catalog(
+                                item_id, language, display_name, display_name_normalized,
+                                description_markdown, source_mod, fingerprint, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(item_id, language) DO UPDATE SET
+                                display_name = CASE
+                                    WHEN excluded.display_name = '' THEN item_catalog.display_name
+                                    ELSE excluded.display_name
+                                END,
+                                display_name_normalized = CASE
+                                    WHEN excluded.display_name = '' THEN item_catalog.display_name_normalized
+                                    ELSE excluded.display_name_normalized
+                                END,
+                                description_markdown = CASE
+                                    WHEN excluded.description_markdown = '' THEN item_catalog.description_markdown
+                                    ELSE excluded.description_markdown
+                                END,
+                                source_mod = CASE
+                                    WHEN excluded.source_mod = '' THEN item_catalog.source_mod
+                                    ELSE excluded.source_mod
+                                END,
+                                fingerprint = excluded.fingerprint,
+                                updated_at = excluded.updated_at
+                            """)) {
+                        long updatedAt = System.currentTimeMillis();
+                        for (ItemCatalogEntry entry : entries.values()) {
+                            statement.setString(1, entry.itemId());
+                            statement.setString(2, entry.language());
+                            statement.setString(3, entry.displayName());
+                            statement.setString(4, SearchTextNormalizer.normalizeField(entry.displayName()));
+                            statement.setString(5, entry.descriptionMarkdown());
+                            statement.setString(6, entry.sourceMod());
+                            statement.setString(7, entry.fingerprint());
+                            statement.setLong(8, updatedAt);
+                            statement.addBatch();
+                        }
+                        statement.executeBatch();
+                    }
+                    connection.commit();
+                    return entries.size();
+                } catch (SQLException | RuntimeException failure) {
+                    try {
+                        connection.rollback();
+                    } catch (SQLException rollbackFailure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                    throw failure;
+                } finally {
+                    connection.setAutoCommit(true);
+                }
+            } catch (SQLException | RuntimeException failure) {
+                throw new IOException("SQLite 运行时物品缓存失败", failure);
             }
         } finally {
             WRITE_LOCK.unlock();
@@ -1771,13 +1873,19 @@ public final class KnowledgeDatabase {
     ) throws SQLException {
         connection.setAutoCommit(false);
         try {
-            Map<String, String> existing = new LinkedHashMap<>();
+            Map<String, ExistingItemCatalog> existing = new LinkedHashMap<>();
             try (PreparedStatement statement = connection.prepareStatement(
-                    "SELECT item_id, fingerprint FROM item_catalog WHERE language = ?")) {
+                    "SELECT item_id, fingerprint, display_name, description_markdown, source_mod "
+                            + "FROM item_catalog WHERE language = ?")) {
                 statement.setString(1, language);
                 try (ResultSet rows = statement.executeQuery()) {
                     while (rows.next()) {
-                        existing.put(rows.getString("item_id"), rows.getString("fingerprint"));
+                        existing.put(rows.getString("item_id"), new ExistingItemCatalog(
+                                rows.getString("fingerprint"),
+                                rows.getString("display_name"),
+                                rows.getString("description_markdown"),
+                                rows.getString("source_mod")
+                        ));
                     }
                 }
             }
@@ -1785,8 +1893,9 @@ public final class KnowledgeDatabase {
             List<ItemCatalogEntry> changedEntries = new ArrayList<>();
             int reused = 0;
             for (ItemCatalogEntry entry : entries) {
-                String previousFingerprint = existing.remove(entry.itemId());
-                if (previousFingerprint != null && previousFingerprint.equals(entry.fingerprint())) {
+                ExistingItemCatalog previous = existing.remove(entry.itemId());
+                if (previous != null && (previous.fingerprint().equals(entry.fingerprint())
+                        || preservesRuntimeDescription(entry, previous))) {
                     reused++;
                     continue;
                 }
@@ -1828,9 +1937,15 @@ public final class KnowledgeDatabase {
             int removed = 0;
             try (PreparedStatement statement = connection.prepareStatement(
                     "DELETE FROM item_catalog WHERE language = ? AND item_id = ?")) {
-                for (String itemId : existing.keySet()) {
+                for (Map.Entry<String, ExistingItemCatalog> stale : existing.entrySet()) {
+                    // 运行时读取到的 metadata/Tooltip 可能尚未出现在启动期的
+                    // 基础目录快照中；保留这类缓存，避免每次重启都重新占用
+                    // 客户端主线程。普通基础条目仍按当前注册表快照清理。
+                    if (isRuntimeCached(stale.getValue())) {
+                        continue;
+                    }
                     statement.setString(1, language);
-                    statement.setString(2, itemId);
+                    statement.setString(2, stale.getKey());
                     statement.addBatch();
                 }
                 for (int count : statement.executeBatch()) {
@@ -1867,22 +1982,40 @@ public final class KnowledgeDatabase {
         if (!Files.isRegularFile(database)) {
             return false;
         }
-        Map<String, String> expected = new LinkedHashMap<>();
+        Map<String, ItemCatalogEntry> expected = new LinkedHashMap<>();
         for (ItemCatalogEntry entry : entries) {
-            expected.put(entry.itemId(), entry.fingerprint());
+            expected.put(entry.itemId(), entry);
         }
         try (Connection connection = open(database, true);
              PreparedStatement statement = connection.prepareStatement(
-                     "SELECT item_id, fingerprint FROM item_catalog WHERE language = ?")) {
+                     "SELECT item_id, fingerprint, display_name, description_markdown, source_mod "
+                             + "FROM item_catalog WHERE language = ?")) {
             statement.setString(1, language);
-            Map<String, String> actual = new LinkedHashMap<>();
+            Map<String, ExistingItemCatalog> actual = new LinkedHashMap<>();
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
-                    actual.put(rows.getString("item_id"), rows.getString("fingerprint"));
+                    actual.put(rows.getString("item_id"), new ExistingItemCatalog(
+                            rows.getString("fingerprint"),
+                            rows.getString("display_name"),
+                            rows.getString("description_markdown"),
+                            rows.getString("source_mod")
+                    ));
                 }
             }
-            if (!actual.equals(expected)) {
+            long unexpectedStatic = actual.entrySet().stream()
+                    .filter(entry -> !expected.containsKey(entry.getKey()))
+                    .filter(entry -> !isRuntimeCached(entry.getValue()))
+                    .count();
+            if (unexpectedStatic > 0) {
                 return false;
+            }
+            for (Map.Entry<String, ItemCatalogEntry> entry : expected.entrySet()) {
+                ExistingItemCatalog current = actual.get(entry.getKey());
+                if (current == null
+                        || (!current.fingerprint().equals(entry.getValue().fingerprint())
+                        && !preservesRuntimeDescription(entry.getValue(), current))) {
+                    return false;
+                }
             }
             try (PreparedStatement otherLanguage = connection.prepareStatement(
                     "SELECT 1 FROM item_catalog WHERE language <> ? LIMIT 1")) {
@@ -3058,6 +3191,45 @@ public final class KnowledgeDatabase {
         return "neutral";
     }
 
+    private static boolean preservesRuntimeDescription(
+            ItemCatalogEntry incoming,
+            ExistingItemCatalog existing
+    ) {
+        return incoming.descriptionMarkdown().isBlank()
+                && !existing.descriptionMarkdown().isBlank()
+                && incoming.displayName().equals(existing.displayName())
+                && incoming.sourceMod().equals(existing.sourceMod());
+    }
+
+    private static String sourceMod(String itemId) {
+        int separator = itemId.indexOf(':');
+        return separator > 0 ? itemId.substring(0, separator) : "";
+    }
+
+    private static String runtimeFingerprint(
+            String itemId,
+            String language,
+            String displayName,
+            String description
+    ) {
+        String value = itemId + "|" + language + "|" + displayName + "|" + description;
+        try {
+            byte[] bytes = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder(bytes.length * 2);
+            for (byte item : bytes) {
+                result.append(String.format(java.util.Locale.ROOT, "%02x", item & 0xff));
+            }
+            return "runtime:" + result;
+        } catch (NoSuchAlgorithmException exception) {
+            return "runtime:" + Integer.toHexString(value.hashCode());
+        }
+    }
+
+    private static boolean isRuntimeCached(ExistingItemCatalog entry) {
+        return entry != null && entry.fingerprint().startsWith("runtime:");
+    }
+
     private static String requireText(String value, String name) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(name + " 不能为空");
@@ -3066,5 +3238,19 @@ public final class KnowledgeDatabase {
     }
 
     private record ExistingDocument(String sourceKey, String fingerprint) {
+    }
+
+    private record ExistingItemCatalog(
+            String fingerprint,
+            String displayName,
+            String descriptionMarkdown,
+            String sourceMod
+    ) {
+        private ExistingItemCatalog {
+            fingerprint = fingerprint == null ? "" : fingerprint;
+            displayName = displayName == null ? "" : displayName;
+            descriptionMarkdown = descriptionMarkdown == null ? "" : descriptionMarkdown;
+            sourceMod = sourceMod == null ? "" : sourceMod;
+        }
     }
 }
