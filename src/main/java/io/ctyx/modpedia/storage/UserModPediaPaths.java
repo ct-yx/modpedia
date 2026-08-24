@@ -60,8 +60,9 @@ public final class UserModPediaPaths {
     }
 
     public Path instanceRuntimeRoot() {
-        Path parent = instanceConfig.getParent() == null ? instanceConfig : instanceConfig.getParent();
-        return parent.resolve("runtime");
+        // Worker 以 config/modpedia/runtime 作为实例级运行时根目录。
+        // 客户端必须复用同一目录，否则物品载荷会被 Worker 的路径校验拒绝。
+        return instanceConfig.resolve("modpedia").resolve("runtime");
     }
 
     public Path instanceWorkerRoot() {
@@ -69,7 +70,10 @@ public final class UserModPediaPaths {
     }
 
     public Path workerPayloadRoot() {
-        return instanceWorkerRoot().resolve("payload");
+        // Worker 侧以 payloads 作为批量载荷目录名。两侧必须共享同一
+        // 物理路径，否则客户端虽然成功写入 JSONL，Worker 会在路径校验
+        // 阶段拒绝读取，最终 item_catalog 保持为空。
+        return instanceWorkerRoot().resolve("payloads");
     }
 
     private static String firstNonBlank(String... values) {

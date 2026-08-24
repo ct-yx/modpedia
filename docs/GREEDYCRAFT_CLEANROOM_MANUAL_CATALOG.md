@@ -3,7 +3,7 @@
 > 扫描对象：`/Users/chenhong/Documents/Minecraft/.minecraft/versions/GreedyCraft-Cleanroom/`
 >
 > 扫描性质：只读资源扫描，不修改整合包。扫描结果已经用于 1.12.2 第一版静态来源
-> 转换器；运行时注册型手册和最终跳转仍需真实客户端回归。
+> 转换器；可识别的书籍来源均已登记对应跳转适配，最终 GUI 行为仍需真实客户端回归。
 
 ## 1. 扫描结论
 
@@ -123,8 +123,8 @@ assets/forestry/manual/
 ```
 
 约 309 个文件，包含 `categories.json`、entries、页面和多语言资源。Forestry
-同时在类中提供 `forestry.api.book.*`，后续运行时跳转可以使用其 API；静态导入
-优先读取资源文件。
+同时在类中提供 `forestry.api.book.*`，跳转适配使用其运行时分类/条目 API；静态导入
+仍优先读取资源文件。
 
 ### 4.3 EnderIO 书籍
 
@@ -273,6 +273,7 @@ guide_api_1_12
 mantle_book_1_12
 forestry_manual_1_12
 enderio_book_1_12
+logistics_pipes_book_1_12
 thaumcraft_research_1_12
 lexicon_runtime_1_12
 custom_text_1_12
@@ -286,7 +287,8 @@ ftb_guides_1_12
 2. Patchouli 1.12.2 静态书籍；
 3. Mantle、Forestry、EnderIO、Guide-API 静态书籍；
 4. Thaumcraft Research 及扩展；
-5. RFTools、XNet、Logistics Pipes 等静态文本；
+5. RFTools、XNet 等静态文本；Logistics Pipes 作为可打开的书籍单独使用
+   `logistics_pipes_book_1_12` 跳转适配；
 6. Botania、Actually Additions、Astral Sorcery 等运行时手册；
 7. FTB Guides 外部内容或事件型来源；
 8. 统一来源跳转和旧版物品 metadata/旧配方对象适配。

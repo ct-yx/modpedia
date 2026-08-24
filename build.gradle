@@ -131,3 +131,97 @@ task legacyWorkerPackagingSelfTest(type: JavaExec) {
     systemProperty 'modpedia.worker.jar', jar.archivePath.absolutePath
     systemProperty 'modpedia.slf4j.version', slf4j_version
 }
+
+task legacyPanelLayoutSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyPanelLayoutSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyCatalogCaptureGateSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyCatalogCaptureGateSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyItemCatalogProgressSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyItemCatalogProgressSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task userModPediaPathsSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.storage.UserModPediaPathsSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyRuntimeMaterialFactsReaderSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyRuntimeMaterialFactsReaderSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyItemTooltipFormatterSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyItemTooltipFormatterSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyMarkdownParserSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyMarkdownParserSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyConversationStateSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyConversationStateSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyConversationPayloadSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyConversationPayloadSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyScrollModelSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyScrollModelSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyManualNavigatorSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyManualNavigatorSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+task legacyJeiBridgeSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyJeiBridgeSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+// 这些自测试不依赖图形客户端或真实模型；让标准 test 入口直接执行，避免
+// 只编译测试类却漏掉布局、滚动和“禁止进世界扫描”的回归。
+test.dependsOn manualCatalogSelfTest,
+        legacyItemIdentitySelfTest,
+        legacyMarkdownCompilerSelfTest,
+        legacyFtbQuestNormalizerSelfTest,
+        legacyFtbQuestRuntimeSelfTest,
+        legacyFtbQuestEventBridgeSelfTest,
+        legacyWorkerPackagingSelfTest,
+        legacyPanelLayoutSelfTest,
+        legacyCatalogCaptureGateSelfTest,
+        legacyItemCatalogProgressSelfTest,
+        userModPediaPathsSelfTest,
+        legacyRuntimeMaterialFactsReaderSelfTest,
+        legacyItemTooltipFormatterSelfTest,
+        legacyMarkdownParserSelfTest,
+        legacyConversationStateSelfTest,
+        legacyConversationPayloadSelfTest,
+        legacyScrollModelSelfTest,
+        legacyManualNavigatorSelfTest,
+        legacyJeiBridgeSelfTest

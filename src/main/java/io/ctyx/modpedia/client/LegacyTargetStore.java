@@ -14,6 +14,10 @@ import net.minecraftforge.client.event.RenderTooltipEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /** 保存准星/Tooltip 当前物品；助手打开后冻结，避免 UI 盖住目标仍继续变更。 */
 public final class LegacyTargetStore {
     private static final LegacyTargetStore INSTANCE = new LegacyTargetStore();
@@ -46,7 +50,7 @@ public final class LegacyTargetStore {
         if (assistantOpen || event == null || event.getStack() == null || event.getStack().isEmpty()) {
             return;
         }
-        capture(event.getStack());
+        capture(event.getStack(), event.getLines());
     }
 
     @SubscribeEvent
@@ -69,12 +73,12 @@ public final class LegacyTargetStore {
             IBlockState state = minecraft.world.getBlockState(position);
             Item item = Item.getItemFromBlock(state.getBlock());
             if (item != null && item != Item.getItemFromBlock(net.minecraft.init.Blocks.AIR)) {
-                capture(new ItemStack(item, 1, state.getBlock().getMetaFromState(state)));
+                capture(new ItemStack(item, 1, state.getBlock().getMetaFromState(state)), null);
             }
         } else if (hit.entityHit instanceof EntityLivingBase) {
             ItemStack held = ((EntityLivingBase) hit.entityHit).getHeldItemMainhand();
             if (held != null && !held.isEmpty()) {
-                capture(held);
+                capture(held, null);
             } else {
                 current = null;
             }
@@ -83,10 +87,16 @@ public final class LegacyTargetStore {
         }
     }
 
-    private void capture(ItemStack stack) {
+    private void capture(ItemStack stack, List<String> renderedTooltipLines) {
         try {
             LegacyItemIdentity identity = LegacyItemStackIdentity.from(stack);
-            current = new Target(identity.canonicalKey(), stack.getDisplayName());
+            List<String> lines = renderedTooltipLines;
+            Target previous = current;
+            if ((lines == null || lines.isEmpty()) && previous != null
+                    && identity.canonicalKey().equals(previous.getItemId())) {
+                lines = previous.getRenderedTooltipLines();
+            }
+            current = new Target(identity.canonicalKey(), stack.getDisplayName(), lines);
         } catch (RuntimeException ignored) {
             // 没有注册名的临时物品不作为可插入目标。
         }
@@ -95,10 +105,31 @@ public final class LegacyTargetStore {
     public static final class Target {
         private final String itemId;
         private final String displayName;
+        private final List<String> renderedTooltipLines;
 
         public Target(String itemId, String displayName) {
+            this(itemId, displayName, Collections.<String>emptyList());
+        }
+
+        public Target(String itemId, String displayName, List<String> renderedTooltipLines) {
             this.itemId = itemId == null ? "" : itemId;
             this.displayName = displayName == null ? "" : displayName;
+            List<String> lines = new ArrayList<String>();
+            if (renderedTooltipLines != null) {
+                int characters = 0;
+                for (String line : renderedTooltipLines) {
+                    if (line == null || line.trim().isEmpty() || lines.size() >= 64) {
+                        continue;
+                    }
+                    String value = line.trim();
+                    if (characters + value.length() > 12000) {
+                        break;
+                    }
+                    lines.add(value);
+                    characters += value.length();
+                }
+            }
+            this.renderedTooltipLines = Collections.unmodifiableList(lines);
         }
 
         public String getItemId() {
@@ -107,6 +138,10 @@ public final class LegacyTargetStore {
 
         public String getDisplayName() {
             return displayName;
+        }
+
+        public List<String> getRenderedTooltipLines() {
+            return renderedTooltipLines;
         }
     }
 }

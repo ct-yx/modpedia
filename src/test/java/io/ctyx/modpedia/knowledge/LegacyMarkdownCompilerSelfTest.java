@@ -39,6 +39,8 @@ public final class LegacyMarkdownCompilerSelfTest {
             }
             assertTrue(all.contains("蜜蜂页面正文"), "page text");
             assertTrue(all.contains("example:bee"), "unknown recipe field");
+            assertTrue(all.contains("[[recipe:example:bee|example:bee]]"),
+                    "recipe field should keep an interactive recipe token");
             System.out.println("LegacyMarkdownCompilerSelfTest: OK");
         } finally {
             deleteTree(instance);

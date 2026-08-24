@@ -156,6 +156,13 @@ public final class LegacyWorkerBridge {
         return request(request, 30L);
     }
 
+    public CompletableFuture<JsonObject> renameConversation(String conversationId, String title) {
+        JsonObject request = message("conversation.rename", UUID.randomUUID().toString());
+        request.addProperty("conversation_id", conversationId == null ? "" : conversationId);
+        request.addProperty("title", title == null ? "" : title.trim());
+        return request(request, 30L);
+    }
+
     public CompletableFuture<JsonObject> deleteConversation(String conversationId) {
         JsonObject request = message("conversation.delete", UUID.randomUUID().toString());
         request.addProperty("conversation_id", conversationId == null ? "" : conversationId);
@@ -217,7 +224,12 @@ public final class LegacyWorkerBridge {
                         Files.move(temporary, payload, StandardCopyOption.REPLACE_EXISTING);
                     }
                     request.addProperty("items_file", payload.toString());
-                    send(request);
+                    if (!send(request)) {
+                        CompletableFuture<JsonObject> response = responses.remove(requestId);
+                        if (response != null) {
+                            response.completeExceptionally(new IOException("物品目录同步请求发送失败"));
+                        }
+                    }
                 } catch (IOException exception) {
                     CompletableFuture<JsonObject> response = responses.remove(requestId);
                     if (response != null) {
@@ -317,9 +329,15 @@ public final class LegacyWorkerBridge {
             hello.addProperty("auth_token", token);
             hello.addProperty("worker_api_level", 1);
             hello.addProperty("worker_baseline", BASELINE);
-            hello.addProperty("client_adapter", "forge-1.12.2");
+            hello.addProperty("client_adapter", "cleanroom-1.12.2");
             hello.addProperty("client_java", System.getProperty("java.specification.version", "8"));
             hello.add("client_capabilities", capabilities());
+            JsonArray optionalCapabilities = new JsonArray();
+            optionalCapabilities.add("runtime_item_context");
+            if (LegacyRuntimeMaterialFactsReader.isAvailable()) {
+                optionalCapabilities.add("runtime_material_facts");
+            }
+            hello.add("client_optional_capabilities", optionalCapabilities);
             if (!send(hello)) {
                 throw new IOException("无法发送 Worker 握手");
             }
@@ -524,7 +542,13 @@ public final class LegacyWorkerBridge {
                 String type = string(event, "type");
                 String requestId = string(event, "request_id");
                 if ("runtime_context_request".equals(type)) {
-                    send(runtimeResponse(requestId));
+                    if ("item_tooltip".equals(string(event, "request_kind"))) {
+                        dispatchRuntimeItemContext(requestId, event);
+                    } else if ("material_facts".equals(string(event, "request_kind"))) {
+                        dispatchRuntimeMaterialFacts(requestId, event);
+                    } else {
+                        send(runtimeResponse(requestId));
+                    }
                     continue;
                 }
                 if ("recipe_query_request".equals(type)) {
@@ -534,7 +558,8 @@ public final class LegacyWorkerBridge {
                 CompletableFuture<JsonObject> future = responses.get(requestId);
                 if (future != null && ("completed".equals(type) || "error".equals(type)
                         || "cancelled".equals(type) || "pong".equals(type)
-                        || "conversation_state".equals(type))) {
+                        || "conversation_state".equals(type)
+                        || "conversation.state".equals(type))) {
                     future.complete(event);
                     responses.remove(requestId);
                 }
@@ -580,6 +605,38 @@ public final class LegacyWorkerBridge {
         );
         response.add("runtime_context", available ? snapshot : unavailable());
         return response;
+    }
+
+    private void dispatchRuntimeItemContext(final String requestId, final JsonObject request) {
+        try {
+            Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    send(LegacyRuntimeItemContextReader.read(request));
+                }
+            });
+        } catch (Throwable failure) {
+            send(LegacyRuntimeItemContextReader.unavailable(requestId, "客户端世界尚未就绪"));
+        }
+    }
+
+    /** 可选材料模组的注册表只能在客户端线程读取。 */
+    private void dispatchRuntimeMaterialFacts(final String requestId, final JsonObject request) {
+        try {
+            Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    send(LegacyRuntimeMaterialFactsReader.read(request));
+                }
+            });
+        } catch (Throwable failure) {
+            JsonObject response = message("runtime_context_response", requestId);
+            response.addProperty("request_kind", "material_facts");
+            response.addProperty("status", "unavailable");
+            response.addProperty("world_ready", false);
+            response.add("facts", new JsonArray());
+            send(response);
+        }
     }
 
     /** JEI/HEI 的客户端运行时对象必须在 Minecraft 主线程访问。 */

@@ -6,6 +6,7 @@ public enum ManualSourceType {
     MANTLE_BOOK_1_12("mantle_book_1_12"),
     FORESTRY_MANUAL_1_12("forestry_manual_1_12"),
     ENDERIO_BOOK_1_12("enderio_book_1_12"),
+    LOGISTICS_PIPES_BOOK_1_12("logistics_pipes_book_1_12"),
     GUIDE_API_1_12("guide_api_1_12"),
     THAUMCRAFT_RESEARCH_1_12("thaumcraft_research_1_12"),
     CUSTOM_TEXT_1_12("custom_text_1_12"),

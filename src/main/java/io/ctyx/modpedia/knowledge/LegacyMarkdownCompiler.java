@@ -294,13 +294,34 @@ public final class LegacyMarkdownCompiler {
         boolean wrote = false;
         for (String key : common) {
             if (page.has(key)) {
-                result.append("**").append(key).append("**：").append(readable(page.get(key))).append("\n\n");
+                result.append("**").append(key).append("**：");
+                if ("recipe".equals(key) || "recipe2".equals(key)) {
+                    result.append(recipeMarkup(page.get(key)));
+                } else {
+                    result.append(readable(page.get(key)));
+                }
+                result.append("\n\n");
                 wrote = true;
             }
         }
         if (!wrote) {
             result.append("```json\n").append(page.toString()).append("\n```\n");
         }
+    }
+
+    /**
+     * Patchouli/Guide 页面中的 recipe 是配方注册 ID，不是物品 ID。
+     * 保留原显示文本，同时写入客户端可以识别的交互协议；这样不需要在
+     * Worker 编译阶段加载 Minecraft 或 JEI，也能在客户端按需打开配方。
+     */
+    private String recipeMarkup(JsonElement element) {
+        if (element != null && element.isJsonPrimitive()) {
+            String value = clean(element.getAsString());
+            if (!value.isEmpty() && value.indexOf(':') > 0) {
+                return "[[recipe:" + value + "|" + value + "]]";
+            }
+        }
+        return readable(element);
     }
 
     private void appendKnownFields(StringBuilder result, JsonObject object, String... ignored) {

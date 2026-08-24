@@ -67,7 +67,7 @@ public final class ManualCatalogScanner {
             Pattern.CASE_INSENSITIVE
     );
     private static final Set<String> FRAMEWORK_IDS = new HashSet<String>(Arrays.asList(
-            "patchouli", "guideme", "modonomicon", "guideapi", "ftbguides", "akashictome", "mantle"
+            "patchouli", "guideapi", "ftbguides", "akashictome", "mantle"
     ));
     private static final Set<String> MANTLE_IDS = new HashSet<String>(Arrays.asList(
             "tconstruct", "tcomplement", "conarm", "taiga", "tconevo", "toolprogression"
@@ -410,7 +410,7 @@ public final class ManualCatalogScanner {
             return ManualSourceType.MANTLE_BOOK_1_12;
         }
         if ("book".equals(rootName) && BOOK_TEXT_IDS.contains(namespace)) {
-            return ManualSourceType.CUSTOM_TEXT_1_12;
+            return ManualSourceType.LOGISTICS_PIPES_BOOK_1_12;
         }
         return null;
     }

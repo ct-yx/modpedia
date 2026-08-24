@@ -29,7 +29,7 @@ public final class ManualCatalogScannerSelfTest {
             assertHas(result.getSources(), "example:book:tconstruct", KnowledgeContentKind.MOD_MANUAL,
                     ManualSourceType.MANTLE_BOOK_1_12, "en_us");
             assertHas(result.getSources(), "example:book:logisticspipes", KnowledgeContentKind.MOD_MANUAL,
-                    ManualSourceType.CUSTOM_TEXT_1_12, "en_us");
+                    ManualSourceType.LOGISTICS_PIPES_BOOK_1_12, "en_us");
             assertHas(result.getSources(), "example:guide_api:chisel_guide", KnowledgeContentKind.MOD_MANUAL,
                     ManualSourceType.GUIDE_API_1_12, "en_us");
             assertHas(result.getSources(), "example:books:bloodmagic", KnowledgeContentKind.MOD_MANUAL,
