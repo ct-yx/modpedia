@@ -1,10 +1,10 @@
 # ModPedia 项目入门
 
-本文面向第一次接手项目的维护者，目标是在当前发布基线下快速理解工程、运行边界和验证方式。
+本文面向第一次接手项目的维护者，目标是在 `v1.4.0` 三版本发布基线下快速理解工程、运行边界和验证方式。
 
 ## 1. 项目定位
 
-ModPedia 是 Minecraft 1.21.1 + NeoForge 1.21.1 的本地知识助手：
+ModPedia 是跨 Minecraft 1.21.1/NeoForge、1.20.1/Forge 和 1.12.2/Cleanroom 0.3+ 的本地知识助手：
 
 ```text
 已安装模组手册 / Wiki / 自定义 Markdown
@@ -30,19 +30,18 @@ Patchouli、GuideME、Modonomicon、FTB Quests、JEI 和 Jade 都属于可选联
 
 | 项目 | 值 |
 | --- | --- |
-| Minecraft | 1.21.1 |
-| NeoForge | 21.1.244 |
-| Java | 21 |
+| Minecraft / 加载器 | 1.21.1 NeoForge；1.20.1 Forge；1.12.2 Cleanroom 0.3+ |
+| Java | 游戏按版本；Worker Java 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
-| 当前发布版本 | `v1.2.0-fix` |
+| 当前发布版本 | `v1.4.0` |
 | 当前检查分支 | `main` |
 | 当前检查 HEAD | 以 `git log -1` 为准 |
 | 主配置目录 | `config/modpedia/` |
 | 知识库 | `config/modpedia/runtime/knowledge/knowledge.db` |
 | 会话目录 | `config/modpedia/runtime/conversations/` |
 | Worker 日志 | `config/modpedia/runtime/worker/worker.log` |
-| Worker 共享依赖 | `~/.modpedia/worker/lib/worker-baseline-1/` |
+| Worker 共享依赖 | `~/.modpedia/worker/lib/worker-baseline-3/` |
 
 `main` 是发布、GitHub Pages、README 和 `docs/` 的维护分支；功能分支只负责代码和测试。
 需要修改 Worker 时，先阅读 [WORKER_CHANGE_PROTOCOL.md](WORKER_CHANGE_PROTOCOL.md)；需要发布

@@ -1,5 +1,22 @@
 # ModPedia 开发日志
 
+## 2026-08-25 · v1.4.0 三版本发布准备
+
+- 以 `v1.1.0` 为对比基线，核对 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2 三条代码分支。
+- 三版本纯 Java 自测试和发布构建通过；JAR 元数据统一为 `1.4.0`、`ModPedia · 模组百科`、Apache License 2.0。
+- 新增 [`RELEASE_1.4.0.md`](RELEASE_1.4.0.md)，记录手册/Wiki/自定义来源、Worker、AI、任务、物品、JEI、Jade、UI 和修复项。
+- 更新中英文 README、安装说明、已知限制、开发清单、架构、知识库、路线和 GitHub Pages；发布页新增三版本功能矩阵。
+- Release/CurseForge 工作流改为从三条代码分支分别构建并发布，当前 `CHANGELOG.md` 只提取 `v1.4.0` 段落。
+
+验证记录：
+
+```text
+NeoForge 1.21.1: ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version=1.4.0
+Forge 1.20.1:    ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version=1.4.0
+Cleanroom 1.12.2: ./gradlew clean build --no-daemon -Pmod_version=1.4.0
+```
+
+
 ## 2026-08-23 · main 发布与文档集中维护
 
 - 确认 `main` 是 README、`docs/`、GitHub Pages、CHANGELOG 和 Release 工作流的唯一维护入口。
@@ -9,7 +26,7 @@
 
 ## 2026-08-21 · v1.2.0-fix Worker 共享运行库修复
 
-- Worker 依赖库改为用户级固定基线目录 `~/.modpedia/worker/lib/worker-baseline-1/`。
+- Worker 依赖库改为用户级固定基线目录 `~/.modpedia/worker/lib/worker-baseline-3/`。
 - 旧实例级 `runtime/worker/lib/` 在启动时迁移，实例级日志和 payload 保持不变。
 - 通过原子提取、跨实例路径测试和完整自动化测试。
 

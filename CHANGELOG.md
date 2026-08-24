@@ -1,5 +1,44 @@
 # 更新日志
 
+## v1.4.0
+
+以 `v1.1.0` 为对比基线的三版本正式发布。`v1.2.0`、`v1.2.0-fix` 和 `v1.3.0` 是中间开发/修复阶段的历史技术标签，本次将已完成的跨版本适配与稳定性修复统一收束发布。
+
+### 新增
+
+- 发布 NeoForge 1.21.1、Forge 1.20.1、Cleanroom 0.3+ / 1.12.2 三份独立 Mod JAR；三个构建使用对应客户端适配层，共用 Worker 协议和知识库设计。
+- 增加独立 Worker JVM、固定 `worker-baseline-3`、用户级共享 Worker 库和实例级运行时目录隔离，减少多个整合包重复占用依赖。
+- 增加 Patchouli、GuideME/Guide-API、Modonomicon/APP JSON、自定义 Markdown、整合包作者 Wiki 和 FTBQ Wiki 的可扩展来源说明；支持来源分类、语言回退、原始路径和正文跳转。
+- 增加 FTB Quests 静态任务定义、依赖、要求、奖励、候选下一步、阻塞原因和时间线；运行时玩家进度按任务问题读取，不写入全局知识库。
+- 增加 JEI 分阶段配方查询、熔炉处理时间、机器等级合并和物品名称 Shift 跳转；不复制 JEI 配方到数据库。
+- 增加 Jade/准星目标冻结与“插入”操作、当前语言物品目录、完整 Tooltip 上下文和 Ctrl 显示物品 ID。
+- 增加四种 AI API 格式、本地 `calculate` 工具、模型列表、连接测试、工具调用续接、Search-only 模式和 LangChain4j Community SQL 持久化上下文。
+- 增加三版本下载/功能矩阵、统一安装说明、整合包配置清理警告、SHA-256 校验和以及 GitHub Release/CurseForge 多文件发布工作流。
+
+### 删除或调整
+
+- 不再在游戏 Tick、渲染线程或客户端主线程执行全量物品 Tooltip 扫描、网络请求、SQLite 写入、任务全量序列化和 AI 请求。
+- 不再把配方全量导入知识库；配方事实改为 JEI 运行时按需查询。
+- 不再把手册框架 JAR 当作正文来源；只有实际内容模组、整合包作者 Wiki 或自定义 Markdown 才产生正文。
+- 1.20.1 和 1.12.2 代码分支不再重复维护 Pages、Release、CurseForge 和下载网页；`main` 是发布与 Pages 的唯一事实源。
+- 发布整合包时只保留 `config/modpedia/knowledge/` 原始来源，删除 `config/modpedia/runtime/`；用户级 `~/.modpedia/` 不进入整合包。
+
+### 修复
+
+- 修复启动器覆盖 `user.home` 导致 `ai.json`、Worker 库写入错误目录的问题，并保留旧配置/旧库迁移能力。
+- 修复 AI 首次请求、503/429、流式失败回退、孤立工具调用、协议差异和工具结果丢失导致的无响应或答非所问。
+- 修复 Markdown 标题、列表、代码、物品令牌、来源标注和正文内跳转按钮的显示及点击区域。
+- 修复 FTBQ 完成任务数量重复统计、进度只读链路、世界/维度归属、事件更新和时间线生成。
+- 修复 JEI 当前运行时入口、Shift 点击、物品名称回退和多等级机器重复展示。
+- 修复大型整合包物品目录造成的主线程卡顿、日志膨胀、Tooltip 异常重复输出和语言切换重复扫描。
+- 修复 Forge 1.20.1 与 1.12.2 兼容线的元数据、配置缓存、旧 API、实例路径和 Worker 嵌入问题。
+
+### 验证与资产
+
+- 三版本纯 Java 自测试和发布构建通过；发布前继续执行 `./gradlew test`、`./gradlew build` 和 `git diff --check`。
+- Release 资产：`modpedia-1.4.0-mc1.21.1-neoforge.jar`、`modpedia-1.4.0-mc1.20.1-forge.jar`、`modpedia-1.4.0-mc1.12.2-cleanroom.jar`、`SHA256SUMS`、安装说明和已知限制。
+- 详细的 v1.1.0 对比、来源支持和仍需人工回归项目见 [`docs/RELEASE_1.4.0.md`](docs/RELEASE_1.4.0.md)。
+
 ## v1.2.0-fix
 
 Worker 共享运行库和跨实例存储布局修复版本。

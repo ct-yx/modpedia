@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '要重新发布的版本标签，例如 v1.2.0-fix'
+        description: '要重新发布的版本标签，例如 v1.4.0'
         required: true
         type: string
 
@@ -18,20 +18,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout release tag
+      - name: Checkout release metadata
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0
-
-      - name: Setup JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          fetch-depth: 1
 
       - name: Resolve release metadata
         id: release-meta
@@ -64,15 +55,76 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$PROJECT_ID" || { echo '::error::Repository project ID variable is not configured'; exit 1; }
-          test -n "$API_TOKEN" || { echo '::error::Repository publishing secret is not configured'; exit 1; }
+          test -n "$PROJECT_ID" || { echo '::error::CurseForge project ID variable is not configured'; exit 1; }
+          test -n "$API_TOKEN" || { echo '::error::CurseForge API token secret is not configured'; exit 1; }
 
-      - name: Run tests and build
+      - name: Checkout NeoForge 1.21.1 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: mainline-1.21.1
+          path: source-1.21.1
+          fetch-depth: 1
+
+      - name: Checkout Forge 1.20.1 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: migration/forge-1.20.1
+          path: source-1.20.1
+          fetch-depth: 1
+
+      - name: Checkout Cleanroom 1.12.2 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: migration/1.12.2-common
+          path: source-1.12.2
+          fetch-depth: 1
+
+      - name: Checkout shared Worker source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refactor/worker-core
+          path: worker
+          fetch-depth: 1
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Worker and current versions
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
         run: |
-          ./gradlew test build
-          git diff --check
+          set -euo pipefail
+          (cd worker && ./gradlew clean build --no-daemon)
+          (cd source-1.21.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
+          (cd source-1.20.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
 
-      - name: Prepare release file and notes
+      - name: Setup JDK 17 for ForgeGradle 2.3
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Build Cleanroom 1.12.2 compatibility line
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+          WORKER_JAR: ${{ github.workspace }}/worker/build/libs/modpedia-1.2.0-fix.jar
+        working-directory: source-1.12.2
+        run: |
+          set -euo pipefail
+          test -f "$WORKER_JAR"
+          ./gradlew clean build --no-daemon -Pmod_version="$RELEASE_VERSION" -Pworker_jar="$WORKER_JAR"
+
+      - name: Prepare CurseForge files and release notes
         id: package
         env:
           RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
@@ -80,32 +132,55 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          jar_file="$(find build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' \
-            ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort | head -n 1)"
-          test -n "$jar_file"
           mkdir -p build/publish
-          publish_file="build/publish/modpedia-${RELEASE_VERSION}.jar"
-          cp "$jar_file" "$publish_file"
-          awk '
-            /^## / {
-              if (found) exit
-              found = 1
-            }
-            found { print }
-          ' CHANGELOG.md > build/publish/release-notes.md
+          neo="$(find source-1.21.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          forge="$(find source-1.20.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          legacy="$(find source-1.12.2/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          test -n "$neo"; test -n "$forge"; test -n "$legacy"
+          cp "$neo" "build/publish/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar"
+          cp "$forge" "build/publish/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar"
+          cp "$legacy" "build/publish/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar"
+          awk '/^## / { if (found) exit; found=1 } found { print }' CHANGELOG.md > build/publish/release-notes.md
           test -s build/publish/release-notes.md
           grep -Fxq "## ${RELEASE_TAG}" build/publish/release-notes.md
-          printf 'file=%s\n' "$publish_file" >> "$GITHUB_OUTPUT"
+          (cd build/publish && sha256sum *.jar > SHA256SUMS)
 
-      - name: Publish to CurseForge
+      - name: Publish NeoForge 1.21.1 file
         uses: Kira-NT/mc-publish@v3.3
         with:
           curseforge-id: ${{ vars.MODPEDIA || vars.CURSEFORGE_PROJECT_ID }}
           curseforge-token: ${{ secrets.MODPEDIA || secrets.CURSEFORGE_TOKEN }}
-          files: ${{ steps.package.outputs.file }}
-          name: ModPedia · 模组百科 ${{ steps.release-meta.outputs.version }}
-          version: ${{ steps.release-meta.outputs.version }}
-          version-type: ${{ steps.release-meta.outputs.version_type }}
-          changelog-file: build/publish/release-notes.md
-          loaders: neoforge
-          game-versions: 1.21.1
+          curseforge-files: build/publish/modpedia-${{ steps.release-meta.outputs.version }}-mc1.21.1-neoforge.jar
+          curseforge-name: ModPedia · 模组百科 ${{ steps.release-meta.outputs.version }} · NeoForge 1.21.1
+          curseforge-version: ${{ steps.release-meta.outputs.version }}
+          curseforge-version-type: ${{ steps.release-meta.outputs.version_type }}
+          curseforge-changelog-file: build/publish/release-notes.md
+          curseforge-loaders: neoforge
+          curseforge-game-versions: 1.21.1
+
+      - name: Publish Forge 1.20.1 file
+        uses: Kira-NT/mc-publish@v3.3
+        with:
+          curseforge-id: ${{ vars.MODPEDIA || vars.CURSEFORGE_PROJECT_ID }}
+          curseforge-token: ${{ secrets.MODPEDIA || secrets.CURSEFORGE_TOKEN }}
+          curseforge-files: build/publish/modpedia-${{ steps.release-meta.outputs.version }}-mc1.20.1-forge.jar
+          curseforge-name: ModPedia · 模组百科 ${{ steps.release-meta.outputs.version }} · Forge 1.20.1
+          curseforge-version: ${{ steps.release-meta.outputs.version }}
+          curseforge-version-type: ${{ steps.release-meta.outputs.version_type }}
+          curseforge-changelog-file: build/publish/release-notes.md
+          curseforge-loaders: forge
+          curseforge-game-versions: 1.20.1
+
+      - name: Publish Forge 1.12.2 / Cleanroom compatibility file
+        uses: Kira-NT/mc-publish@v3.3
+        with:
+          curseforge-id: ${{ vars.MODPEDIA || vars.CURSEFORGE_PROJECT_ID }}
+          curseforge-token: ${{ secrets.MODPEDIA || secrets.CURSEFORGE_TOKEN }}
+          curseforge-files: build/publish/modpedia-${{ steps.release-meta.outputs.version }}-mc1.12.2-cleanroom.jar
+          curseforge-name: ModPedia · 模组百科 ${{ steps.release-meta.outputs.version }} · Cleanroom 1.12.2
+          curseforge-version: ${{ steps.release-meta.outputs.version }}
+          curseforge-version-type: ${{ steps.release-meta.outputs.version_type }}
+          curseforge-changelog-file: build/publish/release-notes.md
+          # CurseForge 当前使用 Forge 1.12.2 的平台标记；该 JAR 的目标兼容线是 Cleanroom 0.3+。
+          curseforge-loaders: forge
+          curseforge-game-versions: 1.12.2
