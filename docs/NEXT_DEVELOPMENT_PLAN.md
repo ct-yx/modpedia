@@ -11,9 +11,9 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | **v1.2.0-fix** |
-| Minecraft / NeoForge | **1.21.1 / 21.1.x** |
-| Java | **21** |
+| 发布版本 | **v1.4.0** |
+| Minecraft / 加载器 | **1.21.1 NeoForge、1.20.1 Forge、1.12.2 Cleanroom 0.3+** |
+| Java | **游戏按版本；Worker 21** |
 | 知识库 | knowledge.db Schema v7 |
 | FTS | SQLite FTS5 external-content |
 | AI 上下文 | LangChain4j Community SQL + SQLite 适配层 |
@@ -597,7 +597,7 @@ Phase 3 可选导入 content_kind=external 的 FTS
 
 | 阶段 | 工作内容 | 状态 |
 | --- | --- | --- |
-| P0 | 固定当前 v1.2.0-fix/v7 基线、补齐指标和失败恢复夹具 | [~] |
+| P0 | 固定当前 v1.4.0/v7 基线、补齐指标和失败恢复夹具 | [~] |
 | P1 | 完成 Community SQL 的 SQLite 方言、会话迁移和同会话串行 | [~] |
 | P2 | 实现 v8 来源版本、构建批次、别名和内容类型预留 | [ ] |
 | P3 | 在真实整合包上做 v7/v8 staged 对照；证据充分后再启用 LZ4 | [ ] |

@@ -14,11 +14,10 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 发布版本 | `v1.2.0-fix` |
+| 发布版本 | `v1.4.0` |
 | GitHub 发布状态 | 正式发布，自动化门槛已完成 |
-| Minecraft | `1.21.1` |
-| NeoForge | `21.1.244` |
-| Java | `21` |
+| Minecraft / 加载器 | `1.21.1 NeoForge`、`1.20.1 Forge`、`1.12.2 Cleanroom 0.3+` |
+| Java | 游戏按版本；Worker Java 21 |
 | Mod ID | `modpedia` |
 | 包名 | `io.ctyx.modpedia` |
 | 作者 | `ctyx` |
@@ -29,7 +28,7 @@
 发布资产与校验文件位于：
 
 ```text
-https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
+https://github.com/ct-yx/modpedia/releases/tag/v1.4.0
 ```
 
 后续阶段、稳定版门槛和暂缓功能以[开发路线](ROADMAP.md)为准。Worker 独立 JVM 的基线、握手字段和迁移矩阵见[Worker 基线与兼容层](WORKER_BASELINE.md)。
@@ -77,7 +76,7 @@ https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
-- [~] Worker 使用 `worker-baseline-1`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
+- [~] Worker 使用 `worker-baseline-3`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
   具体基线、禁止依赖和迁移矩阵见 [docs/WORKER_BASELINE.md](WORKER_BASELINE.md)；可执行证据矩阵见
 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
 - [x] Worker 共享 lib 使用 `manifest.sha256`、SHA-256 指纹、跨进程文件锁和原子替换；客户端同步后，
@@ -193,9 +192,24 @@ git diff --check
 - [ ] `git diff --check` 无空白错误。
 - [ ] 改动涉及客户端时补做实际游戏截图；涉及服务端时补做 Dedicated Server 启动。
 
-## 7. v1.2.0-fix 发布清单
+## 7. v1.4.0 三版本发布清单
 
-- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.2.0-fix`。
+- [x] 对比 `v1.1.0` 整理三条加载器兼容线的新增、删除/调整、修复和已知边界。
+- [x] 构建 `modpedia-1.4.0-mc1.21.1-neoforge.jar`。
+- [x] 构建 `modpedia-1.4.0-mc1.20.1-forge.jar`。
+- [x] 构建 `modpedia-1.4.0-mc1.12.2-cleanroom.jar`。
+- [x] 三份 JAR 元数据统一为 `1.4.0`、`ModPedia · 模组百科` 和 Apache License 2.0。
+- [x] README、英文 README、安装说明、已知限制、知识库、架构、路线、网页和发布工作流同步更新。
+- [x] 网页下载区增加三版本功能矩阵和最后一行支持版本信息。
+- [x] `CHANGELOG.md` 顶部只保留 `v1.4.0` 当前发布段落，内容按新增、删除或调整、修复、验证与资产分组。
+- [~] 推送 `main`、创建 `v1.4.0` 标签并等待 GitHub Release/CurseForge Actions 完成。
+- [~] 三个目标加载器的大型整合包、Dedicated Server、真实手册跳转和低成本模型人工回归。
+
+详细对比和测试记录见 [`RELEASE_1.4.0.md`](RELEASE_1.4.0.md)。
+
+## 7.1 历史：v1.2.0-fix 发布清单
+
+- [x] `gradle.properties`、Mod 元数据、README、安装说明和发布页面统一为 `v1.4.0`。
 - [x] 对比 `v1.1.0` 整理四种 AI API 格式、模型列表/连接测试、分阶段 JEI 配方查询和本地 `calculate` 工具。
 - [x] 修复物品目标冻结、显式插入、原生选项页 `K` 拦截和 Tooltip 异常导致的扫描日志膨胀。
 - [x] 调整 Token 与历史证据压缩，保留当前检索事实、来源字段和标题路径。
@@ -347,7 +361,7 @@ shasum -a 256 -c SHA256SUMS
 
 `.github/workflows/publish-curseforge.yml` 与版本标签发布流程分开：推送 `v*` 标签时自动执行，
 需要重试时也可以通过 `workflow_dispatch` 输入已有标签。它会重新测试、构建并从当前版本的
-`CHANGELOG.md` 只提取一个版本段落，然后上传 NeoForge 1.21.1 的 Mod JAR。
+`CHANGELOG.md` 只提取当前标签的一个版本段落，然后从三条代码分支分别构建并上传 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2 的 Mod JAR。
 
 首次启用前，在仓库的 `Settings → Secrets and variables → Actions` 添加：
 
@@ -361,6 +375,6 @@ Repository secret:   MODPEDIA=<发布 API Token>
 
 - [ ] `MODPEDIA` Repository variable 与目标项目匹配。
 - [ ] `MODPEDIA` Repository secret 具有上传/发布权限且未写入任何文件。
-- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.2.0-fix`。
-- [ ] Action 的 `loaders` 为 `neoforge`、`game-versions` 为 `1.21.1`。
+- [ ] `CHANGELOG.md` 包含与标签完全一致的标题，例如 `## v1.4.0`。
+- [ ] 三个发布调用分别标记 `neoforge/1.21.1`、`forge/1.20.1`、`forge/1.12.2`；后者对应 Cleanroom 0.3+ 兼容线。
 - [ ] 首次发布后检查外部发布页的文件名、版本类型、更新日志和加载器信息。

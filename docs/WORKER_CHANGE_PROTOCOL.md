@@ -1,7 +1,8 @@
 # Worker 修改与版本适配协议
 
-本文是主仓库中 Worker 变更的入口。完整的 Worker Core 实现位于独立 Worker 仓库；
-Minecraft 版本分支只维护客户端适配层，不复制 Worker 业务逻辑。
+本文是主仓库中 Worker 变更的入口。完整的 Worker Core 实现在同一 GitHub 仓库的独立
+`refactor/worker-core` 分支/工作树中维护；Minecraft 版本分支只维护客户端适配层，不复制
+Worker 业务逻辑。以后若真正拆出独立仓库，仍沿用本协议的基线和适配摘要。
 
 ## 1. 什么时候需要走本协议
 
@@ -21,7 +22,7 @@ Minecraft 版本分支只维护客户端适配层，不复制 Worker 业务逻�
 
 ```text
 [WORKER_CHANGE_REQUEST]
-基线：worker-baseline-1
+基线：worker-baseline-3
 API level：1
 协议版本：WorkerProtocol.VERSION
 目标：<一句话说明需要的 Worker 能力>
@@ -56,12 +57,12 @@ API level：<数字>
 
 | 项目 | 当前值 |
 | --- | --- |
-| Worker 基线 | `worker-baseline-1` |
+| Worker 基线 | `worker-baseline-3` |
 | API level | `1` |
 | 协议 | `WorkerProtocol.VERSION = 1` |
-| 共享库 | `~/.modpedia/worker/lib/worker-baseline-1/` |
+| 共享库 | `~/.modpedia/worker/lib/worker-baseline-3/` |
 | 实例运行目录 | `config/modpedia/runtime/worker/` |
-| 当前客户端适配 | NeoForge 1.21.1 / Java 21 |
+| 当前客户端适配 | NeoForge 1.21.1 / Forge 1.20.1 / Cleanroom 0.3+；Worker Java 21 |
 
 共享库内容改变时先更新基线和清单，再修改客户端启动器。不能在不改编号的情况下覆盖
 已有基线目录，也不能把共享库、API Key、会话或运行日志提交到仓库。

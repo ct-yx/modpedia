@@ -8,72 +8,164 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: ${{ github.ref_name }}
+
 jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout release metadata
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve release version
+        id: release-meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "::error::Expected a version tag beginning with v: $tag"; exit 1 ;;
+          esac
+          version="${tag#v}"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout NeoForge 1.21.1 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: mainline-1.21.1
+          path: source-1.21.1
+          fetch-depth: 1
+
+      - name: Checkout Forge 1.20.1 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: migration/forge-1.20.1
+          path: source-1.20.1
+          fetch-depth: 1
+
+      - name: Checkout Cleanroom 1.12.2 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: migration/1.12.2-common
+          path: source-1.12.2
+          fetch-depth: 1
+
+      - name: Checkout shared Worker source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refactor/worker-core
+          path: worker
+          fetch-depth: 1
 
       - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'temurin'
+          distribution: temurin
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run tests and build
-        run: |
-          ./gradlew test build
-          git diff --check
+      - name: Build shared Worker package
+        working-directory: worker
+        run: ./gradlew clean build --no-daemon
 
-      - name: Create checksums
+      - name: Build NeoForge 1.21.1
+        working-directory: source-1.21.1
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+        run: ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION"
+
+      - name: Build Forge 1.20.1
+        working-directory: source-1.20.1
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+        run: ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION"
+
+      - name: Setup JDK 17 for ForgeGradle 2.3
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Build Cleanroom 1.12.2 compatibility line
+        working-directory: source-1.12.2
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+          WORKER_JAR: ${{ github.workspace }}/worker/build/libs/modpedia-1.2.0-fix.jar
+        run: |
+          test -f "$WORKER_JAR"
+          ./gradlew clean build --no-daemon -Pmod_version="$RELEASE_VERSION" -Pworker_jar="$WORKER_JAR"
+
+      - name: Validate source formatting
+        run: |
+          set -euo pipefail
+          git diff --check
+          git -C source-1.21.1 diff --check
+          git -C source-1.20.1 diff --check
+          git -C source-1.12.2 diff --check
+
+      - name: Stage release assets
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
         shell: bash
         run: |
-          jar_file="$(find build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort | head -n 1)"
-          test -n "$jar_file"
-          jar_name="$(basename "$jar_file")"
-          printf '%s  %s\n' "$(sha256sum "$jar_file" | awk '{print $1}')" "$jar_name" > SHA256SUMS
-          printf '%s\n' "$jar_file" > release-jar-path.txt
+          set -euo pipefail
+          test "$RELEASE_VERSION" = "${GITHUB_REF_NAME#v}"
+          mkdir -p build/release
+          neo="$(find source-1.21.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          forge="$(find source-1.20.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          legacy="$(find source-1.12.2/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          test -n "$neo"; test -n "$forge"; test -n "$legacy"
+          cp "$neo" "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar"
+          cp "$forge" "build/release/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar"
+          cp "$legacy" "build/release/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar"
+          grep -q 'version="'"$RELEASE_VERSION"'"' <(unzip -p "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar" META-INF/neoforge.mods.toml)
+          grep -q 'version="'"$RELEASE_VERSION"'"' <(unzip -p "build/release/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar" META-INF/mods.toml)
+          grep -q '"version": "'"$RELEASE_VERSION"'"' <(unzip -p "build/release/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar" mcmod.info)
+          (cd build/release && sha256sum *.jar > SHA256SUMS)
+          cat build/release/SHA256SUMS
 
       - name: Prepare current release notes
         shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
         run: |
-          awk '
-            /^## / {
-              if (found) {
-                exit
-              }
-              found = 1
-            }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
+          set -euo pipefail
+          awk '/^## / { if (found) exit; found=1 } found { print }' CHANGELOG.md > release-notes.md
           test -s release-notes.md
-          grep -Fxq "## ${GITHUB_REF_NAME}" release-notes.md
+          grep -Fxq "## ${RELEASE_TAG}" release-notes.md
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
         shell: bash
         run: |
-          jar_file="$(cat release-jar-path.txt)"
+          set -euo pipefail
           release_args=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+          if [[ "$RELEASE_TAG" == *-* ]]; then
             release_args+=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "ModPedia · 模组百科 $GITHUB_REF_NAME" \
+            --title "ModPedia · 模组百科 $RELEASE_TAG" \
             --notes-file release-notes.md \
             "${release_args[@]}" \
-            "$jar_file" \
-            SHA256SUMS \
+            build/release/*.jar \
+            build/release/SHA256SUMS \
             CHANGELOG.md \
             INSTALL.md \
             KNOWN_LIMITATIONS.md \

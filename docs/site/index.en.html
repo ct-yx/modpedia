@@ -27,11 +27,11 @@
     <main id="top">
       <section class="hero section-grid">
         <div class="hero-copy">
-          <p class="eyebrow">Minecraft · NeoForge 1.21.1</p>
+          <p class="eyebrow">Minecraft · Three compatibility lines</p>
           <h1>Your modpack knowledge, <span>always within reach.</span></h1>
           <p class="hero-lede">ModPedia is a local mod knowledge assistant for large Minecraft modpacks. It reads manuals from installed mods, builds a searchable local knowledge base, and can connect to your configured AI to organize answers.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#downloads">Download v1.2.0-fix</a>
+            <a class="button button-primary" href="#downloads">Download v1.4.0</a>
             <a class="button button-support" href="#support">Support the project <span aria-hidden="true">♡</span></a>
             <a class="button button-quiet" href="https://github.com/ct-yx/modpedia" target="_blank" rel="noreferrer">View source <span aria-hidden="true">↗</span></a>
           </div>
@@ -116,7 +116,7 @@
           <h2>Start in three steps.</h2>
         </div>
         <div class="steps-grid">
-          <div class="step"><span class="step-number">01</span><h3>Prepare</h3><p>Minecraft 1.21.1, NeoForge 21.1.x, and Java 21.</p></div>
+          <div class="step"><span class="step-number">01</span><h3>Prepare</h3><p>Choose Minecraft 1.21.1/NeoForge, 1.20.1/Forge, or 1.12.2/Cleanroom to match the download.</p></div>
           <div class="step"><span class="step-number">02</span><h3>Install the Mod</h3><p>Put the ModPedia JAR in the instance <code>mods/</code> directory.</p></div>
           <div class="step"><span class="step-number">03</span><h3>Open the Assistant</h3><p>Wait for the loading-screen prefill, enter the game, and press <kbd>K</kbd>; use <kbd>F9</kbd> for a rebuild.</p></div>
         </div>
@@ -146,16 +146,47 @@
       <section id="downloads" class="download-section">
         <div class="download-copy">
           <p class="eyebrow">LATEST RELEASE</p>
-          <h2>ModPedia <span>v1.2.0-fix</span></h2>
-          <p>The current official GitHub release for Minecraft 1.21.1 + NeoForge 21.1.x.</p>
-          <div class="release-meta"><span>Java 21</span><span>Client Mod</span><span>Search-only mode</span><span>Worker baseline 1</span></div>
-          <p class="download-security-note"><strong>Local key protection:</strong> the AI settings file stores only AES-GCM ciphertext derived from the system identifier. The game decrypts it in memory; logs never record the API key, and a changed system identifier clears the key field.</p>
+          <h2>ModPedia <span>v1.4.0</span></h2>
+          <p>Three compatibility lines ship together: NeoForge 1.21.1, Forge 1.20.1, and the Cleanroom 0.3+ / 1.12.2 compatibility line.</p>
+          <div class="release-meta"><span>Three JARs</span><span>Separate Worker JVM</span><span>Search-only</span><span>Apache 2.0</span></div>
+          <p class="download-security-note"><strong>Local key protection:</strong> AI settings store AES-GCM ciphertext derived from a system identifier in the user directory; the game decrypts it in memory and logs never record the API key. Do not copy user-level settings or Worker libraries into a modpack.</p>
         </div>
         <div class="download-actions">
-          <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.2.0-fix/modpedia-1.2.0-fix.jar">Download Mod JAR <span aria-hidden="true">↓</span></a>
-          <a class="text-link" href="https://github.com/ct-yx/modpedia/releases/tag/v1.2.0-fix" target="_blank" rel="noreferrer">View Release assets and checksums ↗</a>
+          <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.4.0/modpedia-1.4.0-mc1.21.1-neoforge.jar">Download 1.21.1 NeoForge <span aria-hidden="true">↓</span></a>
+          <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.4.0/modpedia-1.4.0-mc1.20.1-forge.jar">Download 1.20.1 Forge <span aria-hidden="true">↓</span></a>
+          <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.4.0/modpedia-1.4.0-mc1.12.2-cleanroom.jar">Download 1.12.2 Cleanroom <span aria-hidden="true">↓</span></a>
+          <a class="text-link" href="https://github.com/ct-yx/modpedia/releases/tag/v1.4.0" target="_blank" rel="noreferrer">View Release assets and SHA-256 ↗</a>
           <a class="text-link" href="https://github.com/ct-yx/modpedia/blob/main/INSTALL.md" target="_blank" rel="noreferrer">Read the installation guide ↗</a>
-          <a class="text-link" href="https://github.com/ct-yx/modpedia/blob/main/docs/RELEASE_AND_PAGES.md" target="_blank" rel="noreferrer">Read release and Pages maintenance notes ↗</a>
+          <a class="text-link" href="https://github.com/ct-yx/modpedia/blob/main/docs/RELEASE_1.4.0.md" target="_blank" rel="noreferrer">Read the v1.4.0 comparison ↗</a>
+        </div>
+      </section>
+
+      <section id="feature-matrix" class="feature-matrix-section" aria-labelledby="feature-matrix-title">
+        <div class="section-heading compact-heading">
+          <p class="eyebrow">FEATURE MATRIX</p>
+          <h2 id="feature-matrix-title">Three version lines, one clear view.</h2>
+          <p>✓ means the adapter is included in that build; — means the feature is not provided by that line or requires the target mod separately.</p>
+        </div>
+        <div class="feature-matrix-scroll">
+          <table class="feature-matrix">
+            <thead><tr><th scope="col">Feature</th><th scope="col">1.21.1<br><small>NeoForge</small></th><th scope="col">1.20.1<br><small>Forge</small></th><th scope="col">1.12.2<br><small>Cleanroom 0.3+</small></th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Local manuals, SQLite / FTS5</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr><th scope="row">Patchouli books</th><td>✓</td><td>✓</td><td>✓ 1.12 API</td></tr>
+              <tr><th scope="row">GuideME / Guide-API</th><td>✓</td><td>✓</td><td>✓ legacy</td></tr>
+              <tr><th scope="row">Modonomicon / APP JSON</th><td>✓</td><td>✓</td><td>—</td></tr>
+              <tr><th scope="row">Custom Markdown / Wiki sources</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr><th scope="row">Four AI APIs and Search-only</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr><th scope="row">Separate Worker JVM / isolated writes</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr><th scope="row">Item catalog, Tooltips, Ctrl ID view</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr><th scope="row">FTBQ static tasks and on-demand progress</th><td>✓</td><td>✓</td><td>✓ legacy</td></tr>
+              <tr><th scope="row">JEI recipe queries and Shift navigation</th><td>✓</td><td>✓</td><td>✓ legacy</td></tr>
+              <tr><th scope="row">Jade integration</th><td>✓</td><td>✓</td><td>—</td></tr>
+              <tr><th scope="row">Crosshair / Tooltip target freeze and insert</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr><th scope="row">Inline citations and manual navigation</th><td>✓</td><td>✓</td><td>✓</td></tr>
+              <tr class="matrix-support"><th scope="row">Supported versions</th><td>Minecraft 1.21.1<br>NeoForge 21.1.x<br>Java 21</td><td>Minecraft 1.20.1<br>Forge 47.x<br>Java 21</td><td>Minecraft 1.12.2<br>Cleanroom 0.3+ line<br>game Java 8 / Worker 21</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -182,7 +213,7 @@
               <li><code>config/modpedia/runtime/knowledge/keyword-index.json</code></li>
               <li><code>config/modpedia/runtime/knowledge/state.json</code></li>
             </ul>
-            <p class="release-warning-note">The user-level <code>~/.modpedia/ai.json</code> and <code>~/.modpedia/worker/lib/worker-baseline-1/</code> live outside each game instance and are shared between instances. They are not part of a modpack and must not be copied.</p>
+            <p class="release-warning-note">The user-level <code>~/.modpedia/ai.json</code> and <code>~/.modpedia/worker/lib/worker-baseline-3/</code> live outside each game instance and are shared between instances. They are not part of a modpack and must not be copied.</p>
           </div>
           <div class="release-warning-folder release-warning-folder-keep">
             <div class="release-warning-folder-path"><span>02</span><strong>Keep</strong><code>knowledge/</code></div>

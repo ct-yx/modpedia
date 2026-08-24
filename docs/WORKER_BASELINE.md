@@ -1,19 +1,20 @@
 # Worker 基线与兼容层
 
 本文件定义独立 Worker 与 Minecraft 客户端适配层之间的稳定边界。当前基线为
-`worker-baseline-1`，只适用于本仓库当前的 NeoForge 1.21.1 客户端适配层；它不是
+`worker-baseline-3`，由 NeoForge 1.21.1、Forge 1.20.1 和 Cleanroom 0.3+ / 1.12.2
+兼容线复用；它不是
 新的运行库目录，也不替代 `config/modpedia/runtime/` 的实例级状态。
 
 ## 1. 当前基线
 
 | 项目 | 值 |
 | --- | --- |
-| Worker 基线 | `worker-baseline-1` |
+| Worker 基线 | `worker-baseline-3` |
 | Worker API level | `1` |
 | JSONL 协议 | `WorkerProtocol.VERSION = 1` |
-| Minecraft | `1.21.1` |
-| NeoForge | `21.1.244` |
-| Java | `21` |
+| 客户端适配 | `1.21.1 NeoForge`、`1.20.1 Forge`、`1.12.2 Cleanroom 0.3+` |
+| 游戏 Java | 1.21.1/1.20.1 为 `21`；1.12.2 目标游戏为 `8` |
+| Worker Java | `21` |
 | SQLite JDBC | `3.53.2.1` |
 | LangChain4j | `1.18.1` |
 | LangChain4j Community SQL | `1.18.0-beta28` |
@@ -24,7 +25,7 @@
 共享依赖库位于：
 
 ```text
-~/.modpedia/worker/lib/worker-baseline-1/
+~/.modpedia/worker/lib/worker-baseline-3/
 ```
 
 同一基线可以被不同 ModPedia 版本和不同游戏实例复用。实例自己的 Worker JAR、
@@ -33,7 +34,7 @@ IPC 载荷、日志、会话和知识库仍然位于实例运行目录，不放�
 共享目录同时维护：
 
 ```text
-~/.modpedia/worker/lib/worker-baseline-1/manifest.sha256
+~/.modpedia/worker/lib/worker-baseline-3/manifest.sha256
 ```
 
 启动 Worker 前，客户端从当前发布 JAR 的 `META-INF/jarjar/*.jar` 计算 SHA-256，
@@ -62,9 +63,9 @@ Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用
 {
   "protocol_version": 1,
   "worker_api_level": 1,
-  "worker_baseline": "worker-baseline-1",
-  "client_adapter": "neoforge-1.21.1",
-  "client_java": "21",
+  "worker_baseline": "worker-baseline-3",
+  "client_adapter": "neoforge-1.21.1 | forge-1.20.1 | cleanroom-1.12.2",
+  "client_java": "21 | 21 | 8",
   "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
 }
 ```
@@ -75,7 +76,7 @@ Worker 返回 `hello_ack` 时包含：
 {
   "accepted": true,
   "worker_api_level": 1,
-  "worker_baseline": "worker-baseline-1",
+  "worker_baseline": "worker-baseline-3",
   "worker_java": "21",
   "worker_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
 }
@@ -119,9 +120,11 @@ io.ctyx.modpedia.client.*
 
 | 客户端适配层 | Worker 基线 | Java | 状态 | 必须验证 |
 | --- | --- | --- | --- | --- |
-| NeoForge 1.21.1 | `worker-baseline-1` | 21 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
-| 未来 Minecraft 版本 + 新适配层 | `worker-baseline-1` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
-| 未来 Worker API/依赖变化 | `worker-baseline-2+` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
+| NeoForge 1.21.1 | `worker-baseline-3` | 21 | `[~]` | 编译、独立启动、握手、SQLite/FTS、Mock AI、知识扫描、任务文件读取 |
+| Forge 1.20.1 | `worker-baseline-3` | 21 | `[~]` | 编译、握手、SQLite/FTS、AI Mock、可选联动和服务端隔离 |
+| Cleanroom 0.3+ / 1.12.2 | `worker-baseline-3` | Worker 21 | `[~]` | 旧客户端适配、Worker 嵌入、握手、知识扫描、任务和 JEI 回归 |
+| 未来 Minecraft 版本 + 新适配层 | `worker-baseline-3` | 21 | `[ ]` | 仅在协议、API 和依赖未变化时复用；补客户端回归 |
+| 未来 Worker API/依赖变化 | `worker-baseline-N` | 21 | `[ ]` | 新旧基线隔离、迁移说明、IPC 全链路回归 |
 
 状态含义：
 
