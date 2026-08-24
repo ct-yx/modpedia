@@ -14,8 +14,8 @@
 | `modpedia-1.4.0-mc1.20.1-forge.jar` | 1.20.1 | Forge 47.x | 21 | `worker-baseline-3` | `[x]` |
 | `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 | Cleanroom 0.3+ 兼容线（Forge 1.12.2 API） | 游戏 Java 8；Worker Java 21 | `worker-baseline-3` | `[x]` |
 
-> 1.12.2 构建使用 Java 17 运行 ForgeGradle 2.3 完成编译；玩家运行时仍按目标加载器要求使用
-> 游戏 Java 8，独立 Worker 使用 Java 21。
+> 1.12.2 的 ForgeGradle 2.3/Pack200 发布构建使用 Java 8；玩家运行时仍按目标加载器要求使用
+> 游戏 Java 8，独立 Worker 使用 Java 21。Java 17 及更高版本移除了该旧构建所需的 Pack200 API。
 
 ## 相对 v1.1.0 的新增
 

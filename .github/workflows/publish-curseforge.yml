@@ -108,10 +108,10 @@ jobs:
           (cd source-1.21.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
           (cd source-1.20.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
 
-      - name: Setup JDK 17 for ForgeGradle 2.3
+      - name: Setup JDK 8 for ForgeGradle 2.3 and Pack200
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '8'
           distribution: temurin
 
       - name: Build Cleanroom 1.12.2 compatibility line
