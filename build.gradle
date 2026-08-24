@@ -150,6 +150,12 @@ task legacyItemCatalogProgressSelfTest(type: JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
 }
 
+task legacyItemCatalogCacheSelfTest(type: JavaExec) {
+    dependsOn testClasses
+    main = 'io.ctyx.modpedia.client.LegacyItemCatalogCacheSelfTest'
+    classpath = sourceSets.test.runtimeClasspath
+}
+
 task userModPediaPathsSelfTest(type: JavaExec) {
     dependsOn testClasses
     main = 'io.ctyx.modpedia.storage.UserModPediaPathsSelfTest'
@@ -216,6 +222,7 @@ test.dependsOn manualCatalogSelfTest,
         legacyPanelLayoutSelfTest,
         legacyCatalogCaptureGateSelfTest,
         legacyItemCatalogProgressSelfTest,
+        legacyItemCatalogCacheSelfTest,
         userModPediaPathsSelfTest,
         legacyRuntimeMaterialFactsReaderSelfTest,
         legacyItemTooltipFormatterSelfTest,

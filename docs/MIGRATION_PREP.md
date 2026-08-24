@@ -94,8 +94,9 @@ Worker 依赖发生不兼容变化时才递增基线。
 发布 Mod JAR 内嵌 Worker 包，启动 Worker 前会将 Worker 包及两类隔离依赖提取到用户级
 基线目录；后者用于 Worker 专用 Gson，保持在 Worker 类路径中。
 
-当前共享 Worker 构建来自 `modpedia-worker` 提交 `3e77dd0`。该提交修复了独立
-Worker 的 SLF4J 隔离；协议版本、API level 保持原值，基线更新为 `worker-baseline-3`。
+当前共享 Worker 构建来自 `modpedia-worker` 的已发布基线，包含独立 Worker 的 SLF4J
+隔离；协议版本、API level 和基线保持原值。1.12.2 的名称缓存判断暂时由 Mod 内置
+代码完成，后续再同步到 Worker 和其他游戏版本。
 
 ## 当前启动顺序
 
@@ -113,6 +114,19 @@ Worker 的 SLF4J 隔离；协议版本、API level 保持原值，基线更新�
 - 目标加载器 `0.3+` 的真实客户端/服务端启动；当前只保证公共 Forge 1.12.2 API
   编译和无专用 API 设计。
 - 用户级 `~/.modpedia/worker/lib/worker-baseline-3/` 中实际放置 Java 21 Worker
+
+## 物品名称缓存启动策略
+
+客户端不会在每次进入游戏实例时无条件重新创建和发送全部 ItemStack。注册表完成后，
+先按当前语言生成稳定的注册表 ID 指纹，在 Mod 内置的实例缓存中校验
+`item-catalog-state.json` 与 `item-catalog-names.jsonl`。命中时客户端直接读取名称文件，
+跳过物品捕获和 IPC 目录同步；按需读取的 metadata/Tooltip 额外条目不会使基础目录缓存
+失配。此阶段继续复用 `worker-baseline-3` 的既有 Worker 协议。
+
+只有状态缺失、语言变化、注册表指纹变化或条目数量变化时，才在进入世界前分批捕获
+基础名称。扫描期间只使用临时载荷，最终完整快照同步成功后才原子写入名称文件和状态
+文件；不再用累计前缀覆盖上一份完整 `item_catalog`。Worker 数据库校验与缓存状态协议
+暂缓到下一次 Worker 基线同步。
   后的握手、SQLite/FTS、AI 请求、会话和重建耗时。
 - 真实大型整合包中的来源跳转、旧页型完整度、物品 Tooltip 数量和配方布局。
 - 多人服务器：1.12.2 客户端不能读取远程服务器磁盘；服务端安装本 Mod 时，登录、换维度、

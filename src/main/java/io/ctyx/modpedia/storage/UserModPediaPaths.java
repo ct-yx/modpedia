@@ -4,7 +4,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Locale;
 
-/** 1.12.2 适配层使用的用户级 Worker/配置路径。 */
+/** 1.12.2 适配层的用户级共享路径和实例级数据路径。 */
 public final class UserModPediaPaths {
     private final Path userRoot;
     private final Path instanceConfig;
@@ -47,8 +47,13 @@ public final class UserModPediaPaths {
         return userRoot.resolve("ai.json");
     }
 
-    public Path conversations() {
-        return userRoot.resolve("conversations");
+    /**
+     * 当前游戏实例的持久化会话目录。
+     *
+     * <p>会话包含整合包专属的物品 ID、来源和知识库上下文，因此不与其他实例共享。</p>
+     */
+    public Path instanceConversations() {
+        return instanceRuntimeRoot().resolve("conversations");
     }
 
     public Path workerLibraryRoot() {
@@ -74,6 +79,11 @@ public final class UserModPediaPaths {
         // 物理路径，否则客户端虽然成功写入 JSONL，Worker 会在路径校验
         // 阶段拒绝读取，最终 item_catalog 保持为空。
         return instanceWorkerRoot().resolve("payloads");
+    }
+
+    /** 客户端名称缓存与 Worker 的实例知识库共用目录，但不进入正式 SQLite。 */
+    public Path itemCatalogCacheRoot() {
+        return instanceRuntimeRoot().resolve("knowledge");
     }
 
     private static String firstNonBlank(String... values) {

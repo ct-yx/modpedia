@@ -70,11 +70,11 @@ public final class ClientProxy extends CommonProxy {
                 workerReady = true;
                 requestKnowledgeRebuild();
                 LegacyItemCatalogSyncService.get().trySubmitPending();
-                LegacyItemCatalogSyncService.get().trySubmitCurrentSnapshot();
             }
         });
-        // 物品注册表已经完成；捕获只在主菜单阶段分批进行，不在游戏世界中扫描。
-        LegacyItemCatalogSyncService.get().start();
+        // 物品注册表已经完成；先查询当前实例的名称缓存，只有缓存未命中时
+        // 才在进入世界前分批捕获，不在游戏世界中扫描。
+        LegacyItemCatalogSyncService.get().start(configDirectory);
     }
 
     private void requestKnowledgeRebuild() {

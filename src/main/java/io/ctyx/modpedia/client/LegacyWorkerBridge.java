@@ -387,7 +387,7 @@ public final class LegacyWorkerBridge {
         command.add("--content");
         command.add(configDirectory.resolve("modpedia/knowledge").toString());
         command.add("--conversations");
-        command.add(paths.conversations().toString());
+        command.add(paths.instanceConversations().toString());
         command.add("--settings");
         command.add(paths.aiSettings().toString());
         Path log = paths.instanceWorkerRoot().resolve("worker.log");
