@@ -51,7 +51,6 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -109,13 +108,15 @@ public final class WorkerServer {
     /** 只保留当前存档的上一次进度，用于给无历史日志的 task_progress 补时间线。 */
     private final TaskTimelineTracker runtimeTimelineTracker = new TaskTimelineTracker();
     private final WorkerRequestCancellation requestCancellation = new WorkerRequestCancellation();
-    private final AtomicLong conversationRevision = new AtomicLong();
+    /** 每会话持久化的有限事件窗口；v2 resume 只在客户端声明能力后启用。 */
+    private final ConversationEventLog conversationEvents;
     private final Object writeLock = new Object();
     private volatile boolean running = true;
     /** 旧客户端没有该可选能力时，物品查询直接使用静态 item_catalog。 */
     private volatile boolean clientSupportsRuntimeItemContext;
     /** 没有材料事实读取器时，模型不得从名称推导部件兼容性。 */
     private volatile boolean clientSupportsRuntimeMaterialFacts;
+    private volatile boolean clientSupportsConversationResume;
     private BufferedWriter writer;
     /** 当前连接使用的线协议版本；v1 客户端要求所有后续事件回显 v1。 */
     private volatile int wireProtocolVersion = WorkerProtocol.VERSION;
@@ -139,6 +140,7 @@ public final class WorkerServer {
         this.contentRoot = contentRoot.toAbsolutePath().normalize();
         this.conversationsRoot = conversationsRoot.toAbsolutePath().normalize();
         this.settingsPath = settingsPath.toAbsolutePath().normalize();
+        this.conversationEvents = new ConversationEventLog(this.conversationsRoot);
     }
 
     public void run() throws IOException {
@@ -246,6 +248,11 @@ public final class WorkerServer {
                 hello,
                 WorkerProtocol.RUNTIME_MATERIAL_FACTS_CAPABILITY
         );
+        clientSupportsConversationResume = valid && requestedProtocol == WorkerProtocol.VERSION
+                && WorkerCompatibility.supportsOptionalCapability(
+                hello,
+                WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
+        );
         JsonObject response = WorkerProtocol.message(
                 WorkerProtocol.HELLO_ACK,
                 WorkerProtocol.string(hello, "request_id")
@@ -330,7 +337,7 @@ public final class WorkerServer {
                     () -> testAllModels(message, requestId)
             );
             case WorkerProtocol.CONVERSATION_LIST -> sendConversationState("list", requestId);
-            case WorkerProtocol.CONVERSATION_RESUME -> sendConversationState("resume", requestId);
+            case WorkerProtocol.CONVERSATION_RESUME -> sendConversationResume(message, requestId);
             case WorkerProtocol.CONVERSATION_NEW -> submitOperation(requestId, () -> {
                 conversationStore.create();
                 sendConversationState("new", requestId);
@@ -353,11 +360,15 @@ public final class WorkerServer {
                 sendConversationState("rename", requestId);
             });
             case WorkerProtocol.CONVERSATION_DELETE -> submitOperation(requestId, () -> {
-                conversationStore.delete(WorkerProtocol.string(message, "conversation_id"));
+                String conversationId = WorkerProtocol.string(message, "conversation_id");
+                conversationStore.delete(conversationId);
+                conversationEvents.delete(conversationId);
                 sendConversationState("delete", requestId);
             });
             case WorkerProtocol.CONVERSATION_CLEAR -> submitOperation(requestId, () -> {
+                String previousConversationId = conversationStore.activeId();
                 conversationStore.create();
+                conversationEvents.delete(previousConversationId);
                 sendConversationState("clear", requestId);
             });
             case WorkerProtocol.SHUTDOWN -> {
@@ -1175,15 +1186,82 @@ public final class WorkerServer {
     }
 
     private void sendConversationState(String operation, String requestId) {
+        sendConversationSnapshot(operation, requestId, "");
+    }
+
+    /**
+     * 处理 v2 的会话断线恢复。只有显式声明 conversation_resume 的客户端才会
+     * 收到事件重放；v1、旧 v2 或历史窗口不可用时始终回退受控快照。
+     */
+    private void sendConversationResume(JsonObject request, String requestId) {
         if (conversationStore == null) {
             return;
         }
+        if (!clientSupportsConversationResume) {
+            JsonObject snapshot = conversationSnapshot("resume", requestId, "");
+            snapshot.addProperty("resume_downgraded", true);
+            sendQuietly(snapshot);
+            return;
+        }
+        String conversationId = WorkerProtocol.string(request, "conversation_id");
+        if (conversationId.isBlank()) {
+            conversationId = conversationStore.activeId();
+        }
+        long afterRevision = WorkerProtocol.longValue(request, "last_revision",
+                WorkerProtocol.longValue(request, "since_revision", 0L));
+        ConversationEventLog.ReplayResult replay = conversationEvents.replay(
+                conversationId, afterRevision);
+        if (!replay.available()) {
+            JsonObject snapshot = conversationSnapshot("resume", requestId, replay.reason());
+            snapshot.addProperty("resume_fallback", true);
+            sendQuietly(snapshot);
+            return;
+        }
+        for (JsonObject original : replay.events()) {
+            if (WorkerProtocol.utf8Length(original.toString())
+                    > WorkerProtocol.MAX_JSONL_LINE_BYTES) {
+                JsonObject snapshot = conversationSnapshot("resume", requestId, "event_too_large");
+                snapshot.addProperty("resume_fallback", true);
+                sendQuietly(snapshot);
+                return;
+            }
+            JsonObject event = original.deepCopy();
+            String originalType = WorkerProtocol.string(event, "type");
+            event.addProperty("type", WorkerProtocol.CONVERSATION_EVENT);
+            event.addProperty("event_type", originalType);
+            event.addProperty("request_id", requestId);
+            event.addProperty("replay", true);
+            event.addProperty("snapshot", false);
+            sendQuietly(event);
+        }
+        JsonObject complete = WorkerProtocol.message(WorkerProtocol.CONVERSATION_EVENT, requestId);
+        complete.addProperty("conversation_id", conversationId);
+        complete.addProperty("event_type", "resume_complete");
+        complete.addProperty("replay", true);
+        complete.addProperty("snapshot", false);
+        complete.addProperty("revision", replay.latestRevision());
+        complete.addProperty("events_replayed", replay.events().size());
+        sendQuietly(complete);
+    }
+
+    private void sendConversationSnapshot(String operation, String requestId, String fallbackReason) {
+        if (conversationStore == null) {
+            return;
+        }
+        JsonObject event = conversationSnapshot(operation, requestId, fallbackReason);
+        sendQuietly(event);
+    }
+
+    private JsonObject conversationSnapshot(String operation, String requestId, String fallbackReason) {
         ConversationRecord active = conversationStore.active();
+        String activeId = conversationStore.activeId();
         JsonObject event = WorkerProtocol.message(WorkerProtocol.CONVERSATION_STATE, requestId);
         event.addProperty("operation", operation);
-        event.addProperty("revision", conversationRevision.incrementAndGet());
+        event.addProperty("conversation_id", activeId);
         event.addProperty("snapshot", true);
-        event.addProperty("active_conversation_id", conversationStore.activeId());
+        long latestRevision = conversationEvents.latestRevision(activeId);
+        event.addProperty("revision", latestRevision);
+        event.addProperty("active_conversation_id", activeId);
         event.addProperty("active_title", active.title());
         JsonArray messages = new JsonArray();
         active.messages().forEach(message -> messages.add(WorkerPayloadCodec.chatMessage(message)));
@@ -1200,7 +1278,10 @@ public final class WorkerServer {
         if (truncated) {
             event.addProperty("truncated", true);
         }
-        sendQuietly(event);
+        if (fallbackReason != null && !fallbackReason.isBlank()) {
+            event.addProperty("resume_fallback_reason", fallbackReason);
+        }
+        return event;
     }
 
     void send(JsonObject message) throws IOException {
@@ -1211,11 +1292,79 @@ public final class WorkerServer {
             if (writer == null) {
                 throw new IOException("Worker 输出未初始化");
             }
-            if (wireProtocolVersion == WorkerProtocol.LEGACY_VERSION) {
-                message.addProperty("protocol_version", WorkerProtocol.LEGACY_VERSION);
+            JsonObject outbound = boundOutboundMessage(message);
+            if (shouldRecordConversationEvent(outbound)) {
+                if (clientSupportsConversationResume) {
+                    JsonObject delta = conversationDelta(outbound);
+                    JsonObject recorded = conversationEvents.append(
+                            WorkerProtocol.string(delta, "conversation_id"), delta);
+                    outbound.addProperty("revision", WorkerProtocol.longValue(recorded, "revision", 0L));
+                    outbound.addProperty("delta", true);
+                    outbound.addProperty("snapshot", false);
+                    outbound.add("conversation_delta",
+                            recorded.getAsJsonObject("conversation_delta").deepCopy());
+                } else {
+                    // 兼容未声明能力的旧客户端：保留历史快照语义，只在 Worker 内部
+                    // 持久化缩减后的事件，供同一 v2 能力会话的 resume 请求使用。
+                    conversationEvents.append(
+                            WorkerProtocol.string(outbound, "conversation_id"),
+                            conversationDelta(outbound));
+                }
             }
-            WorkerProtocol.write(writer, boundOutboundMessage(message));
+            if (wireProtocolVersion == WorkerProtocol.LEGACY_VERSION) {
+                outbound.addProperty("protocol_version", WorkerProtocol.LEGACY_VERSION);
+            }
+            WorkerProtocol.write(writer, outbound);
         }
+    }
+
+    private boolean shouldRecordConversationEvent(JsonObject message) {
+        String conversationId = WorkerProtocol.string(message, "conversation_id");
+        if (conversationId.isBlank()) {
+            return false;
+        }
+        String type = WorkerProtocol.string(message, "type");
+        if (WorkerProtocol.CONVERSATION_EVENT.equals(type)) {
+            return false;
+        }
+        if (WorkerProtocol.CONVERSATION_STATE.equals(type)) {
+            String operation = WorkerProtocol.string(message, "operation");
+            return !operation.isBlank()
+                    && !"startup".equals(operation)
+                    && !"list".equals(operation)
+                    && !"resume".equals(operation);
+        }
+        // completed/error 携带会话变化后的消息快照；状态、流式增量和工具事件不
+        // 改变会话历史，不应污染有限事件窗口。
+        return message.has("messages")
+                && (WorkerProtocol.COMPLETED.equals(type)
+                || WorkerProtocol.ERROR.equals(type));
+    }
+
+    /** 事件日志只存发生变化的消息和会话元数据，不复制整个历史消息数组。 */
+    private JsonObject conversationDelta(JsonObject message) {
+        JsonObject delta = WorkerProtocol.message(
+                WorkerProtocol.string(message, "type"),
+                WorkerProtocol.string(message, "request_id")
+        );
+        String conversationId = WorkerProtocol.string(message, "conversation_id");
+        delta.addProperty("conversation_id", conversationId);
+        JsonObject payload = new JsonObject();
+        payload.addProperty("operation", WorkerProtocol.string(message, "operation"));
+        payload.addProperty("active_conversation_id",
+                WorkerProtocol.string(message, "active_conversation_id"));
+        payload.addProperty("active_title", WorkerProtocol.string(message, "active_title"));
+        if (message.has("conversations") && message.get("conversations").isJsonArray()) {
+            payload.add("conversations", message.getAsJsonArray("conversations").deepCopy());
+        }
+        JsonArray messages = message.has("messages") && message.get("messages").isJsonArray()
+                ? message.getAsJsonArray("messages")
+                : new JsonArray();
+        if (!messages.isEmpty()) {
+            payload.add("message", messages.get(messages.size() - 1).deepCopy());
+        }
+        delta.add("conversation_delta", payload);
+        return delta;
     }
 
     /** 所有事件在写 socket 前再次限幅，避免合法的长会话触发客户端重连死循环。 */

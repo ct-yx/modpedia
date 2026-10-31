@@ -4,7 +4,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Locale;
 
-/** AI 客户端设置；设置页填写的密钥优先，留空时才回退到环境变量。 */
+/** AI 客户端设置；密钥只来自用户级设置或 Worker 认证后的 IPC 载荷。 */
 public record AiSettings(
         AssistantMode mode,
         AiApiFormat apiFormat,
@@ -77,15 +77,7 @@ public record AiSettings(
     }
 
     public String effectiveApiKey() {
-        return resolveApiKey(apiKey, System.getenv("MODPEDIA_API_KEY"));
-    }
-
-    static String resolveApiKey(String configured, String environment) {
-        String configuredValue = configured == null ? "" : configured.strip();
-        if (!configuredValue.isBlank()) {
-            return configuredValue;
-        }
-        return environment == null ? "" : environment.strip();
+        return apiKey == null ? "" : apiKey.strip();
     }
 
     public boolean configured() {

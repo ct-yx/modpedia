@@ -45,10 +45,13 @@ public final class AiSettingsSelfTest {
             check(restored.effectiveMaxRounds() == 8, "自定义搜索预算应使用自定义轮数");
             check("secret-value".equals(restored.apiKey()),
                     "API Key 应去除复制时可能带入的首尾空白");
-            check("secret-value".equals(AiSettings.resolveApiKey("secret-value", "stale-environment-key")),
-                    "设置页填写的 Key 应优先于旧环境变量");
-            check("environment-key".equals(AiSettings.resolveApiKey("", " environment-key ")),
-                    "设置页为空时应回退到环境变量");
+            check("secret-value".equals(restored.effectiveApiKey()),
+                    "API Key 应只来自已保存的用户设置");
+            AiSettings noKey = new AiSettings(
+                    AssistantMode.AI, "https://example.invalid/v1", "test-model", "", false,
+                    SearchIntensity.FAST, 1, 4, 8_000, 10);
+            check(noKey.effectiveApiKey().isBlank(),
+                    "即使进程环境含 MODPEDIA_API_KEY，空设置也不能取得环境密钥");
             check(!new AiSettings(
                             AssistantMode.AI,
                             "https://example.invalid/v1",

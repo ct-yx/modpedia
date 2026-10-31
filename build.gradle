@@ -79,13 +79,19 @@ def workerJarTask = tasks.register('workerJar', Jar) {
     // Worker dependencies are placed directly in the standalone artifact. The game
     // mod JAR remains unchanged and does not consume this configuration.
     from {
-        configurations.workerRuntimeClasspath
+        (configurations.workerRuntimeClasspath + configurations.workerOnlyRuntime)
                 .findAll { it.name.endsWith('.jar') }
                 .collect { zipTree(it) }
     }
     exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
     manifest {
-        attributes('Main-Class': 'io.ctyx.modpedia.worker.WorkerMain')
+        attributes(
+                'Main-Class': 'io.ctyx.modpedia.worker.WorkerMain',
+                'ModPedia-LangChain4j-Version': langchain4j_version,
+                'ModPedia-JTokkit-Version': jtokkit_version,
+                'ModPedia-Gson-Version': gson_version,
+                'ModPedia-SLF4J-Version': slf4j_version
+        )
     }
 }
 
@@ -111,6 +117,49 @@ tasks.register('workerClassMajorSelfTest') {
             zip.close()
         }
         println "Worker Java 17 class major verified: ${workerFile}"
+    }
+}
+
+tasks.register('workerJarBoundarySelfTest') {
+    group = 'verification'
+    description = 'Verify the standalone Worker JAR has no Minecraft/client classes and contains runtime APIs.'
+    dependsOn workerJarTask
+    def workerArchive = workerJarTask.flatMap { it.archiveFile }
+    doLast {
+        def workerFile = workerArchive.get().asFile
+        def zip = new java.util.zip.ZipFile(workerFile)
+        try {
+            def forbidden = zip.entries().findAll { entry ->
+                def name = entry.name
+                name.startsWith('net/minecraft/')
+                        || name.startsWith('net/minecraftforge/')
+                        || name.startsWith('net/neoforged/')
+                        || name.startsWith('io/ctyx/modpedia/client/')
+                        || name == 'io/ctyx/modpedia/ModPedia.class'
+                        || name == 'io/ctyx/modpedia/ModPediaClient.class'
+                        || name.startsWith('META-INF/neoforge')
+            }.collect { it.name }
+            if (!forbidden.isEmpty()) {
+                throw new GradleException("Worker JAR 包含游戏/客户端边界类：${forbidden.take(12)}")
+            }
+            for (String required : [
+                    'io/ctyx/modpedia/worker/WorkerMain.class',
+                    'com/google/gson/JsonElement.class',
+                    'org/slf4j/LoggerFactory.class'
+            ]) {
+                if (zip.getEntry(required) == null) {
+                    throw new GradleException("Worker JAR 缺少独立运行依赖或入口：${required}")
+                }
+            }
+            def manifest = zip.getEntry('META-INF/MANIFEST.MF')
+            if (manifest == null || !zip.getInputStream(manifest).getText('UTF-8')
+                    .contains('Main-Class: io.ctyx.modpedia.worker.WorkerMain')) {
+                throw new GradleException('Worker JAR 缺少 WorkerMain Main-Class')
+            }
+        } finally {
+            zip.close()
+        }
+        println "Worker JAR boundary verified: ${workerFile}"
     }
 }
 
@@ -524,6 +573,12 @@ def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', Ja
     systemProperty 'modpedia.projectRoot', project.projectDir.absolutePath
 }
 
+def conversationEventLogSelfTest = tasks.register('conversationEventLogSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'io.ctyx.modpedia.worker.ConversationEventLogSelfTest'
+}
+
 def workerCompatibilitySelfTest = tasks.register('workerCompatibilitySelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -534,10 +589,12 @@ def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
     // 使用最终 Jar-in-Jar 产物启动子 JVM，验证发布 JAR 的 Worker 入口，而不是只
     // 验证 Gradle 开发 classpath。测试夹具不调用模型，也不访问网络。
     dependsOn tasks.named('jar')
+    dependsOn workerJarTask
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.worker.WorkerIpcSelfTest'
-    systemProperty 'modpedia.worker.jar', tasks.named('jar').flatMap { it.archiveFile }.get().asFile.absolutePath
+    systemProperty 'modpedia.worker.jar', workerJarTask.flatMap { it.archiveFile }.get().asFile.absolutePath
+    systemProperty 'modpedia.published.jar', tasks.named('jar').flatMap { it.archiveFile }.get().asFile.absolutePath
     systemProperty 'modpedia.langchain4j.version', langchain4j_version
     systemProperty 'modpedia.jtokkit.version', jtokkit_version
     systemProperty 'modpedia.gson.version', gson_version
@@ -766,6 +823,7 @@ tasks.named('test', Test) {
     dependsOn workerConcurrencySelfTest
     dependsOn workerTokenEstimatorSelfTest
     dependsOn workerCoreBoundarySelfTest
+    dependsOn conversationEventLogSelfTest
     dependsOn workerCompatibilitySelfTest
     dependsOn workerIpcSelfTest
     dependsOn modPediaPathsSelfTest
@@ -790,6 +848,11 @@ tasks.named('test', Test) {
     dependsOn recipeMachineNormalizerSelfTest
     dependsOn markdownRendererSelfTest
     failOnNoDiscoveredTests = false
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('workerClassMajorSelfTest')
+    dependsOn tasks.named('workerJarBoundarySelfTest')
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.

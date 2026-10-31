@@ -69,7 +69,7 @@
   "screen.modpedia.ai_fetch_models_loading": "Loading…",
   "screen.modpedia.ai_model_list_count": "Models · %s",
   "screen.modpedia.ai_test_all_models": "Test all models",
-  "screen.modpedia.ai_api_key_hint": "Leave blank to use MODPEDIA_API_KEY",
+  "screen.modpedia.ai_api_key_hint": "API key is read from saved user settings",
   "screen.modpedia.ai_search_intensity": "Search intensity",
   "screen.modpedia.ai_sse": "Streaming response",
   "screen.modpedia.ai_max_rounds_hint": "Max rounds",

@@ -937,8 +937,7 @@ public final class ModPediaBridge {
         ProcessBuilder builder = new ProcessBuilder(command)
                 .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()))
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
-        // Token 不再出现在 ps/Activity Monitor 的命令行参数中；只通过子进程
-        // 环境变量传递，并且 Worker 仍会在握手阶段再次校验。
+        // 此环境变量只承载本机 IPC 认证 token；AI API Key 由认证后的设置载荷传递。
         builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
         return builder.start();
     }

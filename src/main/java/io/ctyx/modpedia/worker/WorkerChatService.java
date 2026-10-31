@@ -258,7 +258,7 @@ public final class WorkerChatService {
             return;
         }
         if (settings.effectiveApiKey().isBlank()) {
-            sendError(requestId, "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。");
+            sendError(requestId, "请先在用户级设置中填写 API Key；Worker 不读取环境变量。");
             return;
         }
 

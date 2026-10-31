@@ -4,6 +4,7 @@ import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
 
 import java.net.URL;
 import java.security.CodeSource;
+import java.util.jar.JarFile;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -165,13 +166,41 @@ final class WorkerRuntimeDiagnostics {
         String prefix = artifact + "-";
         int start = file.indexOf(prefix);
         if (start < 0) {
-            return "<unknown>";
+            return manifestVersion(source, artifact);
         }
         String version = file.substring(start + prefix.length());
         if (version.endsWith(".jar")) {
             version = version.substring(0, version.length() - 4);
         }
         return version.isBlank() ? "<unknown>" : version;
+    }
+
+    /** 独立 Worker JAR 展开依赖后，类文件来源是 Worker JAR 本身；从 manifest 保留版本诊断。 */
+    private static String manifestVersion(String source, String artifact) {
+        String attribute = switch (artifact) {
+            case "langchain4j-open-ai" -> "ModPedia-LangChain4j-Version";
+            case "jtokkit" -> "ModPedia-JTokkit-Version";
+            case "gson" -> "ModPedia-Gson-Version";
+            case "slf4j-api" -> "ModPedia-SLF4J-Version";
+            default -> "";
+        };
+        if (attribute.isBlank()) {
+            return "<unknown>";
+        }
+        try {
+            URL location = new URL(source);
+            if (!"file".equalsIgnoreCase(location.getProtocol())) {
+                return "<unknown>";
+            }
+            try (JarFile jar = new JarFile(java.nio.file.Path.of(location.toURI()).toFile())) {
+                String value = jar.getManifest() == null
+                        ? null
+                        : jar.getManifest().getMainAttributes().getValue(attribute);
+                return value == null || value.isBlank() ? "<unknown>" : value;
+            }
+        } catch (Exception ignored) {
+            return "<unknown>";
+        }
     }
 
     private static boolean resource(ClassLoader loader, String fileName) {

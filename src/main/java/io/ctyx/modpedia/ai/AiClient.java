@@ -158,7 +158,7 @@ public final class AiClient {
         }
         if (actual.effectiveApiKey().isBlank()) {
             return new TestResult(true,
-                    "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", 0, 0);
+                    "请先在用户级设置中填写 API Key。", 0, 0);
         }
 
         URI uri;
@@ -380,7 +380,7 @@ public final class AiClient {
                     resultConsumer.accept(new ModelListResult(
                             true,
                             List.of(),
-                            "请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。"
+                            "请先在用户级设置中填写 API Key。"
                     ));
                     return;
                 }
@@ -422,7 +422,7 @@ public final class AiClient {
                         true,
                         null,
                         "",
-                        "请先填写 API 地址和 API Key，或设置 MODPEDIA_API_KEY 环境变量。"
+                        "请先填写 API 地址和用户级 API Key。"
                 ));
                 return;
             }

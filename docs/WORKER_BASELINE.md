@@ -10,7 +10,7 @@
 | --- | --- |
 | Worker 基线 | `worker-baseline-3` |
 | Worker API level | `1` |
-| JSONL 协议 | `WorkerProtocol.VERSION = 1` |
+| JSONL 协议 | `WorkerProtocol.VERSION = 2`，继续兼容 v1 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
 | Java | `21` |
@@ -18,9 +18,14 @@
 | LangChain4j | `1.18.1` |
 | LangChain4j Community SQL | `1.18.0-beta28` |
 | JTokkit | `1.1.0`，包含 `o200k_base`、`cl100k_base`、`p50k_base`、`r50k_base` |
-| Gson | `2.11.0`，位于发布 JAR 的 `META-INF/modpedia-worker/gson-2.11.0.jar`，只提取到 Worker JVM |
-| SLF4J API | `2.0.9`，位于发布 JAR 的 `META-INF/modpedia-worker/slf4j-api-2.0.9.jar`，只提取到 Worker JVM |
+| Gson | `2.11.0`，直接包含在独立 `modpedia-worker-*.jar`，不进入主模组类路径 |
+| SLF4J API | `2.0.9`，直接包含在独立 `modpedia-worker-*.jar`，不进入主模组类路径 |
 | 客户端适配层 | `neoforge-1.21.1` |
+
+v2 版本的 `conversation_resume` 是可选能力：客户端显式声明后，Worker 才会持久化并重放
+有限会话事件窗口（每会话最多 128 条、单条最多 256 KiB）；历史窗口缺失、损坏或超大时返回
+带 `snapshot`、`resume_fallback` 和原因字段的受控 `conversation.state`。未声明该能力的 v1
+和早期 v2 客户端继续收到全量快照。
 
 共享依赖库位于：
 
@@ -49,12 +54,13 @@ Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用
 
 ```json
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "worker_api_level": 1,
   "worker_baseline": "worker-baseline-3",
   "client_adapter": "neoforge-1.21.1",
   "client_java": "21",
-  "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
+  "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"],
+  "client_optional_capabilities": ["conversation_resume"]
 }
 ```
 
@@ -86,7 +92,7 @@ Worker 返回 `hello_ack` 时包含：
 
 ```json
 {
-  "worker_optional_capabilities": ["runtime_item_context"]
+  "worker_optional_capabilities": ["runtime_item_context", "runtime_material_facts", "conversation_resume"]
 }
 ```
 
@@ -121,10 +127,10 @@ io.ctyx.modpedia.client.*
 知识库构建、任务文件解析、会话和协议服务。跨边界只传 JSONL 和纯 Java DTO，避免
 把游戏对象、Screen、Level 或 ItemStack 传入 Worker JVM。
 
-Worker 启动时使用发布 JAR、`META-INF/jarjar/*.jar` 和同一基线提取出的
-`META-INF/modpedia-worker/*.jar` 构造隔离 classpath；不继承游戏 JVM 的完整
-`java.class.path`。SLF4J API 和 Gson 都从 Worker 专用资源提取，不能从 Forge/NeoForge 游戏类
-加载器取用，也不能把它们放入普通 Jar-in-Jar 目录。这样游戏实例中残留的旧版
+Worker 启动时直接使用独立 `modpedia-worker-*.jar`；该 JAR 展开包含 Worker 编译产物、Gson、
+SLF4J 和 LangChain4j 运行依赖，并且不继承游戏 JVM 的完整 `java.class.path`。Gson 和 SLF4J
+不能从 Forge/NeoForge 游戏类加载器取用，也不能把独立 Worker 依赖放入主模组的普通
+Jar-in-Jar 目录。这样游戏实例中残留的旧版
 LangChain4j/JTokkit 不会抢先加载。Worker 会在启动日志中记录 LangChain4j、JTokkit、Gson
 的 CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始化结果，但不记录
 API Key、请求正文或会话正文。

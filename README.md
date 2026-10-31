@@ -56,7 +56,7 @@ git diff --check
 - API 格式：可选 `Chat Completions`、`原生 Messages`、`Responses` 和 `Gemini generateContent`；选择后客户端会使用对应的请求体、认证头、工具调用和 SSE 格式，并把 `api_format` 写入配置；
 - API 地址：填写所选协议的 API 根地址。Chat Completions、原生 Messages 和 Responses 通常使用 `/v1`，Gemini 使用 `/v1beta`；如果只填写域名，客户端会按格式自动补全版本路径；
 - 模型名称：可以点击右侧“获取模型列表”，成功后再次点击按钮在返回的模型之间切换；
-- API Key：优先使用设置页输入；设置页留空时才使用环境变量 MODPEDIA_API_KEY。
+- API Key：只从用户级设置读取；Worker 不读取 `MODPEDIA_API_KEY`，IPC token `MODPEDIA_WORKER_TOKEN` 仅用于本机客户端与 Worker 认证。
 - `~/.modpedia/ai.json` 是跨游戏实例共享的用户级配置，不随整合包分发。它不保存 API Key 明文，而是使用当前系统标识派生的 AES-GCM 密钥保存密文；游戏进程首次读取时解密并缓存，系统标识变化后会清除密钥密文。系统标识读取失败时使用同目录的 `installation-id` 回退标识；在支持 POSIX 权限的系统上目录为 `0700`、文件为 `0600`。
 - 不需要逐个模型手测：点击设置底部“批量测试模型”，会自动探测 `/models` 返回的全部模型，分别验证普通请求、工具调用续接、SSE 和流式工具续接；脱敏报告写入 `config/modpedia/runtime/diagnostics/`。
 

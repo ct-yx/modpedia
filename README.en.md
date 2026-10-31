@@ -70,8 +70,8 @@ Select **AI answer** in Settings and fill in:
   only a domain is entered, the client adds the matching version path.
 - **Model name**: Click **Get model list** on the right, then click the button
   again to switch between returned models.
-- **API key**: The Settings field takes priority; the `MODPEDIA_API_KEY`
-  environment variable is used only when the field is empty.
+- **API key**: Read only from saved user settings. The Worker does not read
+  `MODPEDIA_API_KEY`; `MODPEDIA_WORKER_TOKEN` is reserved for local IPC authentication.
 - `~/.modpedia/ai.json` is a user-level configuration shared by game instances
   and is never part of a modpack. It never stores the API key in plaintext: it
   stores AES-GCM ciphertext derived from the current system identifier. The

@@ -52,6 +52,8 @@ public final class WorkerProtocol {
     public static final int MAX_RUNTIME_ITEM_ID_CHARS = 256;
     public static final int MAX_RUNTIME_ITEM_TEXT_CHARS = 12_000;
     public static final int MAX_RUNTIME_MATERIAL_FACTS = 64;
+    /** v2 客户端声明后，Worker 才会发送会话增量事件并接受 resume 重放。 */
+    public static final String CONVERSATION_RESUME_CAPABILITY = "conversation_resume";
     public static final String RECIPE_QUERY_REQUEST = "recipe_query_request";
     public static final String RECIPE_QUERY_RESPONSE = "recipe_query_response";
     public static final String KNOWLEDGE_REBUILD = "knowledge.rebuild";

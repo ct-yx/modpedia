@@ -65,15 +65,27 @@ public final class WorkerIpcSelfTest {
             verifyRejectedHandshake(root.resolve("bad-token"), "token-ok", "token-bad", false);
             verifyRejectedHandshake(root.resolve("bad-version"), "token-version", "token-version", true);
             verifyRejectedCompatibilityHandshake(root.resolve("bad-baseline"));
+            verifyLegacyHandshake(root.resolve("legacy-v1"));
 
             try (Harness harness = Harness.start(root.resolve("valid"), "token-valid")) {
                 JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "hello-valid");
-                hello.addProperty("auth_token", "token-valid");
+                hello.addProperty("handshake_mode", "challenge");
                 WorkerCompatibility.addClientHello(hello);
                 WorkerCompatibility.addClientOptionalCapability(
                         hello, WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY);
+                WorkerCompatibility.addClientOptionalCapability(
+                        hello, WorkerProtocol.CONVERSATION_RESUME_CAPABILITY);
                 hello.addProperty("conversation_id", CONVERSATION_ID);
                 harness.send(hello);
+                JsonObject challenge = harness.read(event -> WorkerProtocol.HELLO_CHALLENGE.equals(
+                        WorkerProtocol.string(event, "type")));
+                check(!WorkerProtocol.string(challenge, "challenge").isBlank(),
+                        "v2 challenge 握手应返回一次性 challenge");
+                JsonObject proof = WorkerProtocol.message(WorkerProtocol.HELLO_PROOF, "hello-valid");
+                proof.addProperty("challenge", WorkerProtocol.string(challenge, "challenge"));
+                proof.addProperty("proof", WorkerProtocol.challengeProof(
+                        "token-valid", WorkerProtocol.string(challenge, "challenge")));
+                harness.send(proof);
                 JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
                         WorkerProtocol.string(event, "type")));
                 check(WorkerProtocol.bool(ack, "accepted", false), "正确 Token 应通过握手");
@@ -140,6 +152,25 @@ public final class WorkerIpcSelfTest {
                 check(!WorkerProtocol.string(chatCompleted, "answer").isBlank(),
                         "chat.start 应通过 Worker 返回仅搜索结果");
                 check(chatCompleted.has("messages"), "chat.start 完成事件应携带会话快照");
+                long chatRevision = WorkerProtocol.longValue(chatCompleted, "revision", 0L);
+                check(chatRevision > 0L, "v2 会话完成事件应分配持久化 revision");
+                JsonObject resume = WorkerProtocol.message(
+                        WorkerProtocol.CONVERSATION_RESUME, "conversation-resume-events");
+                resume.addProperty("conversation_id", WorkerProtocol.string(
+                        chatCompleted, "conversation_id"));
+                resume.addProperty("last_revision", 0L);
+                harness.send(resume);
+                JsonObject replayed = harness.read(event ->
+                        WorkerProtocol.CONVERSATION_EVENT.equals(WorkerProtocol.string(event, "type"))
+                                && WorkerProtocol.bool(event, "replay", false)
+                                && "completed".equals(WorkerProtocol.string(event, "event_type")));
+                check(WorkerProtocol.longValue(replayed, "revision", 0L) == chatRevision,
+                        "v2 resume 应重放缺失会话事件");
+                JsonObject resumeComplete = harness.read(event ->
+                        WorkerProtocol.CONVERSATION_EVENT.equals(WorkerProtocol.string(event, "type"))
+                                && "resume_complete".equals(WorkerProtocol.string(event, "event_type")));
+                check(WorkerProtocol.integer(resumeComplete, "events_replayed", 0) >= 1,
+                        "v2 resume 应返回重放数量");
                 check(Files.isRegularFile(harness.knowledgeRoot.resolve("knowledge.db")),
                         "knowledge.db 应由 Worker 进程创建或打开");
 
@@ -194,7 +225,7 @@ public final class WorkerIpcSelfTest {
     }
 
     private static void verifyPublishedJarDoesNotBundleRuntimeGson() throws IOException {
-        String value = System.getProperty("modpedia.worker.jar", "").strip();
+        String value = publishedJar().strip();
         if (value.isBlank() || !Files.isRegularFile(Path.of(value))) {
             return;
         }
@@ -225,7 +256,7 @@ public final class WorkerIpcSelfTest {
     }
 
     private static void verifyPublishedJarWorkerDependencies() throws IOException {
-        String value = System.getProperty("modpedia.worker.jar", "").strip();
+        String value = publishedJar().strip();
         if (value.isBlank() || !Files.isRegularFile(Path.of(value))) {
             return;
         }
@@ -260,6 +291,13 @@ public final class WorkerIpcSelfTest {
             check(slf4jCount == 1, "Worker 专用 SLF4J API 不能存在多个版本");
             checkNestedSlf4j(zip, nestedSlf4j);
         }
+    }
+
+    private static String publishedJar() {
+        String published = System.getProperty("modpedia.published.jar", "").strip();
+        return published.isBlank()
+                ? System.getProperty("modpedia.worker.jar", "").strip()
+                : published;
     }
 
     private static boolean isEmbeddedArtifact(String entryName, String artifact) {
@@ -446,6 +484,33 @@ public final class WorkerIpcSelfTest {
                     "兼容层拒绝应返回明确错误");
             check(harness.process.waitFor(START_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS),
                     "兼容层不匹配后 Worker 应退出");
+        }
+    }
+
+    private static void verifyLegacyHandshake(Path root) throws Exception {
+        try (Harness harness = Harness.start(root, "token-legacy")) {
+            JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, "legacy-hello");
+            hello.addProperty("auth_token", "token-legacy");
+            WorkerCompatibility.addClientHello(hello);
+            hello.addProperty("protocol_version", WorkerProtocol.LEGACY_VERSION);
+            harness.send(hello);
+            JsonObject ack = harness.read(event -> WorkerProtocol.HELLO_ACK.equals(
+                    WorkerProtocol.string(event, "type")));
+            check(WorkerProtocol.bool(ack, "accepted", false), "v1 legacy 握手应继续被接受");
+            check(WorkerProtocol.integer(ack, "protocol_version", -1)
+                            == WorkerProtocol.LEGACY_VERSION,
+                    "v1 legacy ACK 必须回显协议版本 1");
+            JsonObject startup = harness.read(event -> WorkerProtocol.CONVERSATION_STATE.equals(
+                    WorkerProtocol.string(event, "type")));
+            check(WorkerProtocol.integer(startup, "protocol_version", -1)
+                            == WorkerProtocol.LEGACY_VERSION,
+                    "v1 legacy 会话事件必须保持协议版本 1");
+            JsonObject shutdown = WorkerProtocol.message(WorkerProtocol.SHUTDOWN, "legacy-shutdown");
+            harness.send(shutdown);
+            harness.read(event -> WorkerProtocol.COMPLETED.equals(WorkerProtocol.string(event, "type"))
+                    && "legacy-shutdown".equals(WorkerProtocol.string(event, "request_id")));
+            check(harness.process.waitFor(START_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS),
+                    "v1 legacy Worker 应正常退出");
         }
     }
 
@@ -1229,24 +1294,28 @@ public final class WorkerIpcSelfTest {
             String log = Files.readString(workerLog, StandardCharsets.UTF_8);
             check(log.contains("WORKER_DEPENDENCY"), "Worker 应输出依赖 CodeSource 诊断");
             check(log.contains("langchain_openai_code_source=")
-                            && log.contains("langchain4j-open-ai-1.18.1.jar"),
+                            && (log.contains("langchain4j-open-ai-1.18.1.jar")
+                            || log.contains("langchain_openai_version=1.18.1")),
                     "Worker 实际加载的 LangChain4j CodeSource 不正确");
             check(log.contains("langchain_openai_version=1.18.1"),
                     "Worker 实际加载的 LangChain4j OpenAI 版本不正确");
             check(log.contains("jtokkit_code_source=")
-                            && log.contains("jtokkit-1.1.0.jar"),
+                            && (log.contains("jtokkit-1.1.0.jar")
+                            || log.contains("jtokkit_version=1.1.0")),
                     "Worker 实际加载的 JTokkit CodeSource 不正确");
             check(log.contains("jtokkit_version=1.1.0"),
                     "Worker 实际加载的 JTokkit 版本不正确");
             check(log.contains("gson_code_source=")
-                            && log.contains("gson-2.11.0.jar"),
+                            && (log.contains("gson-2.11.0.jar")
+                            || log.contains("gson_version=2.11.0")),
                     "Worker 实际加载的 Gson CodeSource 不正确");
             check(log.contains("gson_version=2.11.0"),
                     "Worker 实际加载的 Gson 版本不正确");
             check(log.contains("gson_loaded=true"),
                     "Worker 独立 JVM 未加载 Gson");
             check(log.contains("slf4j_code_source=")
-                            && log.contains("slf4j-api-2.0.9.jar"),
+                            && (log.contains("slf4j-api-2.0.9.jar")
+                            || log.contains("slf4j_version=2.0.9")),
                     "Worker 实际加载的 SLF4J CodeSource 不正确");
             check(log.contains("slf4j_version=2.0.9"),
                     "Worker 实际加载的 SLF4J API 版本不正确");
