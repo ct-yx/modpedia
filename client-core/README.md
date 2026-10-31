@@ -18,4 +18,3 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home
 ```
 
 构建使用 `--release 8`，`verifyJava8Bytecode` 会拒绝 major version 大于 52 的 class。
-
