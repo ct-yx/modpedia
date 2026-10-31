@@ -1,0 +1,95 @@
+name: Build 1.12.2
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      WORKER_REF: c8ebf0582253da04057eae16fdc60fd7a96d5a9d
+      WORKER_VERSION: 2.0.0
+    steps:
+      - name: Checkout 1.12.2 adapter
+        uses: actions/checkout@v4
+        with:
+          path: source-1.12.2
+          fetch-depth: 0
+
+      - name: Checkout shared Worker Core baseline
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: c8ebf0582253da04057eae16fdc60fd7a96d5a9d
+          path: worker-core
+          fetch-depth: 1
+
+      - name: Setup Java 17 for Worker and client-core checks
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Build the pinned Worker JAR and run its boundary gates
+        working-directory: worker-core
+        run: ./gradlew clean workerJar workerClassMajorSelfTest workerJarBoundarySelfTest workerCompatibilitySelfTest workerIpcSelfTest test build --no-daemon --no-configuration-cache -Pmod_version="$WORKER_VERSION"
+
+      - name: Verify client-core with Gradle 8.8
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.8'
+
+      - name: Check shared client-core Java 8 contract
+        working-directory: source-1.12.2
+        run: gradle -p client-core clean check build --no-daemon --no-configuration-cache
+
+      - name: Setup Java 8 for Minecraft 1.12.2
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: temurin
+
+      - name: Test and build the 1.12.2 adapter
+        working-directory: source-1.12.2
+        run: ./gradlew clean test build --no-daemon
+
+      - name: Verify Java 8 bytecode and main JAR boundary
+        working-directory: source-1.12.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "../worker-core/build/libs/modpedia-worker-${WORKER_VERSION}.jar"
+          python3 - <<'PY'
+          import pathlib
+          import struct
+          from zipfile import ZipFile
+
+          roots = [pathlib.Path('build/classes/java/main'), pathlib.Path('build/classes/java/test')]
+          classes = [path for root in roots if root.exists() for path in root.rglob('*.class')]
+          if not classes:
+              raise SystemExit('No compiled Java 8 classes found')
+          for path in classes:
+              major = struct.unpack('>H', path.read_bytes()[6:8])[0]
+              if major > 52:
+                  raise SystemExit(f'{path}: class major {major}, expected <= 52')
+
+          jars = [path for path in pathlib.Path('build/libs').glob('modpedia-*.jar')
+                  if not any(suffix in path.name for suffix in ('-sources.jar', '-javadoc.jar'))]
+          if not jars:
+              raise SystemExit('No Minecraft 1.12.2 mod JAR found')
+          with ZipFile(jars[0]) as archive:
+              entries = archive.namelist()
+              worker_entries = [name for name in entries
+                                if name.startswith('io/ctyx/modpedia/worker/')
+                                or name.endswith('/WorkerMain.class')
+                                or name.startswith('META-INF/modpedia-worker')]
+              if worker_entries:
+                  raise SystemExit('Worker implementation leaked into the mod JAR: '
+                                   + ', '.join(worker_entries[:10]))
+              if not any(name.startswith('net/i2p/crypto/eddsa/') for name in entries):
+                  raise SystemExit('EdDSA provider missing from Java 8 mod JAR')
+          print(f'Java 8 class major and Worker JAR boundary: OK ({len(classes)} classes, {jars[0]})')
+          PY
+          git diff --check

@@ -57,7 +57,10 @@ tasks.named('check') {
 }
 
 tasks.named('test', Test).configure {
-    failOnNoDiscoveredTests = false
+    // Gradle 9 引入 failOnNoDiscoveredTests；较早版本默认允许没有测试框架用例。
+    if (delegate.metaClass.hasProperty(delegate, 'failOnNoDiscoveredTests') != null) {
+        delegate.failOnNoDiscoveredTests = false
+    }
 }
 
 jar {
