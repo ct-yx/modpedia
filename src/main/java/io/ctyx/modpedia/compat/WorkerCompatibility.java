@@ -45,6 +45,11 @@ public final class WorkerCompatibility {
 
     /** 在客户端 hello 中写入 Worker 兼容性要求和当前适配层信息。 */
     public static void addClientHello(JsonObject hello) {
+        hello.addProperty("protocol_version", WorkerProtocol.VERSION);
+        hello.add("supported_protocol_versions", array(List.of(
+                Integer.toString(WorkerProtocol.VERSION),
+                Integer.toString(WorkerProtocol.LEGACY_VERSION)
+        )));
         hello.addProperty("worker_api_level", API_LEVEL);
         hello.addProperty("worker_baseline", WORKER_LIBRARY_BASELINE);
         hello.addProperty("client_adapter", CLIENT_ADAPTER);
@@ -76,6 +81,11 @@ public final class WorkerCompatibility {
 
     /** 在 Worker hello_ack 中写入实际运行的基线、Java 和能力集合。 */
     public static void addWorkerAck(JsonObject ack) {
+        ack.addProperty("protocol_version", WorkerProtocol.VERSION);
+        ack.add("supported_protocol_versions", array(List.of(
+                Integer.toString(WorkerProtocol.VERSION),
+                Integer.toString(WorkerProtocol.LEGACY_VERSION)
+        )));
         ack.addProperty("worker_api_level", API_LEVEL);
         ack.addProperty("worker_baseline", WORKER_LIBRARY_BASELINE);
         ack.addProperty("worker_java", javaVersion());
@@ -85,7 +95,8 @@ public final class WorkerCompatibility {
 
     /** 检查客户端声明的 Worker API 和运行库基线是否与当前 Worker 一致。 */
     public static boolean isCompatibleClient(JsonObject hello) {
-        return WorkerProtocol.integer(hello, "worker_api_level", -1) == API_LEVEL
+        return WorkerProtocol.isSupportedVersion(hello)
+                && WorkerProtocol.integer(hello, "worker_api_level", -1) == API_LEVEL
                 && WORKER_LIBRARY_BASELINE.equals(WorkerProtocol.string(hello, "worker_baseline"))
                 && !WorkerProtocol.string(hello, "client_adapter").isBlank()
                 && hasCapabilities(hello, "client_capabilities");
@@ -93,7 +104,8 @@ public final class WorkerCompatibility {
 
     /** 检查 Worker 回报的 API、基线和最小能力集合是否满足当前客户端。 */
     public static boolean isCompatibleAck(JsonObject ack) {
-        return WorkerProtocol.integer(ack, "worker_api_level", -1) == API_LEVEL
+        return WorkerProtocol.isSupportedVersion(ack)
+                && WorkerProtocol.integer(ack, "worker_api_level", -1) == API_LEVEL
                 && WORKER_LIBRARY_BASELINE.equals(WorkerProtocol.string(ack, "worker_baseline"))
                 && !WorkerProtocol.string(ack, "worker_java").isBlank()
                 && hasCapabilities(ack, "worker_capabilities");

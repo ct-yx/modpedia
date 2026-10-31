@@ -36,6 +36,19 @@ public final class WorkerCompatibilitySelfTest {
                         oldClient, WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY),
                 "旧客户端缺少运行时物品上下文能力时应返回静态目录");
 
+        JsonObject legacy = hello.deepCopy();
+        legacy.addProperty("protocol_version", WorkerProtocol.LEGACY_VERSION);
+        legacy.remove("supported_protocol_versions");
+        check(WorkerProtocol.isSupportedVersion(legacy), "v1 客户端应被 v2 Worker 接受");
+        check(WorkerCompatibility.isCompatibleClient(legacy), "v1 客户端的能力字段仍应兼容");
+
+        String proof = WorkerProtocol.challengeProof("secret-token", "challenge-1");
+        check(!proof.isBlank() && proof.equals(
+                WorkerProtocol.challengeProof("secret-token", "challenge-1")),
+                "challenge proof 应是稳定的 HMAC-SHA256 值");
+        check(!proof.equals(WorkerProtocol.challengeProof("other-token", "challenge-1")),
+                "不同 token 不得生成相同 challenge proof");
+
         JsonObject wrongBaseline = hello.deepCopy();
         wrongBaseline.addProperty("worker_baseline", "worker-baseline-999");
         check(!WorkerCompatibility.isCompatibleClient(wrongBaseline), "不同基线必须拒绝");

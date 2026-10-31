@@ -34,6 +34,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -50,6 +51,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -107,6 +109,7 @@ public final class WorkerServer {
     /** 只保留当前存档的上一次进度，用于给无历史日志的 task_progress 补时间线。 */
     private final TaskTimelineTracker runtimeTimelineTracker = new TaskTimelineTracker();
     private final WorkerRequestCancellation requestCancellation = new WorkerRequestCancellation();
+    private final AtomicLong conversationRevision = new AtomicLong();
     private final Object writeLock = new Object();
     private volatile boolean running = true;
     /** 旧客户端没有该可选能力时，物品查询直接使用静态 item_catalog。 */
@@ -114,6 +117,8 @@ public final class WorkerServer {
     /** 没有材料事实读取器时，模型不得从名称推导部件兼容性。 */
     private volatile boolean clientSupportsRuntimeMaterialFacts;
     private BufferedWriter writer;
+    /** 当前连接使用的线协议版本；v1 客户端要求所有后续事件回显 v1。 */
+    private volatile int wireProtocolVersion = WorkerProtocol.VERSION;
     private ConversationStore conversationStore;
     private WorkerChatService chatService;
     private AiSettingsStore settingsStore;
@@ -175,6 +180,8 @@ public final class WorkerServer {
             running = false;
             activeRequests.values().forEach(future -> future.cancel(true));
             activeRequests.clear();
+            activeChatRequests.values().forEach(handle -> handle.future().cancel(true));
+            activeChatRequests.clear();
             runtimeWaiters.values().forEach(future -> future.completeExceptionally(
                     new IOException("Worker 连接已关闭")
             ));
@@ -196,11 +203,41 @@ public final class WorkerServer {
         if (hello == null || !WorkerProtocol.HELLO.equals(WorkerProtocol.string(hello, "type"))) {
             return false;
         }
-        boolean protocolValid = WorkerProtocol.integer(hello, "protocol_version", -1)
-                == WorkerProtocol.VERSION;
-        boolean tokenValid = expectedToken.equals(WorkerProtocol.string(hello, "auth_token"));
+        int requestedProtocol = WorkerProtocol.integer(hello, "protocol_version", -1);
+        boolean protocolValid = WorkerProtocol.isSupportedVersion(hello);
+        boolean challengeMode = requestedProtocol == WorkerProtocol.VERSION
+                && "challenge".equalsIgnoreCase(WorkerProtocol.string(hello, "handshake_mode"))
+                && WorkerProtocol.string(hello, "auth_token").isBlank();
+        boolean tokenValid;
+        if (challengeMode) {
+            String challenge = UUID.randomUUID().toString();
+            JsonObject challengeMessage = WorkerProtocol.message(
+                    WorkerProtocol.HELLO_CHALLENGE,
+                    WorkerProtocol.string(hello, "request_id")
+            );
+            challengeMessage.addProperty("challenge", challenge);
+            challengeMessage.addProperty("challenge_algorithm", "HmacSHA256");
+            WorkerCompatibility.addWorkerAck(challengeMessage);
+            send(challengeMessage);
+            JsonObject proof = WorkerProtocol.read(reader);
+            tokenValid = proof != null
+                    && WorkerProtocol.HELLO_PROOF.equals(WorkerProtocol.string(proof, "type"))
+                    && challenge.equals(WorkerProtocol.string(proof, "challenge"))
+                    && MessageDigest.isEqual(
+                    WorkerProtocol.challengeProof(expectedToken, challenge)
+                            .getBytes(StandardCharsets.UTF_8),
+                    WorkerProtocol.string(proof, "proof").getBytes(StandardCharsets.UTF_8)
+            );
+        } else {
+            // v1 客户端和早期 v2 客户端仍可使用已存在的 token 字段；v2 新客户端
+            // 应使用上面的 challenge 模式，避免在初始 hello 中发送凭证。
+            tokenValid = expectedToken.equals(WorkerProtocol.string(hello, "auth_token"));
+        }
         boolean compatibilityValid = WorkerCompatibility.isCompatibleClient(hello);
         boolean valid = protocolValid && tokenValid && compatibilityValid;
+        wireProtocolVersion = requestedProtocol == WorkerProtocol.LEGACY_VERSION
+                ? WorkerProtocol.LEGACY_VERSION
+                : WorkerProtocol.VERSION;
         clientSupportsRuntimeItemContext = valid && WorkerCompatibility.supportsOptionalCapability(
                 hello,
                 WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
@@ -214,6 +251,11 @@ public final class WorkerServer {
                 WorkerProtocol.string(hello, "request_id")
         );
         WorkerCompatibility.addWorkerAck(response);
+        if (requestedProtocol == WorkerProtocol.LEGACY_VERSION) {
+            // 旧客户端按自身的 VERSION 常量严格读取 ACK；附加能力字段仍保留，
+            // 但主版本字段必须回显 1 才能完成平滑升级。
+            response.addProperty("protocol_version", WorkerProtocol.LEGACY_VERSION);
+        }
         response.addProperty("accepted", valid);
         response.addProperty("worker_pid", ProcessHandle.current().pid());
         if (!valid) {
@@ -231,7 +273,7 @@ public final class WorkerServer {
     private void dispatch(JsonObject message) {
         String type = WorkerProtocol.string(message, "type");
         String requestId = WorkerProtocol.string(message, "request_id");
-        if (!WorkerProtocol.isCurrentVersion(message)) {
+        if (!WorkerProtocol.isSupportedVersion(message)) {
             if (WorkerProtocol.RUNTIME_CONTEXT_RESPONSE.equals(type)) {
                 // 让等待中的任务查询尽快结束；不能把版本错误的快照当作当前进度。
                 completeRuntimeContext(message, requestId);
@@ -288,6 +330,7 @@ public final class WorkerServer {
                     () -> testAllModels(message, requestId)
             );
             case WorkerProtocol.CONVERSATION_LIST -> sendConversationState("list", requestId);
+            case WorkerProtocol.CONVERSATION_RESUME -> sendConversationState("resume", requestId);
             case WorkerProtocol.CONVERSATION_NEW -> submitOperation(requestId, () -> {
                 conversationStore.create();
                 sendConversationState("new", requestId);
@@ -1138,6 +1181,8 @@ public final class WorkerServer {
         ConversationRecord active = conversationStore.active();
         JsonObject event = WorkerProtocol.message(WorkerProtocol.CONVERSATION_STATE, requestId);
         event.addProperty("operation", operation);
+        event.addProperty("revision", conversationRevision.incrementAndGet());
+        event.addProperty("snapshot", true);
         event.addProperty("active_conversation_id", conversationStore.activeId());
         event.addProperty("active_title", active.title());
         JsonArray messages = new JsonArray();
@@ -1146,6 +1191,15 @@ public final class WorkerServer {
         JsonArray summaries = new JsonArray();
         conversationStore.summaries().forEach(summary -> summaries.add(WorkerPayloadCodec.summary(summary)));
         event.add("conversations", summaries);
+        boolean truncated = false;
+        while (WorkerProtocol.utf8Length(event.toString()) > WorkerProtocol.MAX_JSONL_LINE_BYTES
+                && messages.size() > 0) {
+            messages.remove(0);
+            truncated = true;
+        }
+        if (truncated) {
+            event.addProperty("truncated", true);
+        }
         sendQuietly(event);
     }
 
@@ -1157,8 +1211,40 @@ public final class WorkerServer {
             if (writer == null) {
                 throw new IOException("Worker 输出未初始化");
             }
-            WorkerProtocol.write(writer, message);
+            if (wireProtocolVersion == WorkerProtocol.LEGACY_VERSION) {
+                message.addProperty("protocol_version", WorkerProtocol.LEGACY_VERSION);
+            }
+            WorkerProtocol.write(writer, boundOutboundMessage(message));
         }
+    }
+
+    /** 所有事件在写 socket 前再次限幅，避免合法的长会话触发客户端重连死循环。 */
+    private JsonObject boundOutboundMessage(JsonObject message) {
+        if (WorkerProtocol.utf8Length(message.toString()) <= WorkerProtocol.MAX_JSONL_LINE_BYTES) {
+            return message;
+        }
+        JsonObject bounded = message.deepCopy();
+        bounded.addProperty("truncated", true);
+        bounded.remove("messages");
+        bounded.remove("conversations");
+        bounded.remove("sources");
+        bounded.remove("trace");
+        bounded.remove("memory_messages_json");
+        if (WorkerProtocol.utf8Length(bounded.toString()) > WorkerProtocol.MAX_JSONL_LINE_BYTES) {
+            String answer = WorkerProtocol.string(bounded, "answer");
+            if (answer.length() > 8_192) {
+                bounded.addProperty("answer", answer.substring(0, 8_192) + "\n[内容已截断]");
+            }
+        }
+        if (WorkerProtocol.utf8Length(bounded.toString()) > WorkerProtocol.MAX_JSONL_LINE_BYTES) {
+            JsonObject fallback = WorkerProtocol.message(WorkerProtocol.ERROR,
+                    WorkerProtocol.string(message, "request_id"));
+            fallback.addProperty("code", "OUTBOUND_MESSAGE_TRUNCATED");
+            fallback.addProperty("message", "Worker 响应超过协议大小上限，已返回受控摘要");
+            fallback.addProperty("truncated", true);
+            return fallback;
+        }
+        return bounded;
     }
 
     private void sendQuietly(JsonObject message) {

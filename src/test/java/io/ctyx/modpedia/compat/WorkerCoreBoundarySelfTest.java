@@ -65,7 +65,9 @@ public final class WorkerCoreBoundarySelfTest {
             }
         }
 
-        check(WorkerProtocol.VERSION == 1, "当前 Worker 协议版本必须明确为 1");
+        check(WorkerProtocol.VERSION == 2, "当前 Worker 协议版本必须明确为 2");
+        check(WorkerProtocol.isSupportedVersion(messageWithVersion(WorkerProtocol.LEGACY_VERSION)),
+                "Worker 必须继续接受已发布的 v1 协议");
         check(WorkerCompatibility.WORKER_LIBRARY_BASELINE.equals(
                         ModPediaPaths.WORKER_LIBRARY_BASELINE),
                 "共享 Worker lib 基线必须由兼容层和路径层共同确认");
@@ -86,6 +88,12 @@ public final class WorkerCoreBoundarySelfTest {
         if (!condition) {
             throw new AssertionError(message);
         }
+    }
+
+    private static com.google.gson.JsonObject messageWithVersion(int version) {
+        com.google.gson.JsonObject message = WorkerProtocol.message("compat", "compat");
+        message.addProperty("protocol_version", version);
+        return message;
     }
 
     private static Path projectRoot() {
