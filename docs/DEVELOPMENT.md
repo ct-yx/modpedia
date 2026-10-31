@@ -13,10 +13,11 @@
 | NeoForge | `21.1.244` |
 | Java | `21` |
 | Mod ID / 包名 | `modpedia` / `io.ctyx.modpedia` |
-| Worker 基线 | `worker-baseline-3` |
+| Worker 基线 | `worker-baseline-3` / API `1` |
+| Worker 产物 | Core 的 `modpedia-worker-1.2.0-fix.jar`（Java 17，class major 61） |
 | 当前分支 | 以 `git status --short --branch` 为准 |
 
-本分支负责 Worker Core、客户端适配层、协议兼容、测试和迁移文档；不维护发布版本号、下载链接、更新日志或网页内容。
+本分支只负责 NeoForge 客户端适配、协议 DTO、运行时 Tooltip 和客户端验证；Worker Core、AI、SQLite、知识库与独立 JAR 由 `modpedia-refactor-worker-core` 唯一维护。
 
 ## 1. Mod 工程基础清单
 
@@ -58,11 +59,11 @@
 - [x] `modPediaPathsSelfTest` 覆盖旧布局迁移、运行时数据库/生成文件分离、事实源原地保留和分离目录检索。
 - [x] Worker 本地 FTBQ 文件读取自测默认验证正确性并输出 p50/p95/p99；墙钟 p95 门禁只在明确执行
   `./gradlew workerTaskRuntimeFileSelfTest -PstrictPerformance=true` 时启用，避免 CI 机器负载造成随机失败。
-- [~] Worker 使用 `worker-baseline-3`、API level 和能力集合握手；纯 Java DTO 已移出 `client` 包，
+- [~] 客户端使用 Core 的 `worker-baseline-3`、API level 1 和 v2 challenge 握手；纯 Java DTO 已移出 `client` 包，
   具体基线、禁止依赖和迁移矩阵见 [docs/WORKER_BASELINE.md](WORKER_BASELINE.md)；可执行证据矩阵见
 [WORKER_VERIFICATION_MATRIX.md](WORKER_VERIFICATION_MATRIX.md)。
-- [x] Worker 共享 lib 使用固定基线目录、嵌入 JAR 内容比较、临时文件和原子替换；客户端同步后再
-  建立 IPC，避免缺失或损坏的依赖被 Worker 使用。
+- [x] 客户端通过 Pages `worker/latest.json` 下载并校验 Core 的独立 Worker JAR，使用用户级
+  `~/.modpedia/worker/current/` 原子激活后再建立 IPC；主模组不包含 Worker 或其依赖。
 - [~] 在大型整合包中确认所有前置库只计入扫描覆盖统计，不干扰内容来源排序。
 - [ ] 只有基准证明必要时才引入段落预索引或向量检索。
 
@@ -162,7 +163,6 @@ git diff --check
 ./gradlew manualSourceNavigatorSelfTest
 ./gradlew knowledgeDatabaseSelfTest
 ./gradlew modPediaPathsSelfTest
-./gradlew workerIpcSelfTest
 ./gradlew runClient       # 需要可用图形环境
 ./gradlew runServer       # Dedicated Server 隔离回归
 ```

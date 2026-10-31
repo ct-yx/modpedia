@@ -10,31 +10,32 @@
 | --- | --- |
 | Worker 基线 | `worker-baseline-3` |
 | Worker API level | `1` |
-| JSONL 协议 | `WorkerProtocol.VERSION = 1` |
+| JSONL 协议 | `WorkerProtocol.VERSION = 2`，兼容 v1 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
 | Java | `21` |
-| SQLite JDBC | `3.53.2.1` |
-| LangChain4j | `1.18.1` |
-| LangChain4j Community SQL | `1.18.0-beta28` |
-| JTokkit | `1.1.0`，包含 `o200k_base`、`cl100k_base`、`p50k_base`、`r50k_base` |
-| Gson | `2.11.0`，位于发布 JAR 的 `META-INF/modpedia-worker/gson-2.11.0.jar`，只提取到 Worker JVM |
-| SLF4J API | `2.0.9`，位于发布 JAR 的 `META-INF/modpedia-worker/slf4j-api-2.0.9.jar`，只提取到 Worker JVM |
+| Worker 产物 | `modpedia-worker-1.2.0-fix.jar`，由 Core 唯一构建 |
+| Worker Java | Java 17，class major `61` |
+| Worker Core | `0b98813` + `bdf5c1a` |
+| client-core | `37ed51e`（proof 算法待共享修复提交） |
 | 客户端适配层 | `neoforge-1.21.1` |
 
-共享依赖库位于：
+Worker JAR 和清单位于共享用户目录：
 
 ```text
-~/.modpedia/worker/lib/worker-baseline-3/
+~/.modpedia/worker/current/modpedia-worker.jar
+~/.modpedia/worker/current/manifest.json
+~/.modpedia/worker/staging/
+~/.modpedia/worker/install.lock
+~/.modpedia/worker/install-state.json
 ```
 
 同一基线可以被不同 ModPedia 版本和不同游戏实例复用。实例自己的 Worker JAR、
 IPC 载荷、日志、会话和知识库仍然位于实例运行目录，不放入共享 `lib`。
 
-启动 Worker 前，客户端从当前发布 JAR 的 `META-INF/jarjar/*.jar` 和
-`META-INF/modpedia-worker/*.jar` 读取依赖，在临时文件中完成提取并按内容比较后原子替换。
-共享目录只保存当前 `worker-baseline-3` 的依赖，不保存 API Key、Token 或绝对路径；依赖内容
-变化时递增基线编号，避免新旧运行库混用。
+客户端从 Pages `worker/latest.json` 获取版本清单，通过 SHA-256/Ed25519 校验后把独立
+Worker JAR 原子激活。主模组不再扫描自身 JAR 或 `mods/` 目录，也不提取 Worker 依赖；
+API Key、Token 和实例日志仍不进入共享安装目录。
 
 ## 2. 兼容规则
 
@@ -51,18 +52,24 @@ Minecraft 版本变化，但 Worker API、协议和依赖不变 → 可以复用
 
 ## 3. 握手边界
 
-客户端发送 `hello` 时包含：
+客户端发送 v2 `hello` 时包含：
 
 ```json
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
+  "supported_protocol_versions": ["2", "1"],
   "worker_api_level": 1,
   "worker_baseline": "worker-baseline-3",
   "client_adapter": "neoforge-1.21.1",
   "client_java": "21",
-  "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
+  "client_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"],
+  "handshake_mode": "challenge"
 }
 ```
+
+初始 `hello` 不携带 `auth_token`。Worker 返回 `hello_challenge` 后，客户端以
+`HmacSHA256(token, challenge)` 发送 `hello_proof`，随后才处理 `hello_ack`。Worker 仍接受
+旧 v1 的 `hello + auth_token` 握手。
 
 已实现运行时物品 Tooltip 的客户端才额外发送可选字段：
 
@@ -80,10 +87,11 @@ Worker 返回 `hello_ack` 时包含：
 
 ```json
 {
+  "protocol_version": 2,
   "accepted": true,
   "worker_api_level": 1,
   "worker_baseline": "worker-baseline-3",
-  "worker_java": "21",
+  "worker_java": "17",
   "worker_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
 }
 ```
@@ -104,8 +112,6 @@ Worker 返回 `hello_ack` 时包含：
 ```text
 io.ctyx.modpedia.compat.WorkerCompatibility
 io.ctyx.modpedia.protocol.WorkerProtocol
-io.ctyx.modpedia.worker.WorkerMain
-io.ctyx.modpedia.worker.WorkerServer
 io.ctyx.modpedia.protocol.WorkerPayloadCodec
 io.ctyx.modpedia.api.ChatMessage
 io.ctyx.modpedia.api.MessageRole
@@ -127,13 +133,9 @@ io.ctyx.modpedia.client.*
 知识库构建、任务文件解析、会话和协议服务。跨边界只传 JSONL 和纯 Java DTO，避免
 把游戏对象、Screen、Level 或 ItemStack 传入 Worker JVM。
 
-Worker 启动时使用发布 JAR、`META-INF/jarjar/*.jar` 和同一基线提取出的
-`META-INF/modpedia-worker/*.jar` 构造隔离 classpath；不继承游戏 JVM 的完整
-`java.class.path`。SLF4J API 和 Gson 都从 Worker 专用资源提取，不能从 Forge/NeoForge 游戏类
-加载器取用，也不能把它们放入普通 Jar-in-Jar 目录。这样游戏实例中残留的旧版
-LangChain4j/JTokkit 不会抢先加载。Worker 会在启动日志中记录 LangChain4j、JTokkit、Gson
-的 CodeSource、构件版本、tokenizer 资源存在性和 OpenAI 估算器初始化结果，但不记录
-API Key、请求正文或会话正文。
+Worker Core 以独立 Java 17 单 JAR 启动，版本适配层只通过 `WorkerProcessLauncher` 传入
+JAR、端口、配置目录和环境中的 IPC token；不继承游戏 JVM 的完整 classpath。Worker Core
+负责 SQLite、AI、知识库和会话，版本目录不得保留 `io.ctyx.modpedia.worker` 实现。
 
 当前第一阶段先完成 API/DTO/协议边界，后续可以继续把纯 Java 的检索、知识库和任务
 解析类整理到 Worker Core 包；不能为了移动目录而复制出第二套实现。
@@ -169,9 +171,6 @@ Worker 修改和验证，再为每个游戏版本生成 `[WORKER_ADAPTER_UPDATE]
 
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jre/Contents/Home
-./gradlew workerCoreBoundarySelfTest
-./gradlew workerCompatibilitySelfTest
-./gradlew workerIpcSelfTest
 ./gradlew test
 ./gradlew build
 git diff --check
