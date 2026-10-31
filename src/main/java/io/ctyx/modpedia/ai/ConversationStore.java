@@ -427,7 +427,7 @@ public final class ConversationStore {
         // 保留最新一条消息和会话元数据，不让磁盘写入失控。
         ChatMessage latest = bounded.messages().isEmpty()
                 ? null
-                : bounded.messages().getLast();
+                : bounded.messages().get(bounded.messages().size() - 1);
         return new ConversationRecord(
                 bounded.id(),
                 bounded.title(),

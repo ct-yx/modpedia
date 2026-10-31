@@ -38,6 +38,82 @@ base {
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// Worker 独立产物使用 Java 17，不能把游戏模组的 Java 21 目标带入共享 Worker。
+// 该 source set 只包含 loader-neutral 的 Worker、协议、知识库和 AI 代码；client
+// 包以及 NeoForge 入口明确排除。发布/CI 使用 workerJar，而游戏模组继续使用 jar。
+sourceSets {
+    worker {
+        java {
+            srcDirs = ['src/main/java']
+            exclude 'io/ctyx/modpedia/client/**'
+            exclude 'io/ctyx/modpedia/ModPedia.java'
+            exclude 'io/ctyx/modpedia/ModPediaClient.java'
+            exclude 'io/ctyx/modpedia/ai/AiAssistantSession.java'
+        }
+        resources {
+            srcDirs = ['src/main/resources']
+            exclude 'assets/modpedia/**'
+            exclude 'META-INF/neoforge.mods.toml'
+        }
+    }
+}
+
+configurations {
+    workerImplementation.extendsFrom implementation
+    workerCompileOnly.extendsFrom compileOnly
+}
+
+tasks.named('compileWorkerJava', JavaCompile).configure {
+    options.release = 17
+    options.encoding = 'UTF-8'
+}
+
+def workerJarTask = tasks.register('workerJar', Jar) {
+    group = 'build'
+    description = 'Build the standalone Java 17 ModPedia Worker JAR.'
+    archiveBaseName = 'modpedia-worker'
+    archiveVersion = project.mod_version
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    dependsOn tasks.named('workerClasses')
+    from sourceSets.worker.output
+    // Worker dependencies are placed directly in the standalone artifact. The game
+    // mod JAR remains unchanged and does not consume this configuration.
+    from {
+        configurations.workerRuntimeClasspath
+                .findAll { it.name.endsWith('.jar') }
+                .collect { zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    manifest {
+        attributes('Main-Class': 'io.ctyx.modpedia.worker.WorkerMain')
+    }
+}
+
+tasks.register('workerClassMajorSelfTest') {
+    group = 'verification'
+    dependsOn workerJarTask
+    def workerArchive = workerJarTask.flatMap { it.archiveFile }
+    doLast {
+        def workerFile = workerArchive.get().asFile
+        def zip = new java.util.zip.ZipFile(workerFile)
+        try {
+            def entry = zip.getEntry('io/ctyx/modpedia/worker/WorkerMain.class')
+            if (entry == null) {
+                throw new GradleException('Worker JAR 缺少 WorkerMain.class')
+            }
+            def bytes = zip.getInputStream(entry).withCloseable { it.readNBytes(8) }
+            if (bytes.length < 8 || bytes[0] != (byte) 0xca || bytes[1] != (byte) 0xfe
+                    || bytes[2] != (byte) 0xba || bytes[3] != (byte) 0xbe
+                    || bytes[6] != (byte) 0x00 || bytes[7] != (byte) 0x3d) {
+                throw new GradleException("Worker JAR 未通过 Java 17 class major 检查：${bytes.collect { it & 0xff }}")
+            }
+        } finally {
+            zip.close()
+        }
+        println "Worker Java 17 class major verified: ${workerFile}"
+    }
+}
+
 neoForge {
     // Specify the version of NeoForge to use.
     version = project.neo_version
