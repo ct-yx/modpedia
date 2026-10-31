@@ -109,6 +109,12 @@ configurations {
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
 
+    // client-core 的 Java 8 Ed25519 验签在 Java 8/旧运行库上使用该 provider；
+    // 运行时由主模组提供，Worker JAR 仍保持独立且不会被嵌入。
+    implementation("net.i2p.crypto:eddsa:0.3.0")
+    // ForgeGradle 的 jarJar 配置才会把 provider 作为运行时依赖写入最终模组 JAR。
+    jarJar("net.i2p.crypto:eddsa:[0.3.0,0.4)")
+
     // SQLite is the derived runtime search index. The driver is embedded into the mod JAR.
     compileOnly("org.xerial:sqlite-jdbc:3.53.2.1") {
         version {

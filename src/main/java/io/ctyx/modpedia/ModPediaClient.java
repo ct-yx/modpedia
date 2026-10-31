@@ -14,6 +14,7 @@ import io.ctyx.modpedia.client.MockAssistantSession;
 import io.ctyx.modpedia.client.FloatingAssistantWindow;
 import io.ctyx.modpedia.client.ModPediaBridge;
 import io.ctyx.modpedia.client.PonderJsCompatibility;
+import io.ctyx.modpedia.client.RuntimeItemContextReader;
 import io.ctyx.modpedia.client.StartupKnowledgeBootstrap;
 import io.ctyx.modpedia.client.TaskWikiSyncService;
 import io.ctyx.modpedia.client.WorkerAssistantSession;
@@ -78,6 +79,9 @@ public final class ModPediaClient {
         // 直接读取极小的 FTBQ SNBT 文件。多人或本地文件不可用时，游戏 JVM 才
         // 读取 TeamData。Worker 收到当前进度后才能查询 knowledge.db 的静态任务定义。
         ModPediaBridge bridge = ModPediaBridge.get();
+        // 运行时 Tooltip 是可选能力：只有 Forge 适配器注册后才声明能力，
+        // 缺少 Worker 新实现时由 Core 自动回退静态 item_catalog。
+        bridge.setRuntimeItemContextHandler(new RuntimeItemContextReader());
         bridge.setRuntimeContextHandler(request -> {
             var localFile = FTB_QUESTS.localFileDescriptor(request.query());
             var completedSnapshot = FTB_QUESTS.completedSnapshot(request.query());

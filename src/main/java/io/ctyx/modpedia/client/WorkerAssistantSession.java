@@ -77,6 +77,12 @@ public final class WorkerAssistantSession implements AssistantSession {
         }
         messages.add(new ChatMessage(MessageRole.USER, normalized, List.of()));
         String requestId = UUID.randomUUID().toString();
+        List<String> explicitlyReferencedItems = ItemTokenParser.parse(normalized, false).references().stream()
+                .filter(reference -> "item".equals(reference.kind()))
+                .map(ItemReference::id)
+                .distinct()
+                .toList();
+        bridge.approveRuntimeItemContext(requestId, explicitlyReferencedItems);
         activeRequestId = requestId;
         lastPrompt = normalized;
         assistantDraft = "";
@@ -91,6 +97,7 @@ public final class WorkerAssistantSession implements AssistantSession {
                 null
         );
         if (!sent) {
+            bridge.clearRuntimeItemContextApproval(requestId);
             activeRequestId = "";
             publish(new AssistantUiState.Error(messages, "ModPedia Worker 连接不可用，请稍后重试。"));
         }

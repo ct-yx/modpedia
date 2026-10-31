@@ -23,7 +23,9 @@ import javax.crypto.spec.SecretKeySpec;
  * 边界。游戏进程和 Worker 进程都只依赖这里定义的字段。</p>
  */
 public final class WorkerProtocol {
+    /** 当前协议版本；只新增字段和消息，不改变 v1 字段语义。 */
     public static final int VERSION = 2;
+    /** 已发布旧模组仍可使用的协议版本。 */
     public static final int LEGACY_VERSION = 1;
     /** 单条 JSONL 消息的 UTF-8 字节上限，避免 readLine 无界分配内存。 */
     public static final int MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024;
@@ -38,6 +40,14 @@ public final class WorkerProtocol {
     public static final String CHAT_CANCEL = "chat.cancel";
     public static final String RUNTIME_CONTEXT_REQUEST = "runtime_context_request";
     public static final String RUNTIME_CONTEXT_RESPONSE = "runtime_context_response";
+    /** runtime_context_request 的可选物品 Tooltip 请求类型。 */
+    public static final String RUNTIME_ITEM_CONTEXT_KIND = "item_tooltip";
+    public static final String RUNTIME_ITEM_CONTEXT_CAPABILITY = "runtime_item_context";
+    /** 每次 AI 工具查询最多向客户端读取五个已确认物品。 */
+    public static final int MAX_RUNTIME_ITEM_CONTEXT_ITEMS = 5;
+    public static final int MAX_RUNTIME_ITEM_CONTEXT_BYTES = 64 * 1024;
+    public static final int MAX_RUNTIME_ITEM_ID_CHARS = 256;
+    public static final int MAX_RUNTIME_ITEM_TEXT_CHARS = 12_000;
     public static final String RECIPE_QUERY_REQUEST = "recipe_query_request";
     public static final String RECIPE_QUERY_RESPONSE = "recipe_query_response";
     public static final String KNOWLEDGE_REBUILD = "knowledge.rebuild";
@@ -67,6 +77,8 @@ public final class WorkerProtocol {
     public static final String CANCELLED = "cancelled";
     public static final String SHUTDOWN = "shutdown";
     public static final String CONVERSATION_RESUME = "conversation.resume";
+    /** Worker 可选增量会话事件/断线恢复能力。 */
+    public static final String CONVERSATION_RESUME_CAPABILITY = "conversation_resume";
     public static final String CONVERSATION_EVENT = "conversation.event";
 
     private WorkerProtocol() {
@@ -87,6 +99,7 @@ public final class WorkerProtocol {
         return integer(message, "protocol_version", -1) == VERSION;
     }
 
+    /** v2 Worker 必须继续接受旧 v1 客户端。 */
     public static boolean isSupportedVersion(JsonObject message) {
         int version = integer(message, "protocol_version", -1);
         return version == VERSION || version == LEGACY_VERSION;

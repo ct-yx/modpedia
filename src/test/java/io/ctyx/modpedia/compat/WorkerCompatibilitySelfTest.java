@@ -19,6 +19,38 @@ public final class WorkerCompatibilitySelfTest {
         WorkerCompatibility.addWorkerAck(ack);
         check(WorkerCompatibility.isCompatibleAck(ack), "当前 Worker 响应应通过兼容检查");
         check(ack.has("worker_capabilities"), "Worker 握手应携带能力集合");
+        check(WorkerCompatibility.supportsOptionalCapability(
+                ack,
+                WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+        ), "新版 Worker 应声明运行时 Tooltip 可选能力");
+        check(WorkerCompatibility.supportsOptionalCapability(
+                ack,
+                WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
+        ), "新版 Worker 应声明会话恢复可选能力");
+
+        JsonObject oldWorkerAck = ack.deepCopy();
+        oldWorkerAck.remove("worker_optional_capabilities");
+        check(WorkerCompatibility.isCompatibleAck(oldWorkerAck),
+                "缺少可选能力的旧 Worker 仍应通过基础握手");
+        check(!WorkerCompatibility.supportsOptionalCapability(
+                oldWorkerAck,
+                WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+        ), "旧 Worker 缺少 Tooltip 能力时必须返回 false 以便降级");
+        check(!WorkerCompatibility.supportsOptionalCapability(
+                oldWorkerAck,
+                WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
+        ), "旧 Worker 缺少会话恢复能力时必须返回 false");
+
+        JsonObject clientHello = WorkerProtocol.message(WorkerProtocol.HELLO, "optional-hello");
+        WorkerCompatibility.addClientHello(clientHello);
+        WorkerCompatibility.addClientOptionalCapability(
+                clientHello,
+                WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
+        );
+        check(WorkerCompatibility.supportsOptionalCapability(
+                clientHello,
+                WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
+        ), "客户端应在握手中声明会话恢复可选能力");
 
         JsonObject wrongBaseline = hello.deepCopy();
         wrongBaseline.addProperty("worker_baseline", "worker-baseline-999");

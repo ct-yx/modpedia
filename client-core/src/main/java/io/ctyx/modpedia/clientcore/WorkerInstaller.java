@@ -11,7 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 /** 下载、校验和原子激活 Worker；所有变更先落到 staging。 */
 public final class WorkerInstaller {
@@ -67,6 +67,7 @@ public final class WorkerInstaller {
     public InstallResult install(WorkerManifest manifest, ArtifactSource source) throws IOException {
         if (manifest == null) throw new IllegalArgumentException("Worker 清单不能为空");
         if (source == null) throw new IllegalArgumentException("Worker 下载源不能为空");
+        requireTrustedManifest(manifest);
         Files.createDirectories(paths.root());
         Files.createDirectories(paths.staging());
         try (FileChannel channel = FileChannel.open(paths.installLock(), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
@@ -81,9 +82,7 @@ public final class WorkerInstaller {
                 try (InputStream input = source.open(url)) {
                     Files.copy(input, artifact, StandardCopyOption.REPLACE_EXISTING);
                     ArtifactVerifier.verifySha256(artifact, manifest.sha256());
-                    if (publicKey != null && manifest.signature() != null && !manifest.signature().trim().isEmpty()) {
-                        ArtifactVerifier.verifyEd25519(artifact, manifest.signature(), Base64Support.encode(publicKey));
-                    }
+                    ArtifactVerifier.verifyEd25519(manifest.signaturePayload(), manifest.signature(), Base64Support.encode(publicKey));
                     selected = url;
                     break;
                 } catch (IOException failure) {
@@ -92,7 +91,7 @@ public final class WorkerInstaller {
                 }
             }
             if (selected == null) throw new IOException("Worker 主源和备用源均失败", last);
-            Files.write(stagingRoot.resolve("manifest.json"), manifest.toJson().getBytes("UTF-8"));
+            Files.write(stagingRoot.resolve("manifest.json"), manifest.toJson().getBytes(StandardCharsets.UTF_8));
             Path active = paths.current();
             Path backup = paths.root().resolve("current.previous");
             if (Files.exists(active)) {
@@ -108,6 +107,32 @@ public final class WorkerInstaller {
             Files.write(paths.installState(), ("{\"worker_version\":\"" + JsonEscaper.escape(manifest.workerVersion()) + "\",\"source_url\":\"" + JsonEscaper.escape(selected) + "\"}\n").getBytes("UTF-8"));
             deleteTree(backup);
             return new InstallResult(paths.workerJar(), manifest, selected);
+        }
+    }
+
+    /** 校验共享目录中已安装的 Worker，启动前不得信任文件存在性。 */
+    public WorkerManifest verifyInstalled() throws IOException {
+        if (!Files.isRegularFile(paths.workerJar()) || !Files.isRegularFile(paths.manifest())) {
+            throw new IOException("共享 Worker 安装不完整；请重新安装 Worker");
+        }
+        WorkerManifest manifest;
+        try {
+            manifest = WorkerManifest.parse(new String(Files.readAllBytes(paths.manifest()), StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException failure) {
+            throw new IOException("共享 Worker 清单无效；请重新安装 Worker", failure);
+        }
+        requireTrustedManifest(manifest);
+        ArtifactVerifier.verifySha256(paths.workerJar(), manifest.sha256());
+        ArtifactVerifier.verifyEd25519(manifest.signaturePayload(), manifest.signature(), Base64Support.encode(publicKey));
+        return manifest;
+    }
+
+    private void requireTrustedManifest(WorkerManifest manifest) throws IOException {
+        if (publicKey == null || publicKey.length == 0) {
+            throw new IOException("没有配置可信的 Worker Ed25519 公钥；已停止安装");
+        }
+        if (manifest.javaMajor() != 17) {
+            throw new IOException("不支持的 Worker Java 主版本：" + manifest.javaMajor());
         }
     }
 

@@ -1,7 +1,9 @@
 package io.ctyx.modpedia.client;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiSettings;
+import io.ctyx.modpedia.api.RuntimeItemContext;
 import io.ctyx.modpedia.clientcore.ArtifactVerifier;
 import io.ctyx.modpedia.clientcore.JavaRuntime;
 import io.ctyx.modpedia.clientcore.PagesManifestSource;
@@ -40,8 +42,10 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -82,6 +86,10 @@ public final class ModPediaBridge {
     private final Map<String, Consumer<JsonObject>> requestListeners = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<JsonObject>> responses = new ConcurrentHashMap<>();
     private final Map<String, Boolean> knowledgeRequests = new ConcurrentHashMap<>();
+    /** 每个聊天请求只允许读取用户明确引用的物品 ID，终态/取消/断线后释放。 */
+    private final Map<String, Set<String>> runtimeItemContextApprovals = new ConcurrentHashMap<>();
+    /** 将聊天请求关联到其 Worker 侧运行时 waiter，终态时一并取消。 */
+    private final Map<String, Set<String>> runtimeItemContextKeys = new ConcurrentHashMap<>();
     /**
      * 物品目录通过文件传输时，载荷的生命周期不能依赖调用方线程是否等到
      * 响应。超时、合并和断线都可能发生在 requestAndWait 返回之后，因此按
@@ -101,6 +109,8 @@ public final class ModPediaBridge {
     });
     /** 任务运行时回退读取由单飞、有界队列和短时缓存协调。 */
     private final RuntimeContextCoordinator<RuntimeContextResult> runtimeContextCoordinator;
+    /** 已确认物品的动态 Tooltip 读取与任务快照隔离。 */
+    private final RuntimeContextCoordinator<List<RuntimeItemContext>> runtimeItemContextCoordinator;
     /** 启动、关闭和重连共享同一生命周期状态锁；不能让关闭期间重新拉起 Worker。 */
     private final Object lifecycleLock = new Object();
     /** writer、socket 和 ready 的检查与实际写入共享同一发送边界。 */
@@ -117,6 +127,8 @@ public final class ModPediaBridge {
     private volatile ScheduledFuture<?> reconnectFuture;
     private volatile ScheduledFuture<?> heartbeatFuture;
     private volatile RuntimeContextHandler runtimeContextHandler;
+    private volatile RuntimeItemContextHandler runtimeItemContextHandler;
+    private volatile boolean workerSupportsRuntimeItemContext;
     private volatile RecipeQueryHandler recipeQueryHandler;
     private volatile KnowledgeStatus knowledgeStatus = KnowledgeStatus.initial();
     private volatile Object observedLevel;
@@ -129,6 +141,15 @@ public final class ModPediaBridge {
                 () -> RuntimeContextResult.unavailable("客户端运行时读取已取消"),
                 RuntimeContextResult::cacheable,
                 this::deliverRuntimeContext
+        );
+        runtimeItemContextCoordinator = new RuntimeContextCoordinator<>(
+                lifecycle,
+                List::of,
+                ignored -> false,
+                this::deliverRuntimeItemContext,
+                2,
+                2_500L,
+                0L
         );
     }
 
@@ -249,12 +270,28 @@ public final class ModPediaBridge {
                 String helloId = UUID.randomUUID().toString();
                 JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, helloId);
                 WorkerCompatibility.addClientHello(hello);
+                if (runtimeItemContextHandler != null) {
+                    WorkerCompatibility.addClientOptionalCapability(
+                            hello,
+                            WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+                    );
+                }
+                // 协议声明与 Core v2 对齐；本适配器目前仍使用完整会话快照，
+                // conversation.resume 的请求端接入留待后续版本同步。
+                WorkerCompatibility.addClientOptionalCapability(
+                        hello,
+                        WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
+                );
                 hello.addProperty("handshake_mode", "challenge");
                 send(hello);
-                JsonObject ack = WorkerProtocol.read(reader);
-                if (ack != null && WorkerProtocol.HELLO_CHALLENGE.equals(
-                        WorkerProtocol.string(ack, "type"))) {
-                    String challenge = WorkerProtocol.string(ack, "challenge");
+                JsonObject firstHandshake = WorkerProtocol.read(reader);
+                JsonObject ack = firstHandshake;
+                if (firstHandshake != null && WorkerProtocol.HELLO_CHALLENGE.equals(
+                        WorkerProtocol.string(firstHandshake, "type"))) {
+                    String challenge = WorkerProtocol.string(firstHandshake, "challenge");
+                    if (challenge.isBlank()) {
+                        throw new IOException("Worker 握手 challenge 为空");
+                    }
                     JsonObject proof = WorkerProtocol.message(WorkerProtocol.HELLO_PROOF, helloId);
                     proof.addProperty("challenge", challenge);
                     proof.addProperty("proof", WorkerProtocol.challengeProof(token, challenge));
@@ -277,6 +314,10 @@ public final class ModPediaBridge {
                     }
                     ready = true;
                 }
+                workerSupportsRuntimeItemContext = WorkerCompatibility.supportsOptionalCapability(
+                        ack,
+                        WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY
+                );
                 Thread readerThread = new Thread(
                         () -> readEvents(reader, accepted, launchedProcess, generation),
                         "modpedia-worker-ipc-reader"
@@ -389,6 +430,42 @@ public final class ModPediaBridge {
         runtimeContextHandler = handler;
     }
 
+    /** 注册版本专属的 Tooltip 读取器；未注册时不会在 hello 中虚报能力。 */
+    public void setRuntimeItemContextHandler(RuntimeItemContextHandler handler) {
+        runtimeItemContextHandler = handler;
+    }
+
+    /** 登记一次聊天请求中由用户明确引用的物品；Worker 请求会再次按此集合过滤。 */
+    public void approveRuntimeItemContext(String chatRequestId, List<String> itemIds) {
+        if (chatRequestId == null || chatRequestId.isBlank() || itemIds == null || itemIds.isEmpty()) {
+            return;
+        }
+        LinkedHashSet<String> approved = new LinkedHashSet<>();
+        for (String itemId : itemIds) {
+            String normalized = normalizeRuntimeItemId(itemId);
+            if (!normalized.isBlank()) {
+                approved.add(normalized);
+                if (approved.size() >= WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS) {
+                    break;
+                }
+            }
+        }
+        if (approved.isEmpty()) {
+            return;
+        }
+        runtimeItemContextApprovals.put(chatRequestId, Set.copyOf(approved));
+    }
+
+    public void clearRuntimeItemContextApproval(String chatRequestId) {
+        if (chatRequestId != null && !chatRequestId.isBlank()) {
+            runtimeItemContextApprovals.remove(chatRequestId);
+            Set<String> keys = runtimeItemContextKeys.remove(chatRequestId);
+            if (keys != null) {
+                keys.forEach(runtimeItemContextCoordinator::cancel);
+            }
+        }
+    }
+
     /** 注册客户端配方查询器；实现位于可选 JEI 适配器，Worker 不加载它。 */
     public void setRecipeQueryHandler(RecipeQueryHandler handler) {
         recipeQueryHandler = handler;
@@ -407,7 +484,10 @@ public final class ModPediaBridge {
             worldObserved = true;
         }
         if (changed) {
+            runtimeItemContextApprovals.clear();
+            runtimeItemContextKeys.clear();
             runtimeContextCoordinator.invalidate();
+            runtimeItemContextCoordinator.invalidate();
         }
     }
 
@@ -540,6 +620,7 @@ public final class ModPediaBridge {
             return;
         }
         runtimeContextCoordinator.cancel(requestId);
+        clearRuntimeItemContextApproval(requestId);
         JsonObject request = WorkerProtocol.message(WorkerProtocol.CHAT_CANCEL, requestId);
         sendIfReady(request);
     }
@@ -660,8 +741,10 @@ public final class ModPediaBridge {
         stopProcess();
         cleanupAllItemPayloads();
         runtimeContextCoordinator.invalidate();
+        runtimeItemContextCoordinator.invalidate();
         itemPayloadWriter.shutdownNow();
         runtimeContextCoordinator.close();
+        runtimeItemContextCoordinator.close();
         lifecycle.shutdownNow();
     }
 
@@ -1056,9 +1139,13 @@ public final class ModPediaBridge {
         }
         closeQuietly(observedSocket);
         destroyQuietly(observedProcess);
+        workerSupportsRuntimeItemContext = false;
+        runtimeItemContextApprovals.clear();
+        runtimeItemContextKeys.clear();
         // Worker 已经无法再消费运行时快照；先完成并取消客户端侧 waiter，避免
         // 重连后旧请求把过期的世界/玩家进度发送到新连接。
         runtimeContextCoordinator.invalidate();
+        runtimeItemContextCoordinator.invalidate();
         notifyPendingRequests(message);
         responses.values().forEach(future -> future.completeExceptionally(
                 new IOException("Worker 连接断开")
@@ -1176,7 +1263,12 @@ public final class ModPediaBridge {
         String requestId = WorkerProtocol.string(event, "request_id");
         updateKnowledgeStatus(type, requestId, event);
         if (WorkerProtocol.RUNTIME_CONTEXT_REQUEST.equals(type)) {
-            handleRuntimeContextRequest(event);
+            if (WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND.equals(
+                    WorkerProtocol.string(event, "request_kind"))) {
+                handleRuntimeItemContextRequest(event);
+            } else {
+                handleRuntimeContextRequest(event);
+            }
         } else if (WorkerProtocol.RECIPE_QUERY_REQUEST.equals(type)) {
             handleRecipeQueryRequest(event);
         }
@@ -1191,6 +1283,7 @@ public final class ModPediaBridge {
         if (WorkerProtocol.COMPLETED.equals(type)
                 || WorkerProtocol.ERROR.equals(type)
                 || WorkerProtocol.CANCELLED.equals(type)) {
+            clearRuntimeItemContextApproval(requestId);
             cleanupItemPayload(requestId);
             removeRequestListener(requestId);
         }
@@ -1310,6 +1403,81 @@ public final class ModPediaBridge {
     }
 
     /**
+     * 处理 Worker 的临时物品 Tooltip 请求。读取前按聊天请求的明确引用集合
+     * 再过滤一次，Worker 或恶意/过期事件都不能扩大读取范围。
+     */
+    private void handleRuntimeItemContextRequest(JsonObject event) {
+        String requestId = WorkerProtocol.string(event, "request_id");
+        RuntimeItemContextHandler handler = runtimeItemContextHandler;
+        if (handler == null || !workerSupportsRuntimeItemContext) {
+            sendRuntimeItemContext(requestId, List.of());
+            return;
+        }
+        try {
+            String chatRequestId = WorkerProtocol.string(event, "chat_request_id");
+            Set<String> approved = runtimeItemContextApprovals.get(chatRequestId);
+            if (approved == null || approved.isEmpty()) {
+                sendRuntimeItemContext(requestId, List.of());
+                return;
+            }
+            int maxItems = WorkerProtocol.integer(
+                    event,
+                    "max_items",
+                    WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS
+            );
+            List<String> requested = WorkerPayloadCodec.strings(
+                    WorkerPayloadCodec.array(event, "item_ids")
+            );
+            LinkedHashSet<String> allowed = new LinkedHashSet<>();
+            int limit = Math.max(1, Math.min(
+                    WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS,
+                    maxItems
+            ));
+            for (String itemId : requested) {
+                String normalized = normalizeRuntimeItemId(itemId);
+                if (approved.contains(normalized)) {
+                    allowed.add(normalized);
+                }
+                if (allowed.size() >= limit) {
+                    break;
+                }
+            }
+            if (allowed.isEmpty()) {
+                sendRuntimeItemContext(requestId, List.of());
+                return;
+            }
+            RuntimeItemContextRequest request = new RuntimeItemContextRequest(
+                    requestId,
+                    chatRequestId,
+                    WorkerProtocol.string(event, "conversation_id"),
+                    WorkerProtocol.string(event, "language"),
+                    limit,
+                    List.copyOf(allowed)
+            );
+            String deduplicationKey = chatRequestId.isBlank()
+                    ? request.requestId()
+                    : chatRequestId + "|" + request.language() + "|"
+                    + String.join(",", request.itemIds());
+            boolean submitted = runtimeItemContextCoordinator.submit(
+                    request.requestId(),
+                    deduplicationKey,
+                    () -> readRuntimeItemContextOnClientThread(handler, request)
+            );
+            if (!chatRequestId.isBlank()) {
+                runtimeItemContextKeys
+                        .computeIfAbsent(chatRequestId, ignored -> ConcurrentHashMap.newKeySet())
+                        .add(deduplicationKey);
+            }
+            if (!submitted) {
+                sendRuntimeItemContext(requestId, List.of());
+            }
+        } catch (Throwable failure) {
+            // Tooltip 是可选增强；任何格式或读取错误都回退静态 item_catalog。
+            sendRuntimeItemContext(requestId, List.of());
+        }
+    }
+
+    /**
      * JEI 只能在客户端主线程访问。IPC reader 线程收到请求后只负责排队，避免
      * 模型请求因为读配方而直接触碰 Minecraft 状态；返回值仍通过同一 JSONL
      * 连接回到 Worker。
@@ -1379,6 +1547,90 @@ public final class ModPediaBridge {
             return;
         }
         sendRuntimeContext(delivery.requestId(), delivery.value());
+    }
+
+    private void deliverRuntimeItemContext(
+            RuntimeContextCoordinator.Delivery<List<RuntimeItemContext>> delivery
+    ) {
+        if (delivery == null) {
+            return;
+        }
+        sendRuntimeItemContext(delivery.requestId(), delivery.value());
+    }
+
+    /** Tooltip/ItemStack 只能在 Minecraft 客户端线程读取。 */
+    private List<RuntimeItemContext> readRuntimeItemContextOnClientThread(
+            RuntimeItemContextHandler handler,
+            RuntimeItemContextRequest request
+    ) {
+        if (handler == null || request == null) {
+            return List.of();
+        }
+        try {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft == null) {
+                return List.of();
+            }
+            if (minecraft.isSameThread()) {
+                List<RuntimeItemContext> result = handler.read(request);
+                return result == null ? List.of() : List.copyOf(result);
+            }
+            CompletableFuture<List<RuntimeItemContext>> result = new CompletableFuture<>();
+            minecraft.execute(() -> {
+                if (result.isCancelled()) {
+                    return;
+                }
+                try {
+                    List<RuntimeItemContext> value = handler.read(request);
+                    result.complete(value == null ? List.of() : List.copyOf(value));
+                } catch (Throwable ignored) {
+                    result.complete(List.of());
+                }
+            });
+            try {
+                return result.get(2_000L, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                result.cancel(false);
+                return List.of();
+            } catch (java.util.concurrent.TimeoutException | ExecutionException timeout) {
+                result.cancel(false);
+                return List.of();
+            }
+        } catch (Throwable ignored) {
+            return List.of();
+        }
+    }
+
+    private void sendRuntimeItemContext(String requestId, List<RuntimeItemContext> contexts) {
+        sendIfReady(runtimeItemContextResponse(requestId, contexts));
+    }
+
+    /** 纯协议响应构造，超限时发送空数组以触发 Worker 静态回退。 */
+    static JsonObject runtimeItemContextResponse(
+            String requestId,
+            List<RuntimeItemContext> contexts
+    ) {
+        JsonObject response = WorkerProtocol.message(
+                WorkerProtocol.RUNTIME_CONTEXT_RESPONSE,
+                requestId
+        );
+        response.addProperty("request_kind", WorkerProtocol.RUNTIME_ITEM_CONTEXT_KIND);
+        JsonArray values = new JsonArray();
+        if (contexts != null) {
+            for (RuntimeItemContext context : contexts) {
+                if (context != null) {
+                    values.add(WorkerPayloadCodec.runtimeItemContext(context));
+                }
+            }
+        }
+        response.add("runtime_item_context", values);
+        if (WorkerProtocol.utf8Length(response.toString())
+                > WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_BYTES) {
+            response.add("runtime_item_context", new JsonArray());
+            response.addProperty("runtime_item_context_truncated", true);
+        }
+        return response;
     }
 
     private void sendRuntimeContext(String requestId, RuntimeContextResult value) {
@@ -1494,6 +1746,7 @@ public final class ModPediaBridge {
         Process currentProcess;
         synchronized (writeLock) {
             ready = false;
+            workerSupportsRuntimeItemContext = false;
             connectionGeneration.incrementAndGet();
             currentSocket = socket;
             currentProcess = process;
@@ -1503,6 +1756,13 @@ public final class ModPediaBridge {
         }
         closeQuietly(currentSocket);
         destroyQuietly(currentProcess);
+        runtimeItemContextApprovals.clear();
+        runtimeItemContextKeys.clear();
+        runtimeItemContextCoordinator.invalidate();
+    }
+
+    private static String normalizeRuntimeItemId(String itemId) {
+        return itemId == null ? "" : itemId.strip().toLowerCase(java.util.Locale.ROOT);
     }
 
     private String messageOf(Throwable failure) {
@@ -1514,9 +1774,51 @@ public final class ModPediaBridge {
     public record RuntimeContextRequest(String requestId, TaskQuery query) {
     }
 
+    /** Worker 请求的运行时物品上下文；只包含协议文本，不包含游戏对象。 */
+    public record RuntimeItemContextRequest(
+            String requestId,
+            String chatRequestId,
+            String conversationId,
+            String language,
+            int maxItems,
+            List<String> itemIds
+    ) {
+        public RuntimeItemContextRequest {
+            requestId = requestId == null ? "" : requestId.strip();
+            chatRequestId = chatRequestId == null ? "" : chatRequestId.strip();
+            conversationId = conversationId == null ? "" : conversationId.strip();
+            language = language == null || language.isBlank()
+                    ? "neutral"
+                    : language.strip().toLowerCase(java.util.Locale.ROOT);
+            int limit = Math.max(1, Math.min(
+                    WorkerProtocol.MAX_RUNTIME_ITEM_CONTEXT_ITEMS,
+                    maxItems
+            ));
+            LinkedHashSet<String> unique = new LinkedHashSet<>();
+            if (itemIds != null) {
+                for (String itemId : itemIds) {
+                    String normalized = normalizeRuntimeItemId(itemId);
+                    if (!normalized.isBlank()) {
+                        unique.add(normalized);
+                    }
+                    if (unique.size() >= limit) {
+                        break;
+                    }
+                }
+            }
+            maxItems = limit;
+            itemIds = List.copyOf(unique);
+        }
+    }
+
     @FunctionalInterface
     public interface RuntimeContextHandler {
         RuntimeContextResult read(RuntimeContextRequest request);
+    }
+
+    @FunctionalInterface
+    public interface RuntimeItemContextHandler {
+        List<RuntimeItemContext> read(RuntimeItemContextRequest request);
     }
 
     @FunctionalInterface

@@ -34,8 +34,10 @@ public final class WorkerCompatibility {
             "conversations",
             "ai_settings"
     );
+    /** 可选能力不参与握手拒绝；缺失时 Worker 回退静态 item_catalog。 */
     public static final List<String> OPTIONAL_CAPABILITIES = List.of(
-            "runtime_item_context"
+            WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY,
+            WorkerProtocol.CONVERSATION_RESUME_CAPABILITY
     );
 
     private WorkerCompatibility() {
@@ -93,31 +95,37 @@ public final class WorkerCompatibility {
                 + ", worker_java=" + WorkerProtocol.string(message, "worker_java");
     }
 
+    /** 由已实现的版本适配器显式声明可选能力，避免旧适配层虚报能力。 */
     public static void addClientOptionalCapability(JsonObject hello, String capability) {
-        if (hello == null || capability == null || capability.isBlank()) return;
+        if (hello == null || capability == null || capability.isBlank()) {
+            return;
+        }
         JsonArray values = hello.has("client_optional_capabilities")
                 && hello.get("client_optional_capabilities").isJsonArray()
-                ? hello.getAsJsonArray("client_optional_capabilities") : new JsonArray();
+                ? hello.getAsJsonArray("client_optional_capabilities")
+                : new JsonArray();
         boolean exists = false;
         for (JsonElement value : values) {
-            if (value.isJsonPrimitive() && capability.equals(value.getAsString())) exists = true;
+            if (value.isJsonPrimitive() && capability.equals(value.getAsString())) {
+                exists = true;
+                break;
+            }
         }
-        if (!exists) values.add(capability);
+        if (!exists) {
+            values.add(capability);
+        }
         hello.add("client_optional_capabilities", values);
     }
 
+    /** 读取新版本的可选能力；旧客户端没有该字段时返回 false。 */
     public static boolean supportsOptionalCapability(JsonObject message, String capability) {
-        if (message == null || capability == null || capability.isBlank()) return false;
-        for (String field : List.of("client_optional_capabilities", "worker_optional_capabilities",
-                "client_capabilities", "worker_capabilities")) {
-            JsonElement value = message.get(field);
-            if (value != null && value.isJsonArray()) {
-                for (JsonElement item : value.getAsJsonArray()) {
-                    if (item.isJsonPrimitive() && capability.equals(item.getAsString())) return true;
-                }
-            }
+        if (message == null || capability == null || capability.isBlank()) {
+            return false;
         }
-        return false;
+        return containsCapability(message.get("client_optional_capabilities"), capability)
+                || containsCapability(message.get("worker_optional_capabilities"), capability)
+                || containsCapability(message.get("client_capabilities"), capability)
+                || containsCapability(message.get("worker_capabilities"), capability);
     }
 
     private static boolean hasCapabilities(JsonObject message, String field) {
@@ -144,6 +152,18 @@ public final class WorkerCompatibility {
         JsonArray result = new JsonArray();
         values.forEach(result::add);
         return result;
+    }
+
+    private static boolean containsCapability(JsonElement value, String capability) {
+        if (value == null || !value.isJsonArray()) {
+            return false;
+        }
+        for (JsonElement item : value.getAsJsonArray()) {
+            if (item.isJsonPrimitive() && capability.equals(item.getAsString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String javaVersion() {
