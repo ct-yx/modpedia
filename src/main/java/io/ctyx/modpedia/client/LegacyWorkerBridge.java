@@ -403,13 +403,6 @@ public final class LegacyWorkerBridge {
 
     private Path ensureWorkerJar() throws IOException {
         Path workerJar = paths.workerJar();
-        if (Files.isRegularFile(workerJar)) {
-            return workerJar;
-        }
-        WorkerManifest manifest = new PagesManifestSource(
-                System.getProperty("modpedia.worker.manifest", WORKER_MANIFEST_URL),
-                15_000
-        ).fetch();
         byte[] publicKey = null;
         String encoded = System.getProperty("modpedia.worker.publicKey", "").trim();
         if (!encoded.isEmpty()) {
@@ -422,6 +415,16 @@ public final class LegacyWorkerBridge {
         WorkerInstaller installer = new WorkerInstaller(
                 new WorkerPaths(paths.workerInstallRoot()), publicKey
         );
+        // 启动前即使已有 current/Worker JAR 也必须重新校验清单、SHA-256 和
+        // Ed25519；不能因文件存在而绕过共享安装器的 fail-closed 信任边界。
+        if (Files.isRegularFile(workerJar)) {
+            installer.verifyInstalled();
+            return workerJar;
+        }
+        WorkerManifest manifest = new PagesManifestSource(
+                System.getProperty("modpedia.worker.manifest", WORKER_MANIFEST_URL),
+                15_000
+        ).fetch();
         return installer.install(manifest, new WorkerInstaller.DefaultHttpSource(30_000)).workerJar();
     }
 

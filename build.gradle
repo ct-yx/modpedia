@@ -36,6 +36,17 @@ repositories {
     mavenCentral()
 }
 
+// client-core 的 Java 8 Ed25519 验签 provider 必须随主模组提供；Worker
+// 实现仍从独立 Java 17 Core JAR 启动，不能从此分支源码或产物中带入。
+configurations {
+    modpediaClientRuntime
+}
+
+dependencies {
+    implementation 'net.i2p.crypto:eddsa:0.3.0'
+    modpediaClientRuntime 'net.i2p.crypto:eddsa:0.3.0'
+}
+
 minecraft {
     version = "${project.minecraft_version}-${project.forge_version}"
     mappings = 'snapshot_20171003'
@@ -63,6 +74,14 @@ processResources {
 }
 
 jar {
+    // ForgeGradle 2.3 没有现代 jarJar 配置；只把 client-core 的 EdDSA
+    // provider 展开到主模组，避免将 Minecraft/Worker 依赖一起打包。
+    from {
+        configurations.modpediaClientRuntime.collect { dependency ->
+            dependency.isDirectory() ? dependency : zipTree(dependency)
+        }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
     manifest {
         attributes(
                 'Specification-Title': project.mod_name,

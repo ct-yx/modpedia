@@ -1,17 +1,14 @@
 package io.ctyx.modpedia.clientcore;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
+import java.util.Base64;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 
 /** 纯 Java client-core 回归，不加载 Minecraft 或 Worker 实现。 */
 public final class ClientCoreSelfTest {
@@ -23,6 +20,7 @@ public final class ClientCoreSelfTest {
         protocolProofAndResume();
         tooltipApprovalBoundary();
         installAtomicAndFallback();
+        missingTrustFailsClosed();
         ed25519Verification();
         System.out.println("ModPedia client-core self-test passed");
     }
@@ -30,7 +28,7 @@ public final class ClientCoreSelfTest {
     private static void manifestRoundTrip() {
         WorkerManifest manifest = new WorkerManifest(1, "stable", "2.0.0", 17, 2,
                 "https://primary/worker.jar", Arrays.asList("https://backup/worker.jar"),
-                "aabb", "signature");
+                repeat("00", 32), signatureBase64());
         WorkerManifest parsed = WorkerManifest.parse(manifest.toJson());
         check(parsed.javaMajor() == 17 && parsed.protocolVersion() == 2, "清单数字字段应保留");
         check(parsed.artifactUrls().size() == 2, "清单主源和备用源应保留");
@@ -72,44 +70,119 @@ public final class ClientCoreSelfTest {
         Path root = Files.createTempDirectory("client-core-install-");
         try {
             WorkerPaths paths = new WorkerPaths(root.resolve("worker"));
-            byte[] payload = "worker-v2".getBytes(StandardCharsets.UTF_8);
+            // RFC 8032 第 1 组向量：空内容的 Ed25519 签名，固定覆盖 Java 8 provider。
+            byte[] payload = new byte[0];
             final String hash = sha256(payload);
             WorkerManifest manifest = new WorkerManifest(1, "stable", "2.0.0", 17, 2,
-                    "bad", Collections.singletonList("good"), hash, "");
-            WorkerInstaller installer = new WorkerInstaller(paths, null);
+                    "bad", Collections.singletonList("good"), hash, signatureBase64());
+            WorkerInstaller installer = new WorkerInstaller(paths, trustedPublicKey());
             WorkerInstaller.InstallResult result = installer.install(manifest, url -> {
                 if ("bad".equals(url)) throw new IOException("primary down");
                 return new ByteArrayInputStream(payload);
             });
             check("good".equals(result.sourceUrl()), "失败主源后应使用备用源");
             check(Files.exists(paths.workerJar()), "激活后 Worker JAR 应存在");
-            check(new String(Files.readAllBytes(paths.workerJar()), StandardCharsets.UTF_8).equals("worker-v2"), "激活内容应完整");
+            check(Files.size(paths.workerJar()) == 0, "激活内容应完整");
             check(Files.exists(paths.manifest()), "激活后应保存 manifest.json");
+            check("2.0.0".equals(installer.verifyInstalled().workerVersion()), "已安装 Worker 应校验签名后可用");
+            Files.write(paths.workerJar(), new byte[] {1});
+            expectIOException(installer::verifyInstalled, "已安装 Worker 被篡改时必须拒绝启动");
+        } finally {
+            WorkerInstaller.deleteTree(root);
+        }
+    }
+
+    private static void missingTrustFailsClosed() throws Exception {
+        Path root = Files.createTempDirectory("client-core-untrusted-");
+        try {
+            WorkerPaths paths = new WorkerPaths(root.resolve("worker"));
+            WorkerManifest manifest = new WorkerManifest(1, "stable", "2.0.0", 17, 2,
+                    "https://primary/worker.jar", Collections.<String>emptyList(),
+                    repeat("00", 32), signatureBase64());
+            expectIOException(() -> new WorkerInstaller(paths, null).install(manifest, url -> {
+                throw new AssertionError("缺少可信公钥时不得下载");
+            }), "缺少可信公钥时必须 fail closed");
+            check(!Files.exists(paths.current()), "缺少可信公钥时不得激活 Worker");
+            expectIllegalArgument(() -> new WorkerManifest(1, "stable", "2.0.0", 17, 2,
+                    "https://primary/worker.jar", Collections.<String>emptyList(), "", signatureBase64()),
+                    "缺少 SHA-256 时必须拒绝清单");
+            expectIllegalArgument(() -> new WorkerManifest(1, "stable", "2.0.0", 17, 2,
+                    "https://primary/worker.jar", Collections.<String>emptyList(), repeat("00", 32), ""),
+                    "缺少签名时必须拒绝清单");
         } finally {
             WorkerInstaller.deleteTree(root);
         }
     }
 
     private static void ed25519Verification() throws Exception {
+        Path file = Files.createTempFile("client-core-signature-", ".jar");
         try {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
-            KeyPair pair = generator.generateKeyPair();
-            byte[] payload = "signed-worker".getBytes(StandardCharsets.UTF_8);
-            Path file = Files.createTempFile("client-core-signature-", ".jar");
-            try {
-                Files.write(file, payload);
-                java.security.Signature signer = java.security.Signature.getInstance("Ed25519");
-                signer.initSign(pair.getPrivate());
-                signer.update(payload);
-                String signature = java.util.Base64.getEncoder().encodeToString(signer.sign());
-                String publicKey = java.util.Base64.getEncoder().encodeToString(pair.getPublic().getEncoded());
-                ArtifactVerifier.verifyEd25519(file, signature, publicKey);
-            } finally {
-                Files.deleteIfExists(file);
-            }
-        } catch (java.security.NoSuchAlgorithmException unavailable) {
-            System.out.println("Ed25519 provider unavailable; signature test skipped");
+            WorkerManifest manifest = signedTestManifest();
+            ArtifactVerifier.verifyEd25519(manifest.signaturePayload(), manifest.signature(),
+                    Base64.getEncoder().encodeToString(trustedPublicKey()));
+            byte[] tampered = manifest.signaturePayload();
+            tampered[tampered.length - 1] ^= 1;
+            expectIOException(() -> ArtifactVerifier.verifyEd25519(
+                    tampered, manifest.signature(), Base64.getEncoder().encodeToString(trustedPublicKey())),
+                    "篡改 canonical payload 必须拒绝签名");
+        } finally {
+            Files.deleteIfExists(file);
         }
+    }
+
+    private static byte[] trustedPublicKey() {
+        byte[] raw = Base64.getDecoder().decode("11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=");
+        byte[] x509Prefix = hexBytes("302a300506032b6570032100");
+        byte[] encoded = new byte[x509Prefix.length + raw.length];
+        System.arraycopy(x509Prefix, 0, encoded, 0, x509Prefix.length);
+        System.arraycopy(raw, 0, encoded, x509Prefix.length, raw.length);
+        return encoded;
+    }
+
+    private static String signatureBase64() {
+        return "2EQ59r/NNLWtL/3dwLX1HWweRBVl7Q9B5kNYzNPsmFSaZUdpSQPZtC3v7szDMYh7RVVeCl5NvPuOwnWwuYvyAQ==";
+    }
+
+    private static WorkerManifest signedTestManifest() {
+        return new WorkerManifest(1, "stable", "2.0.0", 17, 2,
+                "bad", Collections.singletonList("good"),
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", signatureBase64());
+    }
+
+    private static byte[] hexBytes(String hex) {
+        byte[] bytes = new byte[hex.length() / 2];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        }
+        return bytes;
+    }
+
+    private static String repeat(String value, int count) {
+        StringBuilder result = new StringBuilder(value.length() * count);
+        for (int i = 0; i < count; i++) result.append(value);
+        return result.toString();
+    }
+
+    private static void expectIOException(CheckedAction action, String message) throws Exception {
+        try {
+            action.run();
+            throw new AssertionError(message);
+        } catch (IOException expected) {
+            // 预期失败。
+        }
+    }
+
+    private static void expectIllegalArgument(CheckedAction action, String message) throws Exception {
+        try {
+            action.run();
+            throw new AssertionError(message);
+        } catch (IllegalArgumentException expected) {
+            // 预期失败。
+        }
+    }
+
+    private interface CheckedAction {
+        void run() throws Exception;
     }
 
     private static String sha256(byte[] bytes) throws Exception {
