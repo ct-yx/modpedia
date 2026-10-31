@@ -48,7 +48,7 @@ NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三�
 共享 `client-core` 和每个 Minecraft 版本各锁定一个完整 commit SHA。`release-contract.yml` 会解析全部
 锁定提交、编译并运行锁定的 Java 8 `client-core` 自测（包含 Worker challenge proof 固定向量），并检查
 1.12.2 Gradle 任务。修改发布输入时，只更新该 JSON 中的 canonical refs；工作流从 JSON 读取，不另存一份
-容易漂移的期望 SHA。
+容易漂移的期望 SHA。版本分支的锁定提交必须已推送，且该提交对应的 GitHub Actions 检查通过。
 
 ## 文件规则
 
