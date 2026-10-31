@@ -6,6 +6,7 @@ on:
     paths:
       - 'docs/site/**'
       - '.github/workflows/pages.yml'
+      - 'scripts/validate_release_artifacts.py'
   workflow_dispatch:
 
 permissions:
@@ -29,6 +30,9 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
+      - name: Validate Worker latest manifest
+        run: python3 scripts/validate_release_artifacts.py --manifest docs/site/worker/latest.json
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3

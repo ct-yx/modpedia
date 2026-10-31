@@ -150,7 +150,7 @@
           <h2>ModPedia <span>v1.4.0</span></h2>
           <p>Three compatibility lines ship together: NeoForge 1.21.1, Forge 1.20.1, and the Forge 1.12.2 / Cleanroom 0.3+ compatibility line. All three have completed current release testing.</p>
           <div class="release-meta"><span>Three JARs</span><span>Separate Worker JVM</span><span>Search-only</span><span>Apache 2.0</span></div>
-          <p class="download-security-note"><strong>Local key protection:</strong> AI settings store AES-GCM ciphertext derived from a system identifier in the user directory; the game decrypts it in memory and logs never record the API key. Do not copy user-level settings or Worker libraries into a modpack.</p>
+          <p class="download-security-note"><strong>Shared Worker:</strong> New versions use one signed Java 17 Worker JAR; the Minecraft mod JARs do not embed Worker classes. Clients read and verify the <a href="./worker/latest.json">latest manifest</a>. AI settings remain encrypted in the user directory and logs never record the API key.</p>
         </div>
         <div class="download-actions">
           <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.4.0/modpedia-1.4.0-mc1.21.1-neoforge.jar">Download 1.21.1 NeoForge <span aria-hidden="true">↓</span></a>
@@ -187,7 +187,7 @@
               <tr><th scope="row">Jade integration</th><td>✓</td><td>✓</td><td>—</td></tr>
               <tr><th scope="row">Crosshair / Tooltip target freeze and insert</th><td>✓</td><td>✓</td><td>✓</td></tr>
               <tr><th scope="row">Inline citations and manual navigation</th><td>✓</td><td>✓</td><td>✓</td></tr>
-              <tr class="matrix-support"><th scope="row">Supported versions</th><td>Minecraft 1.21.1<br>NeoForge 21.1.x<br>Java 21</td><td>Minecraft 1.20.1<br>Forge 47.x<br>Java 21</td><td>Minecraft 1.12.2<br>Forge 14.23.5.2847 / Cleanroom 0.3+<br>game Java 8 / Worker 21</td></tr>
+              <tr class="matrix-support"><th scope="row">Supported versions</th><td>Minecraft 1.21.1<br>NeoForge 21.1.x<br>game Java 21 / Worker 17</td><td>Minecraft 1.20.1<br>Forge 47.x<br>game Java 17 / Worker 17</td><td>Minecraft 1.12.2<br>Forge 14.23.5.2847 / Cleanroom 0.3+<br>game Java 8 / Worker 17</td></tr>
             </tbody>
           </table>
         </div>

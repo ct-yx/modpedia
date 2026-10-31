@@ -5,6 +5,7 @@
 - 中文：[`index.html`](index.html)
 - English：[`index.en.html`](index.en.html)
 - 当前版本：[`v1.4.0`](https://github.com/ct-yx/modpedia/releases/tag/v1.4.0)
+- Worker 清单：[`worker/latest.json`](worker/latest.json)，部署地址为 `https://ct-yx.github.io/modpedia/worker/latest.json`
 
 ## 页面内容
 
@@ -14,7 +15,7 @@
 - Minecraft 1.20.1 + Forge 47.x；
 - Minecraft 1.12.2 + Forge 14.23.5.2847 / Cleanroom 0.3+ 兼容线（同一 JAR，CurseForge 文件按 Forge 1.12.2 标记）。
 
-三条版本线均已完成当前 v1.4.0 发布测试。
+三条版本线均已完成当前 v1.4.0 发布测试。Worker 使用 Java 17 独立 JAR，主模组不内置 Worker；发布工作流在签名和校验完成后更新 Worker 清单。
 
 页面说明手册框架与内容模组的区别，并列出 Patchouli、GuideME/Guide-API、Modonomicon/APP、1.12.2 Mantle/匠魂手册、自定义 Markdown、Wiki、FTBQ、JEI、Jade、物品目录、AI、仅搜索和 Worker 隔离的版本支持情况。
 
@@ -81,6 +82,10 @@ The download section contains three JARs and a vertical feature matrix for NeoFo
 Forge 1.20.1, and the Forge 1.12.2 / Cleanroom 0.3+ compatibility line. The same 1.12.2 JAR
 supports both targets; its CurseForge file uses the Forge 1.12.2 platform marker because Cleanroom
 is Forge-API compatible. The 1.12.2 line also supports Mantle/Tinkers' Construct manuals.
+
+The Worker manifest is published at `worker/latest.json` and at
+`https://ct-yx.github.io/modpedia/worker/latest.json`. New releases publish one signed Java 17
+Worker JAR; the Minecraft mod JARs do not embed Worker classes or Worker dependencies.
 
 The site must not contain local JARs, databases, conversations, API keys, diagnostics, user paths,
 or build caches. Before publishing a modpack, remove `config/modpedia/runtime/` and keep only the

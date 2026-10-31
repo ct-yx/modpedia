@@ -5,8 +5,8 @@
 | 文件 | 目标环境 | Java |
 | --- | --- | --- |
 | `modpedia-1.4.0-mc1.21.1-neoforge.jar` | Minecraft 1.21.1 + NeoForge 21.1.x | 21 |
-| `modpedia-1.4.0-mc1.20.1-forge.jar` | Minecraft 1.20.1 + Forge 47.x | 21 |
-| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | Minecraft 1.12.2 + Forge 14.23.5.2847 / Cleanroom 0.3+ | 游戏 Java 8；Worker Java 21 |
+| `modpedia-1.4.0-mc1.20.1-forge.jar` | Minecraft 1.20.1 + Forge 47.x | 17 |
+| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | Minecraft 1.12.2 + Forge 14.23.5.2847 / Cleanroom 0.3+ | 游戏 Java 8；Worker Java 17 |
 
 只安装与当前 Minecraft/加载器匹配的一份 JAR。三个文件不是同一个环境的替换包。
 
@@ -49,7 +49,7 @@ API Key 保存在用户目录 `~/.modpedia/ai.json` 的加密字段中，不随�
 ~/.modpedia/
 ├── ai.json
 ├── installation-id
-└── worker/lib/worker-baseline-3/
+└── worker/current/
 ```
 
 ### 发布整合包前

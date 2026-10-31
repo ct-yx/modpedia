@@ -19,6 +19,7 @@ Worker 协议、依赖和核心业务不在本文件中修改；相关变更先�
 docs/site/
 ├── index.html                # 中文发布页
 ├── index.en.html             # English 发布页
+├── worker/latest.json        # Worker Java 17 / protocol v2 最新清单
 ├── styles.css                # 页面样式
 └── README.md                 # Pages 本地预览和发布说明
 
@@ -50,6 +51,7 @@ NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三�
   的提交内容。
 - Release 资产由 GitHub Actions 在标签构建时生成；仓库不保存本地 JAR 和校验文件。
 - 页面中的版本号、Release 链接、JAR 下载链接必须同时更新中文和英文页面。
+- `worker/latest.json` 只能由已校验的 Worker JAR 生成；清单必须包含 SHA-256 和签名，签名未配置时只能保留 `pending-release` 占位状态。
 - 发布配置只引用 GitHub Actions Variables/Secrets，不把 CurseForge Token 或其他密钥写入文件。
 
 ## 给其他开发分支的清理 Prompt

@@ -150,7 +150,7 @@
           <h2>ModPedia <span>v1.4.0</span></h2>
           <p>三条兼容线同步发布：NeoForge 1.21.1、Forge 1.20.1，以及 Forge 1.12.2 / Cleanroom 0.3+ 兼容线；三条版本线均已完成当前发布测试。</p>
           <div class="release-meta"><span>三版本 JAR</span><span>独立 Worker JVM</span><span>仅搜索可用</span><span>Apache 2.0</span></div>
-          <p class="download-security-note"><strong>本地密钥保护：</strong>AI 设置只在用户目录保存系统标识派生的 AES-GCM 密文；游戏启动时解密到内存，日志不记录 API Key。整合包发布时不要复制用户级配置或 Worker 库。</p>
+          <p class="download-security-note"><strong>共享 Worker：</strong>新版本使用 Java 17 独立 Worker JAR，主模组不内置 Worker；客户端下载并校验 <a href="./worker/latest.json">最新清单</a>。AI 设置只在用户目录保存系统标识派生的 AES-GCM 密文，日志不记录 API Key。</p>
         </div>
         <div class="download-actions">
           <a class="button button-primary button-wide" href="https://github.com/ct-yx/modpedia/releases/download/v1.4.0/modpedia-1.4.0-mc1.21.1-neoforge.jar">下载 1.21.1 NeoForge <span aria-hidden="true">↓</span></a>
@@ -187,7 +187,7 @@
               <tr><th scope="row">Jade 联动</th><td>✓</td><td>✓</td><td>—</td></tr>
               <tr><th scope="row">准星 / Tooltip 目标冻结与插入</th><td>✓</td><td>✓</td><td>✓</td></tr>
               <tr><th scope="row">来源正文标注与手册跳转</th><td>✓</td><td>✓</td><td>✓</td></tr>
-              <tr class="matrix-support"><th scope="row">支持版本</th><td>Minecraft 1.21.1<br>NeoForge 21.1.x<br>Java 21</td><td>Minecraft 1.20.1<br>Forge 47.x<br>Java 21</td><td>Minecraft 1.12.2<br>Forge 14.23.5.2847 / Cleanroom 0.3+<br>游戏 Java 8 / Worker 21</td></tr>
+              <tr class="matrix-support"><th scope="row">支持版本</th><td>Minecraft 1.21.1<br>NeoForge 21.1.x<br>游戏 Java 21 / Worker 17</td><td>Minecraft 1.20.1<br>Forge 47.x<br>游戏 Java 17 / Worker 17</td><td>Minecraft 1.12.2<br>Forge 14.23.5.2847 / Cleanroom 0.3+<br>游戏 Java 8 / Worker 17</td></tr>
             </tbody>
           </table>
         </div>

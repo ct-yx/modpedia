@@ -22,7 +22,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 1
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve release metadata
         id: release-meta
@@ -36,6 +37,10 @@ jobs:
             v[0-9]*) ;;
             *) echo "::error::Expected a version tag beginning with v: $tag"; exit 1 ;;
           esac
+          expected_sha="$(git rev-list -n 1 "$tag")"
+          actual_sha="$(git rev-parse HEAD)"
+          test "$expected_sha" = "$actual_sha" || { echo '::error::checkout is not the exact release tag target'; exit 1; }
+          test "$(git describe --exact-match --tags HEAD)" = "$tag"
           version="${tag#v}"
           case "$tag" in
             *-alpha*) version_type=alpha ;;
@@ -47,6 +52,15 @@ jobs:
             printf 'version=%s\n' "$version"
             printf 'version_type=%s\n' "$version_type"
           } >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          data = json.loads(Path('.github/release-inputs.json').read_text())
+          print(f"source_1211_ref={data['versions']['1.21.1']['ref']}")
+          print(f"source_1201_ref={data['versions']['1.20.1']['ref']}")
+          print(f"source_1122_ref={data['versions']['1.12.2']['ref']}")
+          print(f"worker_ref={data['worker']['ref']}")
+          PY
 
       - name: Validate publishing credentials
         env:
@@ -62,7 +76,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: mainline-1.21.1
+          ref: ${{ steps.release-meta.outputs.source_1211_ref }}
           path: source-1.21.1
           fetch-depth: 1
 
@@ -70,7 +84,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: migration/forge-1.20.1
+          ref: ${{ steps.release-meta.outputs.source_1201_ref }}
           path: source-1.20.1
           fetch-depth: 1
 
@@ -78,16 +92,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: migration/1.12.2-common
+          ref: ${{ steps.release-meta.outputs.source_1122_ref }}
           path: source-1.12.2
-          fetch-depth: 1
-
-      - name: Checkout shared Worker source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: refactor/worker-core
-          path: worker
           fetch-depth: 1
 
       - name: Setup JDK 21
@@ -99,12 +105,11 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Worker and current versions
+      - name: Build current versions from locked commits
         env:
           RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
         run: |
           set -euo pipefail
-          (cd worker && ./gradlew clean build --no-daemon)
           (cd source-1.21.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
           (cd source-1.20.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
 
@@ -117,12 +122,10 @@ jobs:
       - name: Build Cleanroom 1.12.2 compatibility line
         env:
           RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
-          WORKER_JAR: ${{ github.workspace }}/worker/build/libs/modpedia-1.2.0-fix.jar
         working-directory: source-1.12.2
         run: |
           set -euo pipefail
-          test -f "$WORKER_JAR"
-          ./gradlew clean build --no-daemon -Pmod_version="$RELEASE_VERSION" -Pworker_jar="$WORKER_JAR"
+          ./gradlew clean build --no-daemon -Pmod_version="$RELEASE_VERSION"
 
       - name: Prepare CurseForge files and release notes
         id: package

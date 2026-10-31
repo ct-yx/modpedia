@@ -14,8 +14,8 @@ English: [README.en.md](README.en.md) · 网站：[GitHub Pages](https://ct-yx.g
 | 版本资产 | Minecraft / 加载器 | Java | Worker |
 | --- | --- | --- | --- |
 | `modpedia-1.4.0-mc1.21.1-neoforge.jar` | 1.21.1 / NeoForge 21.1.x | 21 | `worker-baseline-3` |
-| `modpedia-1.4.0-mc1.20.1-forge.jar` | 1.20.1 / Forge 47.x | 21 | `worker-baseline-3` |
-| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 / Forge 14.23.5.2847 + Cleanroom 0.3+ 兼容线 | 游戏 Java 8；Worker Java 21 | `worker-baseline-3` |
+| `modpedia-1.4.0-mc1.20.1-forge.jar` | 1.20.1 / Forge 47.x | 17 | `worker-baseline-3` |
+| `modpedia-1.4.0-mc1.12.2-cleanroom.jar` | 1.12.2 / Forge 14.23.5.2847 + Cleanroom 0.3+ 兼容线 | 游戏 Java 8；Worker Java 17 | `worker-baseline-3` |
 
 三个版本共用同一产品协议和 Worker 设计，但客户端适配层分别针对对应加载器编译。完整的
 `v1.1.0 → v1.4.0` 对比见 [`docs/RELEASE_1.4.0.md`](docs/RELEASE_1.4.0.md)，下载矩阵见网站的
@@ -108,14 +108,14 @@ APP/Modonomicon 书籍的根 JSON 可以声明：
 ~/.modpedia/
 ├── ai.json                           # 跨实例共享；只存密文设置
 ├── installation-id                   # 系统标识不可用时的回退标识
-└── worker/lib/worker-baseline-3/     # 同一 Worker 基线共享
+└── worker/current/                   # Pages 清单选定的 Java 17 Worker JAR
 ```
 
 发布整合包前：
 
 - 删除整个 `<instance>/config/modpedia/runtime/`，包括 `knowledge.db*`、生成 Markdown、扫描缓存、会话、诊断、Worker 日志和临时载荷；这些文件会在玩家首次启动或按 `F9` 重建。
 - 保留 `config/modpedia/knowledge/custom/**/*.md`、`sources/<source-id>/source.json`、`documents/**/*.md`、`media.json`、`source-overrides.json` 和需要的 `search-synonyms.json`。
-- 不复制用户级 `~/.modpedia/ai.json`、`installation-id` 或 `worker/lib/`；它们属于玩家本机并由多个游戏实例共享。
+- 不复制用户级 `~/.modpedia/ai.json`、`installation-id` 或 `worker/`；它们属于玩家本机并由多个游戏实例共享。
 - 不把本地 JAR、API Key、会话、`knowledge.db`、诊断日志或临时构建目录提交到整合包。
 
 ## 开发与发布

@@ -4,68 +4,95 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要重新发布的版本标签，例如 v2.0.0'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
-env:
-  VERSION: ${{ github.ref_name }}
-
 jobs:
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout release metadata
+      - name: Checkout exact release tag
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Resolve release version
+      - name: Resolve exact tag and release inputs
         id: release-meta
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.tag || github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          case "$tag" in
-            v[0-9]*) ;;
-            *) echo "::error::Expected a version tag beginning with v: $tag"; exit 1 ;;
-          esac
+          tag="${RELEASE_TAG_INPUT#refs/tags/}"
+          case "$tag" in v[0-9]*) ;; *) echo "::error::Expected a version tag beginning with v: $tag"; exit 1 ;; esac
+          expected_sha="$(git rev-list -n 1 "$tag")"
+          actual_sha="$(git rev-parse HEAD)"
+          test "$expected_sha" = "$actual_sha" || { echo "::error::release checkout is not the tag target"; exit 1; }
+          test "$(git describe --exact-match --tags HEAD)" = "$tag"
           version="${tag#v}"
-          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          data = json.loads(Path('.github/release-inputs.json').read_text())
+          print(f"worker_ref={data['worker']['ref']}")
+          print(f"client_core_ref={data['client_core']['ref']}")
+          print(f"source_1211_ref={data['versions']['1.21.1']['ref']}")
+          print(f"source_1201_ref={data['versions']['1.20.1']['ref']}")
+          print(f"source_1122_ref={data['versions']['1.12.2']['ref']}")
+          print(f"worker_version={data['worker']['worker_version']}")
+          print(f"java_major={data['worker']['java_major']}")
+          print(f"protocol_version={data['worker']['protocol_version']}")
+          PY
+          printf 'tag=%s\nversion=%s\n' "$tag" "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout NeoForge 1.21.1 source
+      - name: Checkout exact Worker commit
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: mainline-1.21.1
+          ref: ${{ steps.release-meta.outputs.worker_ref }}
+          path: worker
+          fetch-depth: 1
+
+      - name: Checkout exact client-core commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.release-meta.outputs.client_core_ref }}
+          path: client-core
+          fetch-depth: 1
+
+      - name: Checkout exact Minecraft commits
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.release-meta.outputs.source_1211_ref }}
           path: source-1.21.1
           fetch-depth: 1
 
-      - name: Checkout Forge 1.20.1 source
+      - name: Checkout exact Forge 1.20.1 commit
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: migration/forge-1.20.1
+          ref: ${{ steps.release-meta.outputs.source_1201_ref }}
           path: source-1.20.1
           fetch-depth: 1
 
-      - name: Checkout Cleanroom 1.12.2 source
+      - name: Checkout exact 1.12.2 commit
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: migration/1.12.2-common
+          ref: ${{ steps.release-meta.outputs.source_1122_ref }}
           path: source-1.12.2
-          fetch-depth: 1
-
-      - name: Checkout shared Worker source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: refactor/worker-core
-          path: worker
           fetch-depth: 1
 
       - name: Setup JDK 21
@@ -77,68 +104,75 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build shared Worker package
+      - name: Build Worker exactly once
         working-directory: worker
-        run: ./gradlew clean build --no-daemon
+        env:
+          WORKER_VERSION: ${{ steps.release-meta.outputs.worker_version }}
+        run: |
+          set -euo pipefail
+          ./gradlew clean workerJar workerClassMajorSelfTest --no-daemon --no-configuration-cache -Pmod_version="$WORKER_VERSION"
+          worker="$(find build/libs -maxdepth 1 -type f -name 'modpedia-worker-*.jar' | sort | head -n 1)"
+          test -n "$worker"
+          cp "$worker" "${GITHUB_WORKSPACE}/build-modpedia-worker-${WORKER_VERSION}.jar"
 
-      - name: Build NeoForge 1.21.1
-        working-directory: source-1.21.1
+      - name: Build Minecraft 1.21.1 and 1.20.1
         env:
           RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
-        run: ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION"
+        run: |
+          set -euo pipefail
+          (cd source-1.21.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
+          (cd source-1.20.1 && ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION")
 
-      - name: Build Forge 1.20.1
-        working-directory: source-1.20.1
-        env:
-          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
-        run: ./gradlew clean build --no-daemon --no-configuration-cache -Pmod_version="$RELEASE_VERSION"
-
-      - name: Setup JDK 8 for ForgeGradle 2.3 and Pack200
+      - name: Setup JDK 8 for 1.12.2
         uses: actions/setup-java@v4
         with:
           java-version: '8'
           distribution: temurin
 
-      - name: Build Cleanroom 1.12.2 compatibility line
+      - name: Build 1.12.2
         working-directory: source-1.12.2
         env:
           RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
-          WORKER_JAR: ${{ github.workspace }}/worker/build/libs/modpedia-1.2.0-fix.jar
-        run: |
-          test -f "$WORKER_JAR"
-          ./gradlew clean build --no-daemon -Pmod_version="$RELEASE_VERSION" -Pworker_jar="$WORKER_JAR"
+        run: ./gradlew clean build --no-daemon -Pmod_version="$RELEASE_VERSION"
 
-      - name: Validate source formatting
+      - name: Validate boundaries and stage artifacts
+        env:
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+          WORKER_VERSION: ${{ steps.release-meta.outputs.worker_version }}
+          WORKER_SIGNATURE: ${{ secrets.MODPEDIA_WORKER_SIGNATURE }}
+        shell: bash
         run: |
           set -euo pipefail
-          git diff --check
+          test -n "$WORKER_SIGNATURE" || { echo '::error::MODPEDIA_WORKER_SIGNATURE is required'; exit 1; }
+          mkdir -p build/release docs/site/worker
+          worker="$GITHUB_WORKSPACE/build-modpedia-worker-${WORKER_VERSION}.jar"
+          neo="$(find source-1.21.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          forge="$(find source-1.20.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          legacy="$(find source-1.12.2/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
+          test -s "$worker"; test -n "$neo"; test -n "$forge"; test -n "$legacy"
+          cp "$worker" "build/release/modpedia-worker-${WORKER_VERSION}.jar"
+          cp "$neo" "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar"
+          cp "$forge" "build/release/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar"
+          cp "$legacy" "build/release/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar"
+          python3 scripts/generate_worker_manifest.py \
+            --worker "build/release/modpedia-worker-${WORKER_VERSION}.jar" \
+            --version "$WORKER_VERSION" \
+            --primary-url "https://www.curseforge.com/minecraft/mc-mods/modpedia/download/${WORKER_VERSION}" \
+            --fallback-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/modpedia-worker-${WORKER_VERSION}.jar" \
+            --signature "$WORKER_SIGNATURE" \
+            --output docs/site/worker/latest.json
+          python3 scripts/validate_release_artifacts.py \
+            --worker "build/release/modpedia-worker-${WORKER_VERSION}.jar" \
+            --mod "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar" \
+            --mod "build/release/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar" \
+            --mod "build/release/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar" \
+            --manifest docs/site/worker/latest.json
+          (cd build/release && sha256sum *.jar > SHA256SUMS)
           git -C source-1.21.1 diff --check
           git -C source-1.20.1 diff --check
           git -C source-1.12.2 diff --check
 
-      - name: Stage release assets
-        env:
-          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$RELEASE_VERSION" = "${GITHUB_REF_NAME#v}"
-          mkdir -p build/release
-          neo="$(find source-1.21.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
-          forge="$(find source-1.20.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
-          legacy="$(find source-1.12.2/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
-          test -n "$neo"; test -n "$forge"; test -n "$legacy"
-          cp "$neo" "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar"
-          cp "$forge" "build/release/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar"
-          cp "$legacy" "build/release/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar"
-          grep -q 'version="'"$RELEASE_VERSION"'"' <(unzip -p "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar" META-INF/neoforge.mods.toml)
-          grep -q 'version="'"$RELEASE_VERSION"'"' <(unzip -p "build/release/modpedia-${RELEASE_VERSION}-mc1.20.1-forge.jar" META-INF/mods.toml)
-          grep -q '"version": "'"$RELEASE_VERSION"'"' <(unzip -p "build/release/modpedia-${RELEASE_VERSION}-mc1.12.2-cleanroom.jar" mcmod.info)
-          (cd build/release && sha256sum *.jar > SHA256SUMS)
-          cat build/release/SHA256SUMS
-
-      - name: Prepare current release notes
-        shell: bash
+      - name: Prepare release notes
         env:
           RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
         run: |
@@ -147,27 +181,15 @@ jobs:
           test -s release-notes.md
           grep -Fxq "## ${RELEASE_TAG}" release-notes.md
 
-      - name: Publish GitHub release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
-        shell: bash
         run: |
           set -euo pipefail
-          release_args=()
-          if [[ "$RELEASE_TAG" == *-* ]]; then
-            release_args+=(--prerelease)
-          fi
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "ModPedia · 模组百科 $RELEASE_TAG" \
-            --notes-file release-notes.md \
-            "${release_args[@]}" \
-            build/release/*.jar \
-            build/release/SHA256SUMS \
-            CHANGELOG.md \
-            INSTALL.md \
-            KNOWN_LIMITATIONS.md \
-            LICENSE \
-            NOTICE
+          args=()
+          [[ "$RELEASE_TAG" == *-* ]] && args+=(--prerelease)
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "ModPedia · 模组百科 $RELEASE_TAG" --notes-file release-notes.md "${args[@]}" \
+            build/release/*.jar build/release/SHA256SUMS docs/site/worker/latest.json \
+            CHANGELOG.md INSTALL.md KNOWN_LIMITATIONS.md LICENSE NOTICE

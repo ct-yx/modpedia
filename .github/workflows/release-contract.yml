@@ -1,0 +1,99 @@
+name: Release contract gates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release-inputs.json'
+      - '.github/workflows/release-contract.yml'
+      - 'scripts/validate_release_inputs.py'
+      - 'scripts/validate_release_artifacts.py'
+      - 'docs/site/worker/latest.json'
+  pull_request:
+    paths:
+      - '.github/release-inputs.json'
+      - '.github/workflows/release-contract.yml'
+      - 'scripts/**'
+      - 'docs/site/worker/latest.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Validate exact release refs
+        run: python3 scripts/validate_release_inputs.py .github/release-inputs.json
+      - name: Resolve every locked commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > /tmp/modpedia-release-refs.txt
+          import json
+          from pathlib import Path
+          data = json.loads(Path('.github/release-inputs.json').read_text())
+          print(data['worker']['ref'])
+          print(data['client_core']['ref'])
+          for version in ('1.21.1', '1.20.1', '1.12.2'):
+              print(data['versions'][version]['ref'])
+          PY
+          git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+          while read -r ref; do git cat-file -e "$ref^{commit}"; done < /tmp/modpedia-release-refs.txt
+      - name: Build locked Java 8 client-core
+        id: client-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="$(python3 -c 'import json; print(json.load(open(".github/release-inputs.json"))["client_core"]["ref"])')"
+          mkdir -p /tmp/modpedia-client-core
+          git archive "$ref" client-core | tar -x -C /tmp/modpedia-client-core
+          test -f /tmp/modpedia-client-core/client-core/build.gradle
+      - name: Verify client-core Java 8 bytecode
+        working-directory: /tmp/modpedia-client-core/client-core
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/modpedia-client-core-classes
+          javac --release 8 -encoding UTF-8 -d /tmp/modpedia-client-core-classes \
+            $(find src/main/java src/test/java -name '*.java' -print)
+          java -cp /tmp/modpedia-client-core-classes io.ctyx.modpedia.clientcore.ClientCoreSelfTest
+          python3 - <<'PY'
+          import pathlib
+          import struct
+          for path in pathlib.Path('/tmp/modpedia-client-core-classes').rglob('*.class'):
+              data = path.read_bytes()
+              major = struct.unpack('>H', data[6:8])[0]
+              if major > 52:
+                  raise SystemExit(f'{path}: class major {major}')
+          print('client-core Java 8 bytecode: OK')
+          PY
+
+  legacy-1122:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read exact 1.12.2 ref
+        id: inputs
+        shell: bash
+        run: echo "ref=$(python3 -c 'import json; print(json.load(open(".github/release-inputs.json"))["versions"]["1.12.2"]["ref"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.inputs.outputs.ref }}
+          path: source-1.12.2
+          fetch-depth: 1
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify 1.12.2 Gradle gate
+        working-directory: source-1.12.2
+        run: ./gradlew tasks --all --no-daemon

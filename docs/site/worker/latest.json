@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "worker_version": "2.0.0",
+  "java_major": 17,
+  "protocol_version": 2,
+  "artifact": {
+    "primary_url": "https://www.curseforge.com/minecraft/mc-mods/modpedia/download/2.0.0",
+    "fallback_urls": [
+      "https://github.com/ct-yx/modpedia/releases/latest/download/modpedia-worker-2.0.0.jar"
+    ],
+    "sha256": null,
+    "signature": null
+  },
+  "integrity_status": "pending-release",
+  "note": "发布工作流生成真实 SHA-256 和 Ed25519 签名后，替换此清单。"
+}
