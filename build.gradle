@@ -27,6 +27,22 @@ sourceSets.main.resources {
     exclude("src/generated/**/.cache") // datagen cache files
 }
 
+// Minecraft 适配层只复用 loader-neutral 的 client-core；Worker 实现来自独立
+// modpedia-refactor-worker-core，绝不能从本分支编译进游戏模组。
+sourceSets {
+    main {
+        java {
+            srcDir('client-core/src/main/java')
+            exclude('io/ctyx/modpedia/worker/**')
+        }
+    }
+    test {
+        java {
+            exclude('io/ctyx/modpedia/worker/**')
+        }
+    }
+}
+
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
 }
@@ -35,7 +51,8 @@ base {
     archivesName = mod_id
 }
 
-// ForgeGradle keeps Jar-in-Jar opt-in; ModPedia ships its Worker dependencies here.
+// ForgeGradle keeps Jar-in-Jar opt-in. Worker 依赖由独立 Core JAR 提供，主模组不再
+// 通过 Jar-in-Jar 携带 Worker 实现或其 AI/SQLite 依赖。
 jarJar.enable()
 tasks.named('jar').configure {
     archiveClassifier = 'slim'
@@ -44,7 +61,8 @@ tasks.named('jarJar').configure {
     archiveClassifier = ''
 }
 
-// Minecraft Forge 1.20.1 and its embedded Worker both target Java 17.
+// Minecraft Forge 1.20.1 targets Java 17. Worker 使用独立 JVM，仍由 client-core
+// 在启动前检查 Java 17。
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 minecraft {
@@ -83,15 +101,13 @@ minecraft {
 // "optional", meaning it will not be pulled by dependents of this mod.
 configurations {
     runtimeClasspath.extendsFrom localRuntime
-    // 只供独立 Worker JVM 使用；不会作为 Forge 游戏运行时依赖解析。
-    workerOnlyRuntime
 }
 
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
 
     // SQLite is the derived runtime search index. The driver is embedded into the mod JAR.
-    jarJar(implementation("org.xerial:sqlite-jdbc:3.53.2.1")) {
+    compileOnly("org.xerial:sqlite-jdbc:3.53.2.1") {
         version {
             strictly '[3.53.2.1, 3.54)'
         }
@@ -99,7 +115,7 @@ dependencies {
 
     // LangChain4j 负责 ChatMemory、上下文窗口、工具调用和流式响应；ModPedia 只实现
     // 本地文件持久化适配器与知识库工具，避免重复实现通用 AI 编排逻辑。
-    jarJar(implementation("dev.langchain4j:langchain4j:${langchain4j_version}")) {
+    compileOnly("dev.langchain4j:langchain4j:${langchain4j_version}") {
         exclude group: "org.slf4j", module: "slf4j-api"
         // 所有 Worker 依赖都在下方以固定版本显式声明，避免 Jar-in-Jar
         // 同时打包传递依赖的旧版本。
@@ -111,7 +127,7 @@ dependencies {
             strictly "[${langchain4j_version}, 1.19)"
         }
     }
-    jarJar(implementation("dev.langchain4j:langchain4j-open-ai:${langchain4j_version}")) {
+    compileOnly("dev.langchain4j:langchain4j-open-ai:${langchain4j_version}") {
         exclude group: "org.slf4j", module: "slf4j-api"
         exclude group: "dev.langchain4j"
         exclude group: "com.fasterxml.jackson.core"
@@ -126,7 +142,7 @@ dependencies {
     // ModDev 的 Jar-in-Jar 产物不会自动把这些传递依赖放入最终模组，导致 SPI
     // 服务实现与 HttpClientBuilderFactory 来自不同的类加载器，运行时出现
     // "JdkHttpClientBuilderFactory not a subtype"。
-    jarJar(implementation("dev.langchain4j:langchain4j-core:${langchain4j_version}")) {
+    compileOnly("dev.langchain4j:langchain4j-core:${langchain4j_version}") {
         exclude group: "org.slf4j", module: "slf4j-api"
         exclude group: "dev.langchain4j"
         exclude group: "com.fasterxml.jackson.core"
@@ -138,7 +154,7 @@ dependencies {
     }
     // Community SQL 提供成熟的 ChatMemoryStore 读写、JSON 序列化和 SQL 生命周期。
     // ModPedia 只保留 SQLite DataSource 与方言装配，不再维护完整持久化适配器。
-    jarJar(implementation("dev.langchain4j:langchain4j-community-sql:${langchain4j_community_sql_version}")) {
+    compileOnly("dev.langchain4j:langchain4j-community-sql:${langchain4j_community_sql_version}") {
         exclude group: "org.slf4j", module: "slf4j-api"
         exclude group: "dev.langchain4j"
         exclude group: "com.fasterxml.jackson.core"
@@ -148,7 +164,7 @@ dependencies {
             strictly "[${langchain4j_community_sql_version}, 1.19)"
         }
     }
-    jarJar(implementation("dev.langchain4j:langchain4j-http-client:${langchain4j_version}")) {
+    compileOnly("dev.langchain4j:langchain4j-http-client:${langchain4j_version}") {
         exclude group: "org.slf4j", module: "slf4j-api"
         exclude group: "dev.langchain4j"
         exclude group: "com.fasterxml.jackson.core"
@@ -158,7 +174,7 @@ dependencies {
             strictly "[${langchain4j_version}, 1.19)"
         }
     }
-    jarJar(implementation("dev.langchain4j:langchain4j-http-client-jdk:${langchain4j_version}")) {
+    compileOnly("dev.langchain4j:langchain4j-http-client-jdk:${langchain4j_version}") {
         exclude group: "org.slf4j", module: "slf4j-api"
         exclude group: "dev.langchain4j"
         exclude group: "com.fasterxml.jackson.core"
@@ -171,33 +187,33 @@ dependencies {
 
     // LangChain4j 的运行时依赖也要显式进入 Jar-in-Jar；否则开发环境能运行，
     // 独立安装的发布 JAR 会在真正请求模型时缺少 Jackson、tokenizer 或 OpenNLP。
-    jarJar(implementation("com.fasterxml.jackson.core:jackson-annotations:2.22")) {
+    compileOnly("com.fasterxml.jackson.core:jackson-annotations:2.22") {
         version {
             strictly '[2.22, 2.23)'
         }
     }
-    jarJar(implementation("com.fasterxml.jackson.core:jackson-core:2.22.1")) {
+    compileOnly("com.fasterxml.jackson.core:jackson-core:2.22.1") {
         version {
             strictly '[2.22.1, 2.23)'
         }
     }
-    jarJar(implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")) {
+    compileOnly("com.fasterxml.jackson.core:jackson-databind:2.22.1") {
         version {
             strictly '[2.22.1, 2.23)'
         }
     }
-    jarJar(implementation("org.apache.opennlp:opennlp-tools:2.5.9")) {
+    compileOnly("org.apache.opennlp:opennlp-tools:2.5.9") {
         exclude group: "org.slf4j", module: "slf4j-api"
         version {
             strictly '[2.5.9, 2.6)'
         }
     }
-    jarJar(implementation("com.knuddels:jtokkit:${jtokkit_version}")) {
+    compileOnly("com.knuddels:jtokkit:${jtokkit_version}") {
         version {
             strictly "[${jtokkit_version}, 1.2)"
         }
     }
-    jarJar(implementation("org.jspecify:jspecify:1.0.0")) {
+    compileOnly("org.jspecify:jspecify:1.0.0") {
         version {
             strictly '[1.0.0, 2.0)'
         }
@@ -216,20 +232,6 @@ dependencies {
     testRuntimeOnly("org.slf4j:slf4j-api:${slf4j_version}")
     // 基准报告和测试夹具直接读取 JSON。
     testImplementation "com.google.code.gson:gson:${gson_version}"
-
-    // Gson 不能继续只依赖游戏 JVM：WorkerServer 的 JSONL 协议直接使用 JsonElement。
-    // 该配置不参与 jarJar，避免第二份 Gson 被 Forge 游戏类加载器发现。
-    workerOnlyRuntime("com.google.code.gson:gson:${gson_version}") {
-        version {
-            strictly "[${gson_version}, 2.12)"
-        }
-    }
-    // SLF4J 只能作为 Worker 专用资源发布，不能落入 META-INF/jarjar/。
-    workerOnlyRuntime("org.slf4j:slf4j-api:${slf4j_version}") {
-        version {
-            strictly "[${slf4j_version}, 2.0.10)"
-        }
-    }
 
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
@@ -252,21 +254,6 @@ dependencies {
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
-}
-
-// 将 Worker 专用 Gson 保存在不可被游戏 Mod 类加载器当作普通 Jar-in-Jar 依赖的路径。
-// ModPediaBridge 只在启动子 JVM 时提取 META-INF/modpedia-worker/*.jar。
-tasks.named('jar', Jar).configure {
-    from(project.configurations.workerOnlyRuntime) {
-        into 'META-INF/modpedia-worker'
-    }
-}
-tasks.named('jarJar', Jar).configure {
-    // ForgeGradle 的最终 jarJar 任务不一定复用 slim jar 的资源输入；在最终
-    // 发布 JAR 上再次声明，确保 Worker 专用 Gson 一定随发布物携带。
-    from(project.configurations.workerOnlyRuntime) {
-        into 'META-INF/modpedia-worker'
-    }
 }
 
 def searchSelfTest = tasks.register('searchSelfTest', JavaExec) {
@@ -297,12 +284,6 @@ def itemCatalogSchedulingSelfTest = tasks.register('itemCatalogSchedulingSelfTes
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.client.ItemCatalogSchedulingSelfTest'
-}
-
-def modPediaBridgeSelfTest = tasks.register('modPediaBridgeSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.client.ModPediaBridgeSelfTest'
 }
 
 def modPediaEntryPointSelfTest = tasks.register('modPediaEntryPointSelfTest', JavaExec) {
@@ -395,57 +376,6 @@ def ftbQuestIdCodecSelfTest = tasks.register('ftbQuestIdCodecSelfTest', JavaExec
     mainClass = 'io.ctyx.modpedia.task.FtbQuestIdCodecSelfTest'
 }
 
-def workerTaskStaticImporterSelfTest = tasks.register('workerTaskStaticImporterSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerTaskStaticImporterSelfTest'
-}
-
-def workerTaskWikiServiceSelfTest = tasks.register('workerTaskWikiServiceSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerTaskWikiServiceSelfTest'
-}
-
-def workerTaskRuntimeFileSelfTest = tasks.register('workerTaskRuntimeFileSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerTaskRuntimeFileSelfTest'
-    // 本地文件读取的墙钟 p95 会受到 CI 机器负载、JIT、GC 和磁盘竞争影响。
-    // 默认只验证读取正确性；需要执行性能门禁时显式传入 -PstrictPerformance=true。
-    if (project.hasProperty('strictPerformance')) {
-        systemProperty 'modpedia.strictPerformance', project.property('strictPerformance').toString()
-    }
-}
-
-def workerGuideScannerSelfTest = tasks.register('workerGuideScannerSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerGuideScannerSelfTest'
-}
-
-def knowledgeOperationGateSelfTest = tasks.register('knowledgeOperationGateSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.KnowledgeOperationGateSelfTest'
-}
-
-def workerConcurrencySelfTest = tasks.register('workerConcurrencySelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerConcurrencySelfTest'
-}
-
-def workerTokenEstimatorSelfTest = tasks.register('workerTokenEstimatorSelfTest', JavaExec) {
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerTokenEstimatorSelfTest'
-    systemProperty 'modpedia.langchain4j.version', langchain4j_version
-    systemProperty 'modpedia.jtokkit.version', jtokkit_version
-    systemProperty 'modpedia.gson.version', gson_version
-    systemProperty 'modpedia.slf4j.version', slf4j_version
-}
-
 def workerCoreBoundarySelfTest = tasks.register('workerCoreBoundarySelfTest', JavaExec) {
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
@@ -457,20 +387,6 @@ def workerCompatibilitySelfTest = tasks.register('workerCompatibilitySelfTest', 
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
     mainClass = 'io.ctyx.modpedia.compat.WorkerCompatibilitySelfTest'
-}
-
-def workerIpcSelfTest = tasks.register('workerIpcSelfTest', JavaExec) {
-    // 使用最终 Jar-in-Jar 产物启动子 JVM，验证发布 JAR 的 Worker 入口，而不是只
-    // 验证 Gradle 开发 classpath。测试夹具不调用模型，也不访问网络。
-    dependsOn tasks.named('jarJar')
-    dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
-    mainClass = 'io.ctyx.modpedia.worker.WorkerIpcSelfTest'
-    systemProperty 'modpedia.worker.jar', tasks.named('jarJar').flatMap { it.archiveFile }.get().asFile.absolutePath
-    systemProperty 'modpedia.langchain4j.version', langchain4j_version
-    systemProperty 'modpedia.jtokkit.version', jtokkit_version
-    systemProperty 'modpedia.gson.version', gson_version
-    systemProperty 'modpedia.slf4j.version', slf4j_version
 }
 
 def modPediaPathsSelfTest = tasks.register('modPediaPathsSelfTest', JavaExec) {
@@ -680,7 +596,6 @@ tasks.named('test', Test) {
     dependsOn jeiRecipeNavigatorSelfTest
     dependsOn jadeTargetStoreSelfTest
     dependsOn itemCatalogSchedulingSelfTest
-    dependsOn modPediaBridgeSelfTest
     dependsOn modPediaEntryPointSelfTest
     dependsOn runtimeContextCoordinatorSelfTest
     dependsOn knowledgeStatusSelfTest
@@ -697,16 +612,8 @@ tasks.named('test', Test) {
     dependsOn taskKnowledgeStoreSelfTest
     dependsOn completedQuestSnapshotSelfTest
     dependsOn ftbQuestIdCodecSelfTest
-    dependsOn workerTaskStaticImporterSelfTest
-    dependsOn workerTaskWikiServiceSelfTest
-    dependsOn workerTaskRuntimeFileSelfTest
-    dependsOn workerGuideScannerSelfTest
-    dependsOn knowledgeOperationGateSelfTest
-    dependsOn workerConcurrencySelfTest
-    dependsOn workerTokenEstimatorSelfTest
     dependsOn workerCoreBoundarySelfTest
     dependsOn workerCompatibilitySelfTest
-    dependsOn workerIpcSelfTest
     dependsOn modPediaPathsSelfTest
     dependsOn knowledgeBenchmarkFixtureSelfTest
     dependsOn conversationStoreSelfTest

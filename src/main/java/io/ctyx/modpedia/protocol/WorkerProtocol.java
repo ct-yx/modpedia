@@ -9,7 +9,12 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.UUID;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * ModPedia Worker 的最小 JSONL 协议工具。
@@ -18,11 +23,14 @@ import java.util.UUID;
  * 边界。游戏进程和 Worker 进程都只依赖这里定义的字段。</p>
  */
 public final class WorkerProtocol {
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
+    public static final int LEGACY_VERSION = 1;
     /** 单条 JSONL 消息的 UTF-8 字节上限，避免 readLine 无界分配内存。 */
     public static final int MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024;
 
     public static final String HELLO = "hello";
+    public static final String HELLO_CHALLENGE = "hello_challenge";
+    public static final String HELLO_PROOF = "hello_proof";
     public static final String HELLO_ACK = "hello_ack";
     public static final String PING = "ping";
     public static final String PONG = "pong";
@@ -58,6 +66,8 @@ public final class WorkerProtocol {
     public static final String ERROR = "error";
     public static final String CANCELLED = "cancelled";
     public static final String SHUTDOWN = "shutdown";
+    public static final String CONVERSATION_RESUME = "conversation.resume";
+    public static final String CONVERSATION_EVENT = "conversation.event";
 
     private WorkerProtocol() {
     }
@@ -75,6 +85,26 @@ public final class WorkerProtocol {
 
     public static boolean isCurrentVersion(JsonObject message) {
         return integer(message, "protocol_version", -1) == VERSION;
+    }
+
+    public static boolean isSupportedVersion(JsonObject message) {
+        int version = integer(message, "protocol_version", -1);
+        return version == VERSION || version == LEGACY_VERSION;
+    }
+
+    public static String challengeProof(String token, String challenge) {
+        if (token == null || token.isBlank() || challenge == null || challenge.isBlank()) {
+            return "";
+        }
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    mac.doFinal(challenge.getBytes(StandardCharsets.UTF_8))
+            );
+        } catch (NoSuchAlgorithmException | InvalidKeyException exception) {
+            throw new IllegalStateException("HMAC-SHA256 不可用", exception);
+        }
     }
 
     public static JsonObject parse(String line) {

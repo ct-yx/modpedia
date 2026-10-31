@@ -2,6 +2,13 @@ package io.ctyx.modpedia.client;
 
 import com.google.gson.JsonObject;
 import io.ctyx.modpedia.ai.AiSettings;
+import io.ctyx.modpedia.clientcore.ArtifactVerifier;
+import io.ctyx.modpedia.clientcore.JavaRuntime;
+import io.ctyx.modpedia.clientcore.PagesManifestSource;
+import io.ctyx.modpedia.clientcore.WorkerInstaller;
+import io.ctyx.modpedia.clientcore.WorkerManifest;
+import io.ctyx.modpedia.clientcore.WorkerPaths;
+import io.ctyx.modpedia.clientcore.WorkerProcessLauncher;
 import io.ctyx.modpedia.ModPedia;
 import io.ctyx.modpedia.compat.WorkerCompatibility;
 import io.ctyx.modpedia.knowledge.KnowledgeStatus;
@@ -19,7 +26,6 @@ import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -34,7 +40,6 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -50,8 +55,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /**
  * 游戏 JVM 到 ModPedia Worker JVM 的本地桥接。
@@ -66,8 +69,8 @@ public final class ModPediaBridge {
     private static final long KNOWLEDGE_BUILD_TIMEOUT_SECONDS = 120L;
     private static final long RECONNECT_DELAY_SECONDS = 2L;
     private static final long HEARTBEAT_SECONDS = 10L;
-    private static final String WORKER_MAIN_ENTRY = "io/ctyx/modpedia/worker/WorkerMain.class";
-    private static final String WORKER_ONLY_DEPENDENCY_PREFIX = "META-INF/modpedia-worker/";
+    private static final String WORKER_MANIFEST_URL =
+            "https://ct-yx.github.io/modpedia/worker/latest.json";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ModPediaBridge INSTANCE = new ModPediaBridge();
 
@@ -245,10 +248,19 @@ public final class ModPediaBridge {
                 ));
                 String helloId = UUID.randomUUID().toString();
                 JsonObject hello = WorkerProtocol.message(WorkerProtocol.HELLO, helloId);
-                hello.addProperty("auth_token", token);
                 WorkerCompatibility.addClientHello(hello);
+                hello.addProperty("handshake_mode", "challenge");
                 send(hello);
                 JsonObject ack = WorkerProtocol.read(reader);
+                if (ack != null && WorkerProtocol.HELLO_CHALLENGE.equals(
+                        WorkerProtocol.string(ack, "type"))) {
+                    String challenge = WorkerProtocol.string(ack, "challenge");
+                    JsonObject proof = WorkerProtocol.message(WorkerProtocol.HELLO_PROOF, helloId);
+                    proof.addProperty("challenge", challenge);
+                    proof.addProperty("proof", WorkerProtocol.challengeProof(token, challenge));
+                    send(proof);
+                    ack = WorkerProtocol.read(reader);
+                }
                 if (ack == null
                         || !WorkerProtocol.HELLO_ACK.equals(WorkerProtocol.string(ack, "type"))
                         || !WorkerProtocol.bool(ack, "accepted", false)
@@ -906,197 +918,78 @@ public final class ModPediaBridge {
         }
     }
 
+    /**
+     * 使用用户级 current Worker JAR 启动独立 Java 17 JVM。主模组 JAR、mods
+     * 目录和游戏类路径都不再作为 Worker 来源。
+     */
     private Process launchWorker(
             int port,
             String host,
             String token,
             ModPediaPaths paths
     ) throws IOException {
-        Path workerDirectory = paths.workerRoot();
-        List<String> command = new ArrayList<>();
-        command.add(javaExecutable());
-        command.add("-Dmodpedia.worker=true");
-        command.add("-cp");
-        command.add(workerClasspath(paths));
-        command.add("io.ctyx.modpedia.worker.WorkerMain");
-        command.add("--port");
-        command.add(Integer.toString(port));
-        command.add("--host");
-        command.add(host);
-        command.add("--config");
-        command.add(paths.configDirectory().toString());
-        command.add("--knowledge");
-        command.add(paths.runtimeKnowledgeRoot().toString());
-        command.add("--content");
-        command.add(paths.contentRoot().toString());
-        command.add("--conversations");
-        command.add(paths.conversationsRoot().toString());
-        command.add("--settings");
-        command.add(paths.aiSettings().toString());
-        Path log = workerDirectory.resolve("worker.log");
-        ProcessBuilder builder = new ProcessBuilder(command)
-                .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()))
-                .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
-        // Token 不再出现在 ps/Activity Monitor 的命令行参数中；只通过子进程
-        // 环境变量传递，并且 Worker 仍会在握手阶段再次校验。
-        builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
-        return builder.start();
+        WorkerPaths workerPaths = new WorkerPaths(paths.userRoot().resolve("worker"));
+        Path workerJar = ensureWorkerInstalled(workerPaths);
+        Path java = Path.of(System.getProperty("modpedia.worker.java",
+                Path.of(System.getProperty("java.home"), "bin", "java").toString()));
+        if (!Files.isExecutable(java)) {
+            java = Path.of("java");
+        }
+        // client-core 统一检查运行时 Java 主版本；Forge 进程可为 Java 17，
+        // 未来 Java 8/21 版本也会走同一检查。
+        JavaRuntime.require(17);
+        Process launched = WorkerProcessLauncher.launch(
+                java,
+                workerJar,
+                host,
+                port,
+                paths.configDirectory().toString(),
+                token,
+                Map.of(
+                        "MODPEDIA_WORKER_KNOWLEDGE", paths.runtimeKnowledgeRoot().toString(),
+                        "MODPEDIA_WORKER_CONTENT", paths.contentRoot().toString(),
+                        "MODPEDIA_WORKER_CONVERSATIONS", paths.conversationsRoot().toString(),
+                        "MODPEDIA_WORKER_SETTINGS", paths.aiSettings().toString()
+                )
+        );
+        ModPedia.LOGGER.info("worker_launch jar={} pid={} baseline={}",
+                workerJar, launched.pid(), WorkerCompatibility.WORKER_LIBRARY_BASELINE);
+        return launched;
     }
 
-    private String workerClasspath(ModPediaPaths paths) throws IOException {
-        String override = System.getProperty("modpedia.worker.classpath", "").strip();
-        if (!override.isBlank()) {
-            return override;
+    private Path ensureWorkerInstalled(WorkerPaths workerPaths) throws IOException {
+        if (Files.isRegularFile(workerPaths.workerJar())) {
+            return workerPaths.workerJar();
         }
-        Path sharedLibraryDirectory = paths.workerLibraryRoot();
-        Files.createDirectories(sharedLibraryDirectory);
-        LinkedHashSet<String> entries = new LinkedHashSet<>();
-        boolean packagedArchiveFound = false;
-        try {
-            Path codeSource = Path.of(ModPediaBridge.class.getProtectionDomain()
-                    .getCodeSource().getLocation().toURI());
-            if (Files.isRegularFile(codeSource) && containsWorkerMain(codeSource)) {
-                packagedArchiveFound = true;
-                entries.add(codeSource.toString());
-                entries.addAll(extractNestedJars(codeSource, sharedLibraryDirectory));
-            } else if (Files.isDirectory(codeSource)
-                    && Files.isRegularFile(codeSource.resolve(WORKER_MAIN_ENTRY))) {
-                // 开发环境通常以 classes 目录作为代码来源；只加入 Worker 自身
-                // classes，不把整个游戏 JVM 的 classpath 继承给子 JVM。
-                entries.add(codeSource.toString());
-            }
-        } catch (Exception exception) {
-            ModPedia.LOGGER.debug("Worker classpath code source unavailable", exception);
+        String manifestUrl = System.getProperty("modpedia.worker.manifest", WORKER_MANIFEST_URL).strip();
+        WorkerManifest manifest = new PagesManifestSource(manifestUrl, 15_000).fetch();
+        if (manifest.javaMajor() != 17) {
+            throw new IOException("Worker 清单要求 Java " + manifest.javaMajor() + "，当前适配层只允许 Java 17");
         }
-        // Forge/NeoForge 的模块/联合类加载器经常返回 union:/... 代码来源，不能直接
-        // 作为普通 JVM 的 -cp。回到当前实例的 mods 目录，寻找真正包含 WorkerMain
-        // 的发布 JAR；这是生产环境独立 Worker 能启动的必要兜底。
-        try {
-            Path installedArchive = findWorkerArchive(
-                    FMLPaths.GAMEDIR.get().toAbsolutePath().normalize().resolve("mods")
-            );
-            if (installedArchive != null) {
-                packagedArchiveFound = true;
-                entries.add(installedArchive.toString());
-                entries.addAll(extractNestedJars(installedArchive, sharedLibraryDirectory));
-            } else {
-                ModPedia.LOGGER.warn("未找到包含 {} 的 ModPedia 发布 JAR", WORKER_MAIN_ENTRY);
-            }
-        } catch (Exception exception) {
-            ModPedia.LOGGER.warn("扫描 ModPedia Worker 发布 JAR 失败", exception);
+        if (manifest.protocolVersion() < 2) {
+            throw new IOException("Worker 清单协议版本过旧：" + manifest.protocolVersion());
         }
-
-        if (!packagedArchiveFound) {
-            // 开发环境没有可提取的发布 JAR 时，仅按类的实际 CodeSource 加入当前
-            // 构建解析出的 Worker 依赖。生产环境绝不回退到父 JVM 的完整 classpath，
-            // 避免旧版 LangChain4j/JTokkit 抢先加载。
-            for (String className : List.of(
-                    "dev.langchain4j.service.AiServices",
-                    "dev.langchain4j.data.message.ChatMessage",
-                    "dev.langchain4j.model.openai.OpenAiTokenCountEstimator",
-                    "com.knuddels.jtokkit.Encodings",
-                    "com.fasterxml.jackson.databind.ObjectMapper",
-                    "org.apache.opennlp.tools.tokenizer.Tokenizer",
-                    "org.xerial.sqlite.JDBC",
-                    "com.google.gson.Gson"
-            )) {
-                addClassLocation(entries, className);
-            }
-        }
-        return String.join(File.pathSeparator, entries);
+        byte[] publicKey = decodePublicKey(System.getProperty("modpedia.worker.publicKey", ""));
+        WorkerInstaller installer = new WorkerInstaller(workerPaths, publicKey);
+        WorkerInstaller.InstallResult result = installer.install(
+                manifest,
+                new WorkerInstaller.DefaultHttpSource(30_000)
+        );
+        ModPedia.LOGGER.info("worker_install version={} source={} sha256={}",
+                result.manifest().workerVersion(), result.sourceUrl(),
+                ArtifactVerifier.sha256(result.workerJar()));
+        return result.workerJar();
     }
 
-    /** 仅检查当前实例的模组归档，不解析模组类或启动客户端类。 */
-    static Path findWorkerArchive(Path modsDirectory) {
-        if (modsDirectory == null || !Files.isDirectory(modsDirectory)) {
+    private static byte[] decodePublicKey(String value) throws IOException {
+        if (value == null || value.isBlank()) {
             return null;
         }
-        try (var paths = Files.list(modsDirectory)) {
-            return paths
-                    .filter(Files::isRegularFile)
-                    .filter(path -> {
-                        String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-                        return name.endsWith(".jar") || name.endsWith(".zip");
-                    })
-                    .sorted()
-                    .filter(ModPediaBridge::containsWorkerMain)
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException exception) {
-            ModPedia.LOGGER.debug("读取模组目录失败：{}", modsDirectory, exception);
-            return null;
-        }
-    }
-
-    private static boolean containsWorkerMain(Path archive) {
-        try (ZipFile zip = new ZipFile(archive.toFile())) {
-            return zip.getEntry(WORKER_MAIN_ENTRY) != null;
-        } catch (IOException exception) {
-            return false;
-        }
-    }
-
-    private void addClassLocation(LinkedHashSet<String> entries, String className) {
         try {
-            Class<?> type = Class.forName(className, false, ModPediaBridge.class.getClassLoader());
-            if (type.getProtectionDomain().getCodeSource() == null) {
-                return;
-            }
-            Path location = Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
-            if (Files.isRegularFile(location)) {
-                entries.add(location.toString());
-            }
-        } catch (Throwable exception) {
-            ModPedia.LOGGER.debug("Worker 侧运行时 API 路径不可用：{}", className, exception);
+            return Base64.getDecoder().decode(value.strip());
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("Worker Ed25519 公钥不是有效 Base64", exception);
         }
-    }
-
-    private List<String> extractNestedJars(Path jar, Path outputDirectory) throws IOException {
-        Files.createDirectories(outputDirectory);
-        List<String> result = new ArrayList<>();
-        try (ZipFile zip = new ZipFile(jar.toFile())) {
-            var entries = zip.stream()
-                    .filter(entry -> !entry.isDirectory())
-                    .filter(entry -> isWorkerDependencyEntry(entry.getName()))
-                    .toList();
-            for (ZipEntry entry : entries) {
-                Path target = outputDirectory.resolve(Path.of(entry.getName()).getFileName().toString());
-                Path temporary = outputDirectory.resolve(
-                        target.getFileName() + ".tmp-" + UUID.randomUUID()
-                );
-                try {
-                    try (var input = zip.getInputStream(entry)) {
-                        Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                    // 同一 baseline 目录可能来自旧构建；不能只按文件名跳过，
-                    // 否则同名但缺少 tokenizer 资源的旧 JAR 会永久复用。
-                    boolean identical = Files.isRegularFile(target)
-                            && Files.mismatch(temporary, target) == -1L;
-                    if (!identical) {
-                        try {
-                            Files.move(
-                                    temporary,
-                                    target,
-                                    StandardCopyOption.ATOMIC_MOVE,
-                                    StandardCopyOption.REPLACE_EXISTING
-                            );
-                        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-                        }
-                    }
-                } finally {
-                    Files.deleteIfExists(temporary);
-                }
-                result.add(target.toString());
-            }
-        }
-        return result;
-    }
-
-    private static boolean isWorkerDependencyEntry(String name) {
-        return (name.startsWith("META-INF/jarjar/")
-                || name.startsWith(WORKER_ONLY_DEPENDENCY_PREFIX))
-                && name.endsWith(".jar");
     }
 
     private void readEvents(
@@ -1587,11 +1480,6 @@ public final class ModPediaBridge {
             }
             WorkerProtocol.write(current, message);
         }
-    }
-
-    private String javaExecutable() {
-        Path java = Path.of(System.getProperty("java.home"), "bin", "java");
-        return Files.isExecutable(java) ? java.toString() : "java";
     }
 
     private String randomToken() {

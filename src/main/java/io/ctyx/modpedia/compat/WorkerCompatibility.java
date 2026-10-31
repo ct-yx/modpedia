@@ -34,12 +34,19 @@ public final class WorkerCompatibility {
             "conversations",
             "ai_settings"
     );
+    public static final List<String> OPTIONAL_CAPABILITIES = List.of(
+            "runtime_item_context"
+    );
 
     private WorkerCompatibility() {
     }
 
     /** 在客户端 hello 中写入 Worker 兼容性要求和当前适配层信息。 */
     public static void addClientHello(JsonObject hello) {
+        hello.addProperty("protocol_version", WorkerProtocol.VERSION);
+        hello.add("supported_protocol_versions", array(List.of(
+                Integer.toString(WorkerProtocol.VERSION), Integer.toString(WorkerProtocol.LEGACY_VERSION)
+        )));
         hello.addProperty("worker_api_level", API_LEVEL);
         hello.addProperty("worker_baseline", WORKER_LIBRARY_BASELINE);
         hello.addProperty("client_adapter", CLIENT_ADAPTER);
@@ -49,15 +56,21 @@ public final class WorkerCompatibility {
 
     /** 在 Worker hello_ack 中写入实际运行的基线、Java 和能力集合。 */
     public static void addWorkerAck(JsonObject ack) {
+        ack.addProperty("protocol_version", WorkerProtocol.VERSION);
+        ack.add("supported_protocol_versions", array(List.of(
+                Integer.toString(WorkerProtocol.VERSION), Integer.toString(WorkerProtocol.LEGACY_VERSION)
+        )));
         ack.addProperty("worker_api_level", API_LEVEL);
         ack.addProperty("worker_baseline", WORKER_LIBRARY_BASELINE);
         ack.addProperty("worker_java", javaVersion());
         ack.add("worker_capabilities", array(CAPABILITIES));
+        ack.add("worker_optional_capabilities", array(OPTIONAL_CAPABILITIES));
     }
 
     /** 检查客户端声明的 Worker API 和运行库基线是否与当前 Worker 一致。 */
     public static boolean isCompatibleClient(JsonObject hello) {
-        return WorkerProtocol.integer(hello, "worker_api_level", -1) == API_LEVEL
+        return WorkerProtocol.isSupportedVersion(hello)
+                && WorkerProtocol.integer(hello, "worker_api_level", -1) == API_LEVEL
                 && WORKER_LIBRARY_BASELINE.equals(WorkerProtocol.string(hello, "worker_baseline"))
                 && !WorkerProtocol.string(hello, "client_adapter").isBlank()
                 && hasCapabilities(hello, "client_capabilities");
@@ -65,7 +78,8 @@ public final class WorkerCompatibility {
 
     /** 检查 Worker 回报的 API、基线和最小能力集合是否满足当前客户端。 */
     public static boolean isCompatibleAck(JsonObject ack) {
-        return WorkerProtocol.integer(ack, "worker_api_level", -1) == API_LEVEL
+        return WorkerProtocol.isSupportedVersion(ack)
+                && WorkerProtocol.integer(ack, "worker_api_level", -1) == API_LEVEL
                 && WORKER_LIBRARY_BASELINE.equals(WorkerProtocol.string(ack, "worker_baseline"))
                 && !WorkerProtocol.string(ack, "worker_java").isBlank()
                 && hasCapabilities(ack, "worker_capabilities");
@@ -77,6 +91,33 @@ public final class WorkerCompatibility {
                 + ", baseline=" + WorkerProtocol.string(message, "worker_baseline")
                 + ", adapter=" + WorkerProtocol.string(message, "client_adapter")
                 + ", worker_java=" + WorkerProtocol.string(message, "worker_java");
+    }
+
+    public static void addClientOptionalCapability(JsonObject hello, String capability) {
+        if (hello == null || capability == null || capability.isBlank()) return;
+        JsonArray values = hello.has("client_optional_capabilities")
+                && hello.get("client_optional_capabilities").isJsonArray()
+                ? hello.getAsJsonArray("client_optional_capabilities") : new JsonArray();
+        boolean exists = false;
+        for (JsonElement value : values) {
+            if (value.isJsonPrimitive() && capability.equals(value.getAsString())) exists = true;
+        }
+        if (!exists) values.add(capability);
+        hello.add("client_optional_capabilities", values);
+    }
+
+    public static boolean supportsOptionalCapability(JsonObject message, String capability) {
+        if (message == null || capability == null || capability.isBlank()) return false;
+        for (String field : List.of("client_optional_capabilities", "worker_optional_capabilities",
+                "client_capabilities", "worker_capabilities")) {
+            JsonElement value = message.get(field);
+            if (value != null && value.isJsonArray()) {
+                for (JsonElement item : value.getAsJsonArray()) {
+                    if (item.isJsonPrimitive() && capability.equals(item.getAsString())) return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean hasCapabilities(JsonObject message, String field) {
