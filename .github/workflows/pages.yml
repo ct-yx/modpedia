@@ -66,9 +66,15 @@ jobs:
           fi
 
           download_dir="$(mktemp -d)"
+          download_error="$(mktemp)"
           if ! gh release download --repo "$GITHUB_REPOSITORY" --pattern latest.json \
-              --dir "$download_dir" --clobber; then
-            echo "::error::已存在最新 Release，但没有可用的 latest.json；拒绝用 pending-release 覆盖 Pages。"
+              --dir "$download_dir" --clobber 2>"$download_error"; then
+            if grep -Fq 'no assets match the file pattern' "$download_error"; then
+              echo "历史 Release 没有签名 latest.json，保留 pending-release 占位清单。"
+              exit 0
+            fi
+            cat "$download_error" >&2
+            echo "::error::读取最新 Release 的 Worker 清单失败；拒绝覆盖 Pages。"
             exit 1
           fi
           published="$download_dir/latest.json"

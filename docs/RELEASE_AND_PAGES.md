@@ -79,7 +79,8 @@ Pages 只继续发布 `pending-release` 占位清单。
 ### Pages Worker 清单时序
 
 - `pages.yml` 在普通 `main` push 时先读取现有 Pages 源文件。若其为 `pending-release` 且已有正式 GitHub Release，
-  就从最新 Release 下载并验证 `latest.json`，用它替换待部署副本；下载失败或最新 Release 清单未签名时立即失败。
+  就从最新 Release 下载并验证 `latest.json`，用它替换待部署副本；历史 Release 没有该资产时保留 pending 占位清单，
+  读取错误或已有清单未签名时立即失败。
 - `release.yml` 先构建 Worker 和三个版本模组，生成 canonical manifest、使用正式密钥签名并验签，再验证全部 JAR。
   通过后复制 `docs/site/` 到 Pages artifact 根目录并用 `upload-pages-artifact` / `deploy-pages` 部署，故清单路径为
   `/worker/latest.json`。Pages 部署成功后才创建 GitHub Release 并上传同一份清单。
