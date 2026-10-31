@@ -60,8 +60,13 @@ public final class UserModPediaPaths {
         return userRoot.resolve("worker").resolve("lib").resolve("worker-baseline-3");
     }
 
+    /** 用户级 Worker 安装根目录；所有游戏实例共享 current/staging 和安装锁。 */
+    public Path workerInstallRoot() {
+        return userRoot.resolve("worker");
+    }
+
     public Path workerJar() {
-        return workerLibraryRoot().resolve("modpedia-worker.jar");
+        return workerInstallRoot().resolve("current").resolve("modpedia-worker.jar");
     }
 
     public Path instanceRuntimeRoot() {

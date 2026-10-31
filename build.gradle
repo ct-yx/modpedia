@@ -21,14 +21,20 @@ archivesBaseName = project.mod_id
 
 sourceCompatibility = targetCompatibility = '1.8'
 
+// 所有 Minecraft 版本共用的 loader-neutral 安装与 IPC 适配层。
+// Worker 实现只来自 modpedia-refactor-worker-core，不在 1.12.2 主模组中编译。
+sourceSets {
+    main {
+        java {
+            srcDir 'client-core/src/main/java'
+            exclude 'io/ctyx/modpedia/worker/**'
+        }
+    }
+}
+
 repositories {
     mavenCentral()
 }
-
-// 发布 Mod JAR 必须自带与当前 Worker 基线匹配的 Worker 包。开发者或 CI 可以用
-// -Pworker_jar=/path/to/modpedia-worker.jar 覆盖默认的同级 Worker 构建产物。
-def workerJarFile = file(project.findProperty('worker_jar')
-        ?: '../modpedia-worker/build/libs/modpedia-1.2.0-fix.jar')
 
 minecraft {
     version = "${project.minecraft_version}-${project.forge_version}"
@@ -57,22 +63,6 @@ processResources {
 }
 
 jar {
-    doFirst {
-        if (!workerJarFile.isFile()) {
-            throw new GradleException(
-                    "缺少 Worker 发布包：${workerJarFile}; 请先构建 Worker 或使用 -Pworker_jar 指定路径"
-            )
-        }
-    }
-    from(workerJarFile) {
-        into 'META-INF/modpedia-worker'
-        rename { 'modpedia-worker.jar' }
-    }
-    // 让发布 JAR 直接携带 Worker 专用 SLF4J；它位于自定义目录，不进入
-    // Forge 1.12.2 的普通 Jar-in-Jar 解析路径。
-    from(zipTree(workerJarFile)) {
-        include 'META-INF/modpedia-worker/slf4j-api-*.jar'
-    }
     manifest {
         attributes(
                 'Specification-Title': project.mod_name,
@@ -122,14 +112,6 @@ task legacyFtbQuestEventBridgeSelfTest(type: JavaExec) {
     dependsOn testClasses
     main = 'io.ctyx.modpedia.knowledge.LegacyFtbQuestEventBridgeSelfTest'
     classpath = sourceSets.test.runtimeClasspath
-}
-
-task legacyWorkerPackagingSelfTest(type: JavaExec) {
-    dependsOn jar, testClasses
-    main = 'io.ctyx.modpedia.client.LegacyWorkerPackagingSelfTest'
-    classpath = sourceSets.test.runtimeClasspath
-    systemProperty 'modpedia.worker.jar', jar.archivePath.absolutePath
-    systemProperty 'modpedia.slf4j.version', slf4j_version
 }
 
 task legacyPanelLayoutSelfTest(type: JavaExec) {
@@ -218,7 +200,6 @@ test.dependsOn manualCatalogSelfTest,
         legacyFtbQuestNormalizerSelfTest,
         legacyFtbQuestRuntimeSelfTest,
         legacyFtbQuestEventBridgeSelfTest,
-        legacyWorkerPackagingSelfTest,
         legacyPanelLayoutSelfTest,
         legacyCatalogCaptureGateSelfTest,
         legacyItemCatalogProgressSelfTest,

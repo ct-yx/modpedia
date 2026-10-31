@@ -8,11 +8,16 @@ import io.ctyx.modpedia.ModPedia;
 import io.ctyx.modpedia.knowledge.LegacyFtbQuestRuntimeReader;
 import io.ctyx.modpedia.knowledge.LegacyItemCatalogEntry;
 import io.ctyx.modpedia.storage.UserModPediaPaths;
+import io.ctyx.modpedia.clientcore.JavaRuntime;
+import io.ctyx.modpedia.clientcore.PagesManifestSource;
+import io.ctyx.modpedia.clientcore.WorkerInstaller;
+import io.ctyx.modpedia.clientcore.WorkerManifest;
+import io.ctyx.modpedia.clientcore.WorkerPaths;
+import io.ctyx.modpedia.clientcore.WorkerProcessLauncher;
 import net.minecraft.client.Minecraft;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -26,16 +31,19 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
+import java.nio.file.StandardOpenOption;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.Enumeration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -44,10 +52,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
 
 /**
  * 1.12.2 客户端与 Java 21 Worker 的最小 JSONL 桥接。
@@ -57,10 +61,11 @@ import java.util.zip.ZipInputStream;
  * {@code worker-baseline-3} 时，桥接保持不可用，客户端仍可使用本地搜索回退。</p>
  */
 public final class LegacyWorkerBridge {
-    private static final int PROTOCOL_VERSION = 1;
+    private static final int PROTOCOL_VERSION = 2;
+    private static final int LEGACY_PROTOCOL_VERSION = 1;
     private static final String BASELINE = "worker-baseline-3";
-    private static final String WORKER_ONLY_DEPENDENCY_PREFIX = "META-INF/modpedia-worker/";
-    private static final String MAIN_ENTRY = "io/ctyx/modpedia/worker/WorkerMain.class";
+    private static final String WORKER_MANIFEST_URL =
+            "https://ct-yx.github.io/modpedia/worker/latest.json";
     private static final String HOST = "127.0.0.1";
     private static final long START_TIMEOUT_MILLIS = 15000L;
     private static final long OPERATION_TIMEOUT_SECONDS = 300L;
@@ -326,7 +331,11 @@ public final class LegacyWorkerBridge {
                     accepted.getInputStream(), StandardCharsets.UTF_8
             ));
             JsonObject hello = message("hello", UUID.randomUUID().toString());
-            hello.addProperty("auth_token", token);
+            hello.addProperty("handshake_mode", "challenge");
+            JsonArray supportedProtocols = new JsonArray();
+            supportedProtocols.add(2);
+            supportedProtocols.add(1);
+            hello.add("supported_protocol_versions", supportedProtocols);
             hello.addProperty("worker_api_level", 1);
             hello.addProperty("worker_baseline", BASELINE);
             hello.addProperty("client_adapter", "cleanroom-1.12.2");
@@ -342,6 +351,16 @@ public final class LegacyWorkerBridge {
                 throw new IOException("无法发送 Worker 握手");
             }
             JsonObject ack = read(reader);
+            if (ack != null && "hello_challenge".equals(string(ack, "type"))) {
+                String challenge = string(ack, "challenge");
+                JsonObject proof = message("hello_proof", hello.get("request_id").getAsString());
+                proof.addProperty("challenge", challenge);
+                proof.addProperty("proof", challengeProof(token, challenge));
+                if (!send(proof)) {
+                    throw new IOException("无法发送 Worker challenge proof");
+                }
+                ack = read(reader);
+            }
             if (ack == null || !"hello_ack".equals(string(ack, "type"))
                     || !bool(ack, "accepted", false)
                     || !BASELINE.equals(string(ack, "worker_baseline"))) {
@@ -366,169 +385,131 @@ public final class LegacyWorkerBridge {
     }
 
     private Process launchWorker(int port, String token, Path instanceRoot) throws IOException {
-        String classpath = workerClasspath(instanceRoot);
-        if (classpath.length() == 0) {
-            throw new IOException("未找到 worker-baseline-3");
-        }
-        List<String> command = new ArrayList<String>();
-        command.add(workerJava());
-        command.add("-Dmodpedia.worker=true");
-        command.add("-cp");
-        command.add(classpath);
-        command.add("io.ctyx.modpedia.worker.WorkerMain");
-        command.add("--port");
-        command.add(Integer.toString(port));
-        command.add("--host");
-        command.add(HOST);
-        command.add("--config");
-        command.add(configDirectory.toString());
-        command.add("--knowledge");
-        command.add(configDirectory.resolve("modpedia/runtime/knowledge").toString());
-        command.add("--content");
-        command.add(configDirectory.resolve("modpedia/knowledge").toString());
-        command.add("--conversations");
-        command.add(paths.instanceConversations().toString());
-        command.add("--settings");
-        command.add(paths.aiSettings().toString());
-        Path log = paths.instanceWorkerRoot().resolve("worker.log");
-        Files.createDirectories(log.getParent());
-        ProcessBuilder builder = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
-        builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
-        builder.directory(instanceRoot.toFile());
-        return builder.start();
-    }
-
-    private String workerClasspath(Path instanceRoot) throws IOException {
-        String override = System.getProperty("modpedia.worker.classpath", "").trim();
-        if (!override.isEmpty()) {
-            return override;
-        }
-        Path root = paths.workerLibraryRoot();
-        Files.createDirectories(root);
-
-        LinkedHashSet<String> entries = new LinkedHashSet<String>();
-        Path packaged = findWorkerArchive(
-                instanceRoot == null ? null : instanceRoot.resolve("mods")
+        Path workerJar = ensureWorkerJar();
+        Path javaExecutable = workerJava();
+        Map<String, String> environment = Collections.emptyMap();
+        Process worker = WorkerProcessLauncher.launch(
+                javaExecutable,
+                workerJar,
+                HOST,
+                port,
+                configDirectory.toString(),
+                token,
+                environment
         );
-        if (packaged != null) {
-            if (containsEntry(packaged, MAIN_ENTRY)) {
-                entries.add(packaged.toString());
-            }
-            // 发布 Mod 的外层 JAR 只保存 Worker 包；Worker 包内部再保存
-            // META-INF/jarjar 与 META-INF/modpedia-worker 依赖，因此这里递归提取。
-            entries.addAll(extractNested(packaged, root));
-        }
-
-        List<Path> archives = new ArrayList<Path>();
-        try (java.util.stream.Stream<Path> stream = Files.list(root)) {
-            for (Path path : stream.filter(Files::isRegularFile).collect(Collectors.toList())) {
-                String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-                if (name.endsWith(".jar") || name.endsWith(".zip")) {
-                    archives.add(path);
-                }
-            }
-        }
-
-        for (Path archive : archives) {
-            entries.add(archive.toString());
-        }
-        return join(entries);
+        attachWorkerLog(worker, paths.instanceWorkerRoot().resolve("worker.log"));
+        return worker;
     }
 
-    static Path findWorkerArchive(Path modsDirectory) {
-        if (modsDirectory == null || !Files.isDirectory(modsDirectory)) {
-            return null;
+    private Path ensureWorkerJar() throws IOException {
+        Path workerJar = paths.workerJar();
+        if (Files.isRegularFile(workerJar)) {
+            return workerJar;
         }
-        try (java.util.stream.Stream<Path> stream = Files.list(modsDirectory)) {
-            List<Path> candidates = stream
-                    .filter(Files::isRegularFile)
-                    .filter(path -> {
-                        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-                        return name.endsWith(".jar") || name.endsWith(".zip");
-                    })
-                    .sorted()
-                    .collect(Collectors.toList());
-            for (Path candidate : candidates) {
-                if (containsEntry(candidate, MAIN_ENTRY) || containsWorkerBundle(candidate)) {
-                    return candidate;
-                }
+        WorkerManifest manifest = new PagesManifestSource(
+                System.getProperty("modpedia.worker.manifest", WORKER_MANIFEST_URL),
+                15_000
+        ).fetch();
+        byte[] publicKey = null;
+        String encoded = System.getProperty("modpedia.worker.publicKey", "").trim();
+        if (!encoded.isEmpty()) {
+            try {
+                publicKey = Base64.getDecoder().decode(encoded);
+            } catch (IllegalArgumentException exception) {
+                throw new IOException("Worker Ed25519 公钥不是有效 Base64", exception);
             }
-        } catch (IOException ignored) {
-            return null;
         }
-        return null;
+        WorkerInstaller installer = new WorkerInstaller(
+                new WorkerPaths(paths.workerInstallRoot()), publicKey
+        );
+        return installer.install(manifest, new WorkerInstaller.DefaultHttpSource(30_000)).workerJar();
     }
 
-    private List<String> extractNested(Path archive, Path output) throws IOException {
-        List<String> result = new ArrayList<String>();
-        try (ZipFile zip = new ZipFile(archive.toFile())) {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.isDirectory() || !isWorkerDependencyEntry(entry.getName())) {
+    private Path workerJava() throws IOException {
+        List<String> candidates = new ArrayList<String>();
+        candidates.add(System.getProperty("modpedia.worker.java", ""));
+        candidates.add(System.getenv("MODPEDIA_WORKER_JAVA"));
+        candidates.add(System.getenv("JAVA_HOME_17"));
+        candidates.add(System.getenv("JAVA_HOME"));
+        for (String candidate : candidates) {
+            if (candidate == null || candidate.trim().isEmpty()) continue;
+            Path path = Paths.get(candidate.trim());
+            Path executable = Files.isDirectory(path) ? path.resolve("bin/java") : path;
+            if (Files.isRegularFile(executable) && Files.isExecutable(executable)) {
+                // P0-03：不能仅凭路径猜测 JVM；实际探测必须返回 Java 17+。
+                Process probe = new ProcessBuilder(executable.toString(), "-XshowSettings:properties", "-version")
+                        .redirectErrorStream(true).start();
+                String output;
+                try (InputStream input = probe.getInputStream();
+                     java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
+                    byte[] buffer = new byte[4096];
+                    int count;
+                    while ((count = input.read(buffer)) >= 0) {
+                        if (count > 0) bytes.write(buffer, 0, count);
+                    }
+                    output = new String(bytes.toByteArray(), StandardCharsets.UTF_8);
+                }
+                try {
+                    probe.waitFor(5, TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    probe.destroyForcibly();
                     continue;
                 }
-                Path target = output.resolve(new File(entry.getName()).getName());
-                if (!Files.exists(target) || Files.size(target) != entry.getSize()) {
-                    InputStream input = zip.getInputStream(entry);
-                    try {
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
-                    } finally {
-                        input.close();
-                    }
-                }
-                result.add(target.toString());
-                if (containsEntry(target, MAIN_ENTRY)) {
-                    result.addAll(extractNested(target, output));
-                }
+                int major = parseJavaMajor(output);
+                if (major >= 17) return executable.toAbsolutePath().normalize();
             }
         }
-        return result;
+        throw new IOException("找不到 Java 17 Worker 运行时；请设置 modpedia.worker.java 或 MODPEDIA_WORKER_JAVA");
     }
 
-    private static boolean isWorkerDependencyEntry(String name) {
-        return (name.startsWith("META-INF/jarjar/")
-                || name.startsWith(WORKER_ONLY_DEPENDENCY_PREFIX))
-                && name.endsWith(".jar");
-    }
-
-    private static boolean containsWorkerBundle(Path archive) {
-        try (ZipFile zip = new ZipFile(archive.toFile())) {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (!entry.isDirectory() && isWorkerDependencyEntry(entry.getName())
-                        && containsEntry(zip, entry, MAIN_ENTRY)) {
-                    return true;
-                }
-            }
-        } catch (IOException ignored) {
-            return false;
-        }
-        return false;
-    }
-
-    private static boolean containsEntry(ZipFile outer, ZipEntry nested, String expected)
-            throws IOException {
-        InputStream input = outer.getInputStream(nested);
+    private int parseJavaMajor(String output) {
+        if (output == null) return -1;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("java.specification.version\\s*=\\s*([0-9]+)(?:\\.([0-9]+))?")
+                .matcher(output);
+        if (!matcher.find()) return -1;
         try {
-            ZipInputStream jar = new ZipInputStream(input);
-            try {
-                ZipEntry entry;
-                while ((entry = jar.getNextEntry()) != null) {
-                    if (expected.equals(entry.getName())) {
-                        return true;
-                    }
-                }
-            } finally {
-                jar.close();
-            }
-        } finally {
-            input.close();
+            int first = Integer.parseInt(matcher.group(1));
+            if (first == 1 && matcher.group(2) != null) return Integer.parseInt(matcher.group(2));
+            return first;
+        } catch (NumberFormatException ignored) {
+            return -1;
         }
-        return false;
+    }
+
+    private void attachWorkerLog(Process worker, Path log) {
+        Thread thread = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    Files.createDirectories(log.getParent());
+                    InputStream input = worker.getInputStream();
+                    try (java.io.OutputStream output = Files.newOutputStream(log,
+                            StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                            StandardOpenOption.APPEND)) {
+                        byte[] buffer = new byte[4096];
+                        int count;
+                        while ((count = input.read(buffer)) >= 0) {
+                            if (count > 0) output.write(buffer, 0, count);
+                        }
+                    } finally { input.close(); }
+                } catch (IOException ignored) { }
+            }
+        }, "ModPedia-1.12-worker-log");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private String challengeProof(String token, String challenge) throws IOException {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    mac.doFinal(challenge.getBytes(StandardCharsets.UTF_8))
+            );
+        } catch (NoSuchAlgorithmException | InvalidKeyException exception) {
+            throw new IOException("HMAC-SHA256 不可用", exception);
+        }
     }
 
     private void readLoop(BufferedReader reader) {
@@ -773,53 +754,10 @@ public final class LegacyWorkerBridge {
         }
     }
 
-    private String workerJava() {
-        List<String> candidates = new ArrayList<String>();
-        candidates.add(System.getProperty("modpedia.worker.java", ""));
-        candidates.add(System.getenv("MODPEDIA_WORKER_JAVA"));
-        candidates.add(System.getenv("JAVA_HOME_21"));
-        candidates.add(System.getenv("JAVA_HOME"));
-        candidates.add("/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home");
-        for (String candidate : candidates) {
-            if (candidate == null || candidate.trim().isEmpty()) {
-                continue;
-            }
-            Path path = Paths.get(candidate);
-            if (Files.isDirectory(path)) {
-                Path executable = path.resolve("bin/java");
-                if (Files.isExecutable(executable)) {
-                    return executable.toString();
-                }
-            } else if (Files.isExecutable(path)) {
-                return path.toString();
-            }
-        }
-        return "java";
-    }
-
     private String token() {
         byte[] bytes = new byte[24];
         RANDOM.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private static boolean containsEntry(Path archive, String entry) {
-        try (ZipFile zip = new ZipFile(archive.toFile())) {
-            return zip.getEntry(entry) != null;
-        } catch (IOException exception) {
-            return false;
-        }
-    }
-
-    private String join(LinkedHashSet<String> entries) {
-        StringBuilder result = new StringBuilder();
-        for (String entry : entries) {
-            if (result.length() > 0) {
-                result.append(File.pathSeparator);
-            }
-            result.append(entry);
-        }
-        return result.toString();
     }
 
     private static String string(JsonObject object, String key) {
