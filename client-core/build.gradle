@@ -14,6 +14,11 @@ repositories {
     mavenCentral()
 }
 
+dependencies {
+    // Ed25519 必须在 Java 8 客户端可用，不能依赖 JDK 15+ 才内置的 JCA provider。
+    implementation 'net.i2p.crypto:eddsa:0.3.0'
+}
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 8

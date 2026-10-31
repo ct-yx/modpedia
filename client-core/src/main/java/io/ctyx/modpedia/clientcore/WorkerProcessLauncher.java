@@ -32,6 +32,8 @@ public final class WorkerProcessLauncher {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.environment().put("MODPEDIA_WORKER_TOKEN", token);
         if (environment != null) builder.environment().putAll(environment);
+        // Worker 只接收本地 IPC token；不要把客户端继承的 API Key 传入独立 JVM。
+        builder.environment().remove("MODPEDIA_API_KEY");
         builder.redirectErrorStream(true);
         return builder.start();
     }
