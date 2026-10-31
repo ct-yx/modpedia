@@ -24,6 +24,10 @@ English: [README.en.md](README.en.md) · 网站：[GitHub Pages](https://ct-yx.g
 技术标识保持稳定：`mod_id=modpedia`、包名 `io.ctyx.modpedia`、作者 `ctyx`、许可证
 [Apache License 2.0](LICENSE)。
 
+本 `main` 分支只维护发布、Pages、CHANGELOG 和 CI 合约，不包含 Minecraft 或 Worker 源码。发布工作流
+从 [`.github/release-inputs.json`](.github/release-inputs.json) 锁定的三个版本适配提交、client-core
+提交和 Worker Core 提交构建；开发请进入对应版本或共享 Core 分支。
+
 ## 核心功能
 
 - **本地优先检索**：统一 `knowledge.db`，使用 SQLite FTS5；完整 Markdown 从事实表读取，来源保留文档 ID、标题路径、原始路径和页级跳转。
@@ -130,8 +134,9 @@ APP/Modonomicon 书籍的根 JSON 可以声明：
 本地验证：
 
 ```bash
-./gradlew test
-./gradlew build
+python3 scripts/validate_release_inputs.py .github/release-inputs.json
+python3 scripts/validate_release_artifacts.py --manifest docs/site/worker/latest.json
+python3 -m py_compile scripts/*.py
 git diff --check
 ```
 

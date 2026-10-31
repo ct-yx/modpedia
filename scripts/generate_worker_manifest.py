@@ -15,7 +15,6 @@ def main() -> None:
     parser.add_argument("--version", required=True)
     parser.add_argument("--primary-url", required=True)
     parser.add_argument("--fallback-url", action="append", default=[])
-    parser.add_argument("--signature", default="")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     digest = hashlib.sha256(args.worker.read_bytes()).hexdigest()
@@ -29,9 +28,9 @@ def main() -> None:
             "primary_url": args.primary_url,
             "fallback_urls": args.fallback_url,
             "sha256": digest,
-            "signature": args.signature or None,
+            "signature": None,
         },
-        "integrity_status": "signed" if args.signature else "unsigned",
+        "integrity_status": "pending-release",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -13,10 +13,15 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    environment:
+      name: github-pages
+      url: ${{ steps.pages_deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact release tag
@@ -53,7 +58,7 @@ jobs:
           print(f"java_major={data['worker']['java_major']}")
           print(f"protocol_version={data['worker']['protocol_version']}")
           PY
-          printf 'tag=%s\nversion=%s\n' "$tag" "$version" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\nversion=%s\ntarget_sha=%s\n' "$tag" "$version" "$expected_sha" >> "$GITHUB_OUTPUT"
 
       - name: Checkout exact Worker commit
         uses: actions/checkout@v4
@@ -95,10 +100,10 @@ jobs:
           path: source-1.12.2
           fetch-depth: 1
 
-      - name: Setup JDK 21
+      - name: Setup JDK 17 for Worker
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: temurin
 
       - name: Setup Gradle
@@ -114,6 +119,12 @@ jobs:
           worker="$(find build/libs -maxdepth 1 -type f -name 'modpedia-worker-*.jar' | sort | head -n 1)"
           test -n "$worker"
           cp "$worker" "${GITHUB_WORKSPACE}/build-modpedia-worker-${WORKER_VERSION}.jar"
+
+      - name: Setup JDK 21 for Minecraft 1.21.1 and 1.20.1
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
 
       - name: Build Minecraft 1.21.1 and 1.20.1
         env:
@@ -139,11 +150,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
           WORKER_VERSION: ${{ steps.release-meta.outputs.worker_version }}
-          WORKER_SIGNATURE: ${{ secrets.MODPEDIA_WORKER_SIGNATURE }}
+          MODPEDIA_WORKER_SIGNING_KEY: ${{ secrets.MODPEDIA_WORKER_SIGNING_KEY }}
+          MODPEDIA_WORKER_PUBLIC_KEY: ${{ secrets.MODPEDIA_WORKER_PUBLIC_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$WORKER_SIGNATURE" || { echo '::error::MODPEDIA_WORKER_SIGNATURE is required'; exit 1; }
+          test -n "$MODPEDIA_WORKER_SIGNING_KEY" || { echo '::error::MODPEDIA_WORKER_SIGNING_KEY is required; register the formal Ed25519 private key'; exit 1; }
+          test -n "$MODPEDIA_WORKER_PUBLIC_KEY" || { echo '::error::MODPEDIA_WORKER_PUBLIC_KEY is required; register the formal X.509 Ed25519 public key'; exit 1; }
           mkdir -p build/release docs/site/worker
           worker="$GITHUB_WORKSPACE/build-modpedia-worker-${WORKER_VERSION}.jar"
           neo="$(find source-1.21.1/build/libs -maxdepth 1 -type f -name 'modpedia-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-slim.jar' | sort | head -n 1)"
@@ -159,8 +172,9 @@ jobs:
             --version "$WORKER_VERSION" \
             --primary-url "https://www.curseforge.com/minecraft/mc-mods/modpedia/download/${WORKER_VERSION}" \
             --fallback-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/modpedia-worker-${WORKER_VERSION}.jar" \
-            --signature "$WORKER_SIGNATURE" \
             --output docs/site/worker/latest.json
+          python3 scripts/sign_worker_manifest.py --manifest docs/site/worker/latest.json
+          python3 scripts/validate_worker_signature.py --manifest docs/site/worker/latest.json
           python3 scripts/validate_release_artifacts.py \
             --worker "build/release/modpedia-worker-${WORKER_VERSION}.jar" \
             --mod "build/release/modpedia-${RELEASE_VERSION}-mc1.21.1-neoforge.jar" \
@@ -171,6 +185,28 @@ jobs:
           git -C source-1.21.1 diff --check
           git -C source-1.20.1 diff --check
           git -C source-1.12.2 diff --check
+
+      - name: Prepare signed Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/pages
+          mkdir -p build/pages
+          cp -R docs/site/. build/pages/
+          test -s build/pages/worker/latest.json
+          python3 scripts/validate_release_artifacts.py --manifest build/pages/worker/latest.json
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload signed Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/pages
+
+      - name: Deploy signed Pages artifact
+        id: pages_deployment
+        uses: actions/deploy-pages@v4
 
       - name: Prepare release notes
         env:
@@ -189,7 +225,7 @@ jobs:
           set -euo pipefail
           args=()
           [[ "$RELEASE_TAG" == *-* ]] && args+=(--prerelease)
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "${{ steps.release-meta.outputs.target_sha }}" \
             --title "ModPedia · 模组百科 $RELEASE_TAG" --notes-file release-notes.md "${args[@]}" \
             build/release/*.jar build/release/SHA256SUMS docs/site/worker/latest.json \
             CHANGELOG.md INSTALL.md KNOWN_LIMITATIONS.md LICENSE NOTICE

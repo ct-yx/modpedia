@@ -13,5 +13,5 @@
     "signature": null
   },
   "integrity_status": "pending-release",
-  "note": "当前是待发布占位清单。发布工作流会从 .github/release-inputs.json 锁定的 Worker Core 构建，并生成真实 SHA-256 和 Ed25519 签名。"
+  "note": "当前是待发布占位清单。正式发布必须从锁定的 Worker Core 构建，并使用仓库 Secret 生成并验证 canonical payload 的 Ed25519 签名。"
 }

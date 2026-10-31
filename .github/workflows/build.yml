@@ -1,9 +1,12 @@
-name: Build
+name: Publish metadata contract
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -12,14 +15,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Setup JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build with Gradle
-        run: ./gradlew build
+      - name: Validate locked release refs
+        run: python3 scripts/validate_release_inputs.py .github/release-inputs.json
+      - name: Validate pending Worker manifest
+        run: python3 scripts/validate_release_artifacts.py --manifest docs/site/worker/latest.json
+      - name: Compile release scripts
+        run: python3 -m py_compile scripts/*.py
+      - name: Test manifest signature contract
+        run: python3 scripts/test_worker_manifest_signature.py
+      - name: Confirm main has no client or Worker source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-files 'src/**' 'build.gradle' 'gradle.properties' 'settings.gradle' 'gradlew*' 'gradle/**')"
+          ! git grep -n 'io\.ctyx\.modpedia\.worker\.WorkerMain' -- ':!docs/**' ':!scripts/**' ':!.github/**'
+      - name: Check workflow YAML and whitespace
+        run: |
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f); puts "#{f}: YAML OK" }'
+          git diff --check

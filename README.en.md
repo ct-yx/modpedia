@@ -22,6 +22,11 @@ The three builds share the product protocol and Worker design, while their clien
 Stable technical identifiers: `mod_id=modpedia`, package `io.ctyx.modpedia`, author `ctyx`, and
 [Apache License 2.0](LICENSE).
 
+The `main` branch is publish-only: it contains release, Pages, changelog, and CI contracts, and no
+Minecraft or Worker source. Release workflows build from the three version adapter refs, client-core
+ref, and Worker Core ref locked in [`release-inputs.json`](.github/release-inputs.json). Development
+belongs in the corresponding version or shared Core branch.
+
 ## Core features
 
 - **Local-first retrieval**: one `knowledge.db` using SQLite FTS5; complete Markdown is read from fact tables while document IDs, heading paths, original paths, and page navigation remain traceable.
@@ -130,8 +135,9 @@ Before publishing a modpack:
 Local verification:
 
 ```bash
-./gradlew test
-./gradlew build
+python3 scripts/validate_release_inputs.py .github/release-inputs.json
+python3 scripts/validate_release_artifacts.py --manifest docs/site/worker/latest.json
+python3 -m py_compile scripts/*.py
 git diff --check
 ```
 

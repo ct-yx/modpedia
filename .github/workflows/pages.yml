@@ -31,6 +31,62 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      - name: Preserve latest published Worker manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="docs/site/worker/latest.json"
+          manifest_status="$(python3 - "$manifest" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle).get("integrity_status", ""))
+          PY
+          )"
+          if [[ "$manifest_status" != "pending-release" ]]; then
+            echo "Pages manifest status: $manifest_status"
+            exit 0
+          fi
+
+          release_json="$(mktemp)"
+          release_error="$(mktemp)"
+          set +e
+          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" >"$release_json" 2>"$release_error"
+          release_status=$?
+          set -e
+          if [[ "$release_status" -ne 0 ]]; then
+            if grep -Eq 'HTTP 404|Not Found' "$release_error"; then
+              echo "没有已发布 Release，保留 pending-release 占位清单。"
+              exit 0
+            fi
+            cat "$release_error" >&2
+            exit "$release_status"
+          fi
+
+          download_dir="$(mktemp -d)"
+          if ! gh release download --repo "$GITHUB_REPOSITORY" --pattern latest.json \
+              --dir "$download_dir" --clobber; then
+            echo "::error::已存在最新 Release，但没有可用的 latest.json；拒绝用 pending-release 覆盖 Pages。"
+            exit 1
+          fi
+          published="$download_dir/latest.json"
+          test -s "$published"
+          published_status="$(python3 - "$published" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle).get("integrity_status", ""))
+          PY
+          )"
+          if [[ "$published_status" != "signed" ]]; then
+            echo "::error::最新 Release 的 Worker 清单不是 signed 状态：$published_status"
+            exit 1
+          fi
+          cp "$published" "$manifest"
+          echo "已恢复最新已签名 Worker 清单，避免普通 main push 覆盖 Pages。"
+
       - name: Validate Worker latest manifest
         run: python3 scripts/validate_release_artifacts.py --manifest docs/site/worker/latest.json
 

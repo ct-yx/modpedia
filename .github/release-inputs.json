@@ -2,27 +2,28 @@
   "schema": 1,
   "repository": "ct-yx/modpedia",
   "worker": {
-    "ref": "bdf5c1a9a574e0ca286461516e25c367734f7c42",
+    "ref": "c8ebf0582253da04057eae16fdc60fd7a96d5a9d",
     "worker_version": "2.0.0",
     "java_major": 17,
     "protocol_version": 2
   },
   "client_core": {
-    "ref": "852e696175ebdb74f4e01ef5fdd1d7701a4347df"
+    "ref": "6f422e12a4276e68ad8672bcbf8c8de200caa6c2",
+    "payload_schema": "client-core/WorkerManifest.signaturePayload UTF-8 LF v1"
   },
   "versions": {
     "1.21.1": {
-      "ref": "17b7edc0dcce91ff234fa29f806a4a88dc22d3e8",
+      "ref": "89b30845947487902faaed1e3dfeca5f330d9504",
       "loader": "neoforge",
       "java_major": 21
     },
     "1.20.1": {
-      "ref": "a363cad8a06764490bb81ea3a17e108760251b8e",
+      "ref": "b3c7598123df6f08b07f9d5945edec13d0ad4f4e",
       "loader": "forge",
       "java_major": 17
     },
     "1.12.2": {
-      "ref": "619f8fd321e4d163b85688f96f5fee4778bcd865",
+      "ref": "990dd625f148aed09a9fe73362de42df4a7a339a",
       "loader": "cleanroom",
       "java_major": 8
     }

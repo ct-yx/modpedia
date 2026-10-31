@@ -35,20 +35,56 @@ SHA256SUMS                    # 由 Release 工作流临时生成，不提交仓
 1. 在功能或版本开发分支完成代码和测试。
 2. 将经过验证的改动合并到 `main`，只在 `main` 整理发布说明、网页版本号、下载链接和工作流配置。
 3. 在 `docs/site/` 本地预览中文和英文页面。
-4. 推送 `main`，Pages 工作流会部署 `docs/site/`，先检查页面链接和下载地址。
+4. 推送 `main`，Pages 工作流会部署 `docs/site/`。如果仓库已经有正式 Release，工作流会先从该 Release 恢复已签名的
+   `latest.json`，拒绝用 `pending-release` 占位清单覆盖线上版本清单；没有正式 Release 时才允许首次部署占位清单。
 5. 在 `main` 创建版本标签，例如 `v1.4.0`。
-6. 标签工作流执行测试、构建、生成 `SHA256SUMS`、发布 GitHub Release，并按配置发布
-   CurseForge。
+6. 标签工作流执行测试、构建、生成 `SHA256SUMS`、签名并验签 Worker 清单，先使用同一次构建的已签名
+   `worker/latest.json` 部署 GitHub Pages，再发布 GitHub Release，并按配置发布 CurseForge。任一签名、产物或
+   Pages 部署门禁失败都不会进入后续发布步骤。
 
 Release 工作流只从当前标签读取 `CHANGELOG.md` 中同名的第一个 `##` 区块，因此新版本
 必须先在文件顶部增加对应条目；不会把后续历史版本的更新日志带入本次发布。工作流随后分别构建
 NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三份 JAR 与校验文件。
 
 可复现源码提交统一登记在 [`.github/release-inputs.json`](../.github/release-inputs.json)：Worker Core、
-共享 `client-core` 和每个 Minecraft 版本各锁定一个完整 commit SHA。`release-contract.yml` 会解析全部
+共享 `client-core` 和每个 Minecraft 版本各锁定一个完整 commit SHA。当前锁定 Worker Core
+`c8ebf0582253da04057eae16fdc60fd7a96d5a9d`、client-core `6f422e12a4276e68ad8672bcbf8c8de200caa6c2`，
+以及通过 CI 的 1.21.1 `89b30845947487902faaed1e3dfeca5f330d9504`、1.20.1
+`b3c7598123df6f08b07f9d5945edec13d0ad4f4e`、1.12.2
+`990dd625f148aed09a9fe73362de42df4a7a339a`。Worker Core Build run `41238803964`、1.20.1
+Build run `41241009233`、1.21.1 Build run `41240250754`、1.12.2 Build run `41240401026` 和
+client-core Build run `41239779106` 均成功。`release-contract.yml` 会解析全部
 锁定提交、编译并运行锁定的 Java 8 `client-core` 自测（包含 Worker challenge proof 固定向量），并检查
 1.12.2 Gradle 任务。修改发布输入时，只更新该 JSON 中的 canonical refs；工作流从 JSON 读取，不另存一份
 容易漂移的期望 SHA。版本分支的锁定提交必须已推送，且该提交对应的 GitHub Actions 检查通过。
+
+client-core `39903f2` 最初的嵌套 Gradle 8.8 `check` 因 `Test.failOnNoDiscoveredTests` 属性不存在而失败；
+共享 client-core 已在 `6f422e1` 做条件设置兼容修复，并通过 Gradle 8.8/9.2.1 + Java 17 和 Gradle 8.8 +
+Zulu Java 8 的 `clean check build`。当前登记的三个版本已各自在自己的分支同步该修复 ref；后续版本也必须从
+同一 client-core ref 或更新的交接 ref 接入。
+
+### Worker 签名配置
+
+Release 工作流要求两个仓库级 Secret：
+
+- `MODPEDIA_WORKER_SIGNING_KEY`：Ed25519 私钥（PEM 或 Base64 DER）；
+- `MODPEDIA_WORKER_PUBLIC_KEY`：对应的 X.509 DER 公钥（PEM 或 Base64 DER）。
+
+签名覆盖 `client-core/WorkerManifest.signaturePayload()` 定义的 UTF-8/LF canonical payload，
+不覆盖 JSON 的 `signature` 字段或裸 JAR。发布步骤缺少任一 Secret、签名或验签失败都会停止，禁止
+生成临时密钥。2026-11-01 使用 `gh secret list --repo ct-yx/modpedia` 审计时只发现旧的
+`MODPEDIA` Secret，尚未发现上述两个正式密钥；在注册它们之前，Release 的签名门禁保持阻塞，
+Pages 只继续发布 `pending-release` 占位清单。
+
+### Pages Worker 清单时序
+
+- `pages.yml` 在普通 `main` push 时先读取现有 Pages 源文件。若其为 `pending-release` 且已有正式 GitHub Release，
+  就从最新 Release 下载并验证 `latest.json`，用它替换待部署副本；下载失败或最新 Release 清单未签名时立即失败。
+- `release.yml` 先构建 Worker 和三个版本模组，生成 canonical manifest、使用正式密钥签名并验签，再验证全部 JAR。
+  通过后复制 `docs/site/` 到 Pages artifact 根目录并用 `upload-pages-artifact` / `deploy-pages` 部署，故清单路径为
+  `/worker/latest.json`。Pages 部署成功后才创建 GitHub Release 并上传同一份清单。
+- Release 工作流使用 `github-pages` environment 和 `pages: write`、`id-token: write` 权限。缺少密钥、验签失败、
+  产物失败或 Pages 部署失败时工作流 fail closed，不生成伪签名或发布未签名清单。
 
 ## 文件规则
 
@@ -84,10 +120,14 @@ NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三�
 ## 验收
 
 ```bash
-./gradlew test
-./gradlew build
+python3 scripts/validate_release_inputs.py .github/release-inputs.json
+python3 scripts/validate_release_artifacts.py --manifest docs/site/worker/latest.json
+python3 -m py_compile scripts/*.py
 git diff --check
 ```
+
+`main` 是发布/Pages 仓库，不再包含 Minecraft 源码、Worker 实现或 Gradle 构建入口。所有登记的版本线和
+共享 Worker Core 的编译、测试及 JAR 生成均从 `.github/release-inputs.json` 锁定的提交执行。
 
 网页至少检查：
 
