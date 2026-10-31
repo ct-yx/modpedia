@@ -77,6 +77,8 @@ public final class WorkerProtocol {
     public static final String SHUTDOWN = "shutdown";
     public static final String CONVERSATION_RESUME = "conversation.resume";
     public static final String CONVERSATION_EVENT = "conversation.event";
+    /** v2 断线恢复的可选能力；旧 Worker 缺失时客户端继续使用快照。 */
+    public static final String CONVERSATION_RESUME_CAPABILITY = "conversation_resume";
 
     private WorkerProtocol() {
     }

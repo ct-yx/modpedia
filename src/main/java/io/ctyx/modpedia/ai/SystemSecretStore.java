@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit;
  * <p>不引入平台专用 Java 依赖：macOS 使用 security，Linux 使用 secret-tool。
  * 命令不可用或密钥环拒绝访问时由 {@link AiSettingsStore} 回退到机器绑定的
  * AES-GCM 密文，不能因为安全组件缺失阻断 Worker 启动。macOS 的 security CLI
- * 只支持把写入值作为参数传入，因此该值仅在短暂的子进程生命周期内出现，不写入日志；
- * Linux 的 secret-tool 仍通过 stdin 接收。</p>
+ * 在 {@code -w} 位于参数末尾且没有值时从 stdin 提示读取；本适配层使用该路径，
+ * 不把 API Key 放进子进程 argv。Linux 的 secret-tool 也通过 stdin 接收。</p>
  */
 final class SystemSecretStore {
     private static final String SERVICE = "io.ctyx.modpedia.modpedia";
@@ -70,10 +70,12 @@ final class SystemSecretStore {
         }
         try {
             return switch (backend) {
+                // 将 -w 作为最后一个选项，security 会从 stdin 读取密码；不要把
+                // secret 放入 argv，避免被进程列表或系统诊断工具观察到。
                 case MACOS -> run(
                         List.of("/usr/bin/security", "add-generic-password",
-                                "-a", ACCOUNT, "-s", SERVICE, "-U", "-w", secret),
-                        ""
+                                "-a", ACCOUNT, "-s", SERVICE, "-U", "-w"),
+                        secret
                 ).success();
                 case LINUX -> run(
                         List.of("secret-tool", "store", "--label=ModPedia API Key",

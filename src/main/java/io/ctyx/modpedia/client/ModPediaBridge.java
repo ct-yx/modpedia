@@ -1009,7 +1009,7 @@ public final class ModPediaBridge {
     private byte[] workerPublicKey() throws IOException {
         String encoded = System.getProperty("modpedia.worker.publicKey", "").strip();
         if (encoded.isBlank()) {
-            ModPedia.LOGGER.warn("未配置 Worker Ed25519 公钥；仅使用 Pages 清单中的 SHA-256 校验");
+            ModPedia.LOGGER.warn("未配置 Worker Ed25519 公钥；已停止安装未验证的 Worker");
             return null;
         }
         try {

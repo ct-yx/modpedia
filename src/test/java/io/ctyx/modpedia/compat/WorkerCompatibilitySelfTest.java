@@ -18,6 +18,11 @@ public final class WorkerCompatibilitySelfTest {
         check(WorkerCompatibility.supportsOptionalCapability(
                         hello, WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY),
                 "当前客户端应声明可选的运行时物品上下文能力");
+        WorkerCompatibility.addClientOptionalCapability(
+                hello, WorkerProtocol.CONVERSATION_RESUME_CAPABILITY);
+        check(WorkerCompatibility.supportsOptionalCapability(
+                        hello, WorkerProtocol.CONVERSATION_RESUME_CAPABILITY),
+                "客户端应能声明 conversation_resume 可选能力");
         check(!WorkerCompatibility.describe(hello).contains("token"), "诊断信息不得包含 Token 字段");
 
         JsonObject ack = WorkerProtocol.message(WorkerProtocol.HELLO_ACK, "compat-hello");
@@ -35,6 +40,9 @@ public final class WorkerCompatibilitySelfTest {
         check(!WorkerCompatibility.supportsOptionalCapability(
                         oldClient, WorkerProtocol.RUNTIME_ITEM_CONTEXT_CAPABILITY),
                 "旧客户端缺少运行时物品上下文能力时应返回静态目录");
+        check(!WorkerCompatibility.supportsOptionalCapability(
+                        oldClient, WorkerProtocol.CONVERSATION_RESUME_CAPABILITY),
+                "旧客户端缺少 conversation_resume 能力时应回退快照");
 
         JsonObject wrongBaseline = hello.deepCopy();
         wrongBaseline.addProperty("worker_baseline", "worker-baseline-999");

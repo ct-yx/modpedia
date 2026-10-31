@@ -125,9 +125,13 @@ configurations {
     // 旧纯 Java 自测仍可编译/运行这些类型，但它们不会进入主模组运行时或 JAR。
     testCompileClasspath.extendsFrom compileOnly
     testRuntimeClasspath.extendsFrom compileOnly
+    // client-core 的 Java 8 Ed25519 provider 必须随主模组运行时提供；它不属于 Worker。
+    ed25519Runtime.extendsFrom implementation
 }
 
 dependencies {
+    implementation "net.i2p.crypto:eddsa:${eddsa_version}"
+
     // SQLite 与 AI 由独立 Worker Core 运行；版本模组只为遗留纯 Java 源码提供编译依赖。
     compileOnly("org.xerial:sqlite-jdbc:3.53.2.1") {
         version {
@@ -248,6 +252,15 @@ dependencies {
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
+}
+
+// NeoForge 不会自动把普通 implementation 依赖展开到最终模组 JAR；只展开
+// client-core 验签所需的 EdDSA provider，避免把开发/测试依赖带入游戏类路径。
+tasks.named('jar', Jar).configure {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(configurations.ed25519Runtime.collect { it.isDirectory() ? it : zipTree(it) }) {
+        exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    }
 }
 
 def searchSelfTest = tasks.register('searchSelfTest', JavaExec) {

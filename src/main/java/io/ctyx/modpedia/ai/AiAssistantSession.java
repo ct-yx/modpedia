@@ -182,7 +182,7 @@ public final class AiAssistantSession implements AssistantSession {
             requestStartedNanos.remove(request);
             publish(new AssistantUiState.Error(
                     conversationStore.active().messages(),
-                    "请先打开助手设置，填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。"
+                    "请先打开助手设置，填写用户级 API Key。"
             ));
             return;
         }

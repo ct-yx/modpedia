@@ -598,7 +598,7 @@ final class AiSettingsPanel {
             return;
         }
         if (values.effectiveApiKey().isBlank()) {
-            setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
+            setStatus("请先在助手设置中填写 API Key。", true);
             return;
         }
         fetchingModels = true;
@@ -678,7 +678,7 @@ final class AiSettingsPanel {
             return;
         }
         if (values.effectiveApiKey().isBlank()) {
-            setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
+            setStatus("请先在助手设置中填写 API Key。", true);
             return;
         }
         if (savingSettings || testing || testingModels || settingsLoadRequested) {
@@ -744,7 +744,7 @@ final class AiSettingsPanel {
             return;
         }
         if (values.effectiveApiKey().isBlank()) {
-            setStatus("请先填写 API Key，或设置 MODPEDIA_API_KEY 环境变量。", true);
+            setStatus("请先在助手设置中填写 API Key。", true);
             return;
         }
         if (savingSettings || testing || testingModels || settingsLoadRequested) {

@@ -3,6 +3,7 @@ package io.ctyx.modpedia.clientcore;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 /** Pages 提供的 Worker 版本清单；不依赖 Gson 或 Minecraft。 */
 public final class WorkerManifest {
@@ -34,7 +35,18 @@ public final class WorkerManifest {
         if (fallbackUrls != null) for (String url : fallbackUrls) if (url != null && !url.trim().isEmpty()) urls.add(url.trim());
         this.fallbackUrls = Collections.unmodifiableList(urls);
         this.sha256 = value(sha256, "").toLowerCase();
+        if (!this.sha256.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("artifact.sha256 必须是 64 位十六进制摘要");
+        }
         this.signature = value(signature, "");
+        if (this.signature.isEmpty()) {
+            throw new IllegalArgumentException("artifact.signature 不能为空");
+        }
+        try {
+            java.util.Base64.getDecoder().decode(this.signature);
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalArgumentException("artifact.signature 必须是 Base64", failure);
+        }
     }
 
     public int schema() { return schema; }
@@ -52,6 +64,37 @@ public final class WorkerManifest {
         urls.add(primaryUrl);
         urls.addAll(fallbackUrls);
         return Collections.unmodifiableList(urls);
+    }
+
+    /**
+     * 生成发布端和客户端共同使用的 Ed25519 签名 payload。
+     *
+     * <p>格式固定为 UTF-8、LF 结尾的键值行，字段顺序为
+     * schema、channel、worker_version、java_major、protocol_version、primary_url、
+     * fallback_url（按清单顺序重复）和 sha256；signature 字段不参与签名。</p>
+     */
+    public byte[] signaturePayload() {
+        StringBuilder payload = new StringBuilder();
+        line(payload, "schema", Integer.toString(schema));
+        line(payload, "channel", channel);
+        line(payload, "worker_version", workerVersion);
+        line(payload, "java_major", Integer.toString(javaMajor));
+        line(payload, "protocol_version", Integer.toString(protocolVersion));
+        line(payload, "primary_url", primaryUrl);
+        for (String url : fallbackUrls) line(payload, "fallback_url", url);
+        line(payload, "sha256", sha256);
+        return payload.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    public String signaturePayloadText() {
+        return new String(signaturePayload(), StandardCharsets.UTF_8);
+    }
+
+    private static void line(StringBuilder payload, String name, String value) {
+        if (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException(name + " 不能包含换行符");
+        }
+        payload.append(name).append('=').append(value).append('\n');
     }
 
     public String toJson() {

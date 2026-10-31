@@ -69,7 +69,7 @@
   "screen.modpedia.ai_fetch_models_loading": "获取中……",
   "screen.modpedia.ai_model_list_count": "模型列表 · %s 个",
   "screen.modpedia.ai_test_all_models": "批量测试模型",
-  "screen.modpedia.ai_api_key_hint": "留空时使用 MODPEDIA_API_KEY 环境变量",
+  "screen.modpedia.ai_api_key_hint": "请在 ModPedia 设置中保存 API Key",
   "screen.modpedia.ai_search_intensity": "搜索强度",
   "screen.modpedia.ai_sse": "流式响应",
   "screen.modpedia.ai_max_rounds_hint": "最大轮数",
