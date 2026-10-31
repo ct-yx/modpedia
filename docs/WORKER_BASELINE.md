@@ -13,7 +13,8 @@
 | JSONL 协议 | `WorkerProtocol.VERSION = 2`，继续兼容 v1 |
 | Minecraft | `1.21.1` |
 | NeoForge | `21.1.244` |
-| Java | `21` |
+| Worker Java | `17` |
+| Client adapter Java | `21` |
 | SQLite JDBC | `3.53.2.1` |
 | LangChain4j | `1.18.1` |
 | LangChain4j Community SQL | `1.18.0-beta28` |
@@ -83,7 +84,7 @@ Worker 返回 `hello_ack` 时包含：
   "accepted": true,
   "worker_api_level": 1,
   "worker_baseline": "worker-baseline-3",
-  "worker_java": "21",
+  "worker_java": "17",
   "worker_capabilities": ["chat", "knowledge_rebuild", "knowledge_items_sync"]
 }
 ```

@@ -1207,6 +1207,12 @@ public final class WorkerServer {
         if (conversationId.isBlank()) {
             conversationId = conversationStore.activeId();
         }
+        if (conversationStore.get(conversationId) == null) {
+            JsonObject snapshot = conversationSnapshot("resume", requestId, "conversation_missing");
+            snapshot.addProperty("resume_fallback", true);
+            sendQuietly(snapshot);
+            return;
+        }
         long afterRevision = WorkerProtocol.longValue(request, "last_revision",
                 WorkerProtocol.longValue(request, "since_revision", 0L));
         ConversationEventLog.ReplayResult replay = conversationEvents.replay(
