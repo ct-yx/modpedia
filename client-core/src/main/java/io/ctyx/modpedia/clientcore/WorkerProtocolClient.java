@@ -1,11 +1,14 @@
 package io.ctyx.modpedia.clientcore;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 /** 与 Worker v1/v2 握手和增量会话消息共用的 loader-neutral 协议模型。 */
 public final class WorkerProtocolClient {
@@ -75,13 +78,13 @@ public final class WorkerProtocolClient {
         require(challenge, "challenge");
         require(token, "token");
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = digest.digest((challenge + "\0" + token).getBytes(StandardCharsets.UTF_8));
-            StringBuilder out = new StringBuilder(64);
-            for (byte value : bytes) out.append(String.format("%02x", value & 0xff));
-            return out.toString();
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("运行时缺少 SHA-256", impossible);
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    mac.doFinal(challenge.getBytes(StandardCharsets.UTF_8))
+            );
+        } catch (NoSuchAlgorithmException | InvalidKeyException impossible) {
+            throw new IllegalStateException("运行时缺少 HMAC-SHA256", impossible);
         }
     }
 
