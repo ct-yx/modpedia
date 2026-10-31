@@ -65,7 +65,8 @@ public final class WorkerCoreBoundarySelfTest {
             }
         }
 
-        check(WorkerProtocol.VERSION == 1, "当前 Worker 协议版本必须明确为 1");
+        check(WorkerProtocol.VERSION == 2 && WorkerProtocol.LEGACY_VERSION == 1,
+                "当前 Worker 协议必须为 v2 并兼容 v1");
         check(WorkerCompatibility.WORKER_LIBRARY_BASELINE.equals(
                         ModPediaPaths.WORKER_LIBRARY_BASELINE),
                 "共享 Worker lib 基线必须由兼容层和路径层共同确认");

@@ -101,6 +101,9 @@ minecraft {
 // "optional", meaning it will not be pulled by dependents of this mod.
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+    // 主模组把 AI/SQLite 依赖限定为 compileOnly；测试源仍需在自己的编译和运行
+    // classpath 中使用这些 API。该继承只作用于 test，不会让依赖进入主模组或 Jar-in-Jar。
+    testImplementation.extendsFrom compileOnly
 }
 
 dependencies {
