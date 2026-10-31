@@ -204,8 +204,8 @@ config/modpedia/runtime/knowledge/state.json
 
 这些内容会在玩家首次启动或按 `F9` 重建时重新生成。`knowledge.db-wal`、`knowledge.db-shm` 和临时
 数据库文件也属于派生文件，不应进入整合包。Worker 的共享依赖库位于用户目录
-`~/.modpedia/worker/lib/worker-baseline-3/`，也不属于整合包，不要复制或打包；其中 Gson 和
-SLF4J API 由发布 JAR 的 `META-INF/modpedia-worker/` 专用资源提取，不能作为游戏类加载器的普通
+`~/.modpedia/worker/lib/worker-baseline-3/`，也不属于整合包，不要复制或打包；独立的
+`modpedia-worker-*.jar` 直接包含 Worker 所需的 Gson、SLF4J 和其他运行依赖，不能作为游戏类加载器的普通
 Jar-in-Jar 依赖。同一 Worker 基线的不同 ModPedia 版本和游戏实例会复用该目录。Worker
 依赖发生变化时会递增基线编号。
 

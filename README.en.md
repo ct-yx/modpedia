@@ -275,9 +275,9 @@ These files are regenerated on first startup or after pressing **F9**.
 `knowledge.db-wal`, `knowledge.db-shm`, and temporary database files are also
 derived files and should stay out of the modpack. Worker shared libraries live
 at `~/.modpedia/worker/lib/worker-baseline-3/`; they are user-level files and
-must not be copied into a modpack. Gson is extracted from the published JAR
-`META-INF/modpedia-worker/` resource directory only for the Worker JVM, not exposed
-as a normal game Jar-in-Jar dependency. ModPedia versions and game instances using
+must not be copied into a modpack. The standalone `modpedia-worker-*.jar` directly
+contains Gson, SLF4J, and its other runtime dependencies, and is not exposed as a
+normal game Jar-in-Jar dependency. ModPedia versions and game instances using
 the same Worker baseline reuse that directory. Increment the baseline number
 when Worker dependencies change.
 
