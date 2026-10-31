@@ -1,0 +1,63 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'io.ctyx.modpedia'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+repositories {
+    mavenCentral()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 8
+}
+
+tasks.register('clientCoreSelfTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.ctyx.modpedia.clientcore.ClientCoreSelfTest'
+}
+
+tasks.register('verifyJava8Bytecode') {
+    dependsOn tasks.named('classes'), tasks.named('testClasses')
+    doLast {
+        def roots = [sourceSets.main.output.classesDirs, sourceSets.test.output.classesDirs]
+        def invalid = []
+        roots.each { collection ->
+            collection.files.each { root ->
+                if (!root.exists()) return
+                root.eachFileRecurse { file ->
+                    if (!file.name.endsWith('.class')) return
+                    byte[] bytes = file.bytes
+                    if (bytes.length >= 8) {
+                        int major = ((bytes[6] & 0xff) << 8) | (bytes[7] & 0xff)
+                        if (major > 52) invalid << "${file}: major=${major}"
+                    }
+                }
+            }
+        }
+        if (!invalid.isEmpty()) throw new GradleException('发现 Java 8 以上字节码：' + invalid.join(', '))
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('clientCoreSelfTest'), tasks.named('verifyJava8Bytecode')
+}
+
+tasks.named('test', Test).configure {
+    failOnNoDiscoveredTests = false
+}
+
+jar {
+    archiveBaseName = 'modpedia-client-core'
+    manifest {
+        attributes('Automatic-Module-Name': 'io.ctyx.modpedia.clientcore')
+    }
+}
