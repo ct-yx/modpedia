@@ -45,7 +45,11 @@ public final class ClientCoreSelfTest {
 
     private static void protocolProofAndResume() {
         String proof = WorkerProtocolClient.challengeProof("challenge", "token");
-        check(proof.length() == 64, "challenge proof 应为 SHA-256 hex");
+        check("XYos66e3JvqA7LaCse4cplGLXAeEiTI8_faPh-Ozdew".equals(proof),
+                "challenge proof 应与 Worker Core 的 HmacSHA256(token, challenge) 一致");
+        check("uZcByJQsTFGoymV8u1HDzYdHMsvhDxdoO3hFphZylUM".equals(
+                        WorkerProtocolClient.challengeProof("challenge-1", "secret-token")),
+                "challenge proof 固定向量应与 Worker Core 一致");
         check(WorkerProtocolClient.accepts(2, 1) && WorkerProtocolClient.accepts(2, 2), "v2 应兼容 v1/v2 客户端");
         check(new WorkerProtocolClient.ResumeRequest("conversation", 3).revision() == 3, "resume revision 应保留");
         check(new WorkerProtocolClient.ConversationEvent("conversation", 4, "message.delta", "{}").revision() == 4, "增量事件 revision 应保留");
