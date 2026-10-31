@@ -44,6 +44,12 @@ Release 工作流只从当前标签读取 `CHANGELOG.md` 中同名的第一个 `
 必须先在文件顶部增加对应条目；不会把后续历史版本的更新日志带入本次发布。工作流随后分别构建
 NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三份 JAR 与校验文件。
 
+可复现源码提交统一登记在 [`.github/release-inputs.json`](../.github/release-inputs.json)：Worker Core、
+共享 `client-core` 和每个 Minecraft 版本各锁定一个完整 commit SHA。`release-contract.yml` 会解析全部
+锁定提交、编译并运行锁定的 Java 8 `client-core` 自测（包含 Worker challenge proof 固定向量），并检查
+1.12.2 Gradle 任务。修改发布输入时，只更新该 JSON 中的 canonical refs；工作流从 JSON 读取，不另存一份
+容易漂移的期望 SHA。
+
 ## 文件规则
 
 - `docs/site/` 只保存静态网页源文件，不提交构建缓存、JAR、API Key 或运行时数据库。
@@ -51,7 +57,7 @@ NeoForge 1.21.1、Forge 1.20.1 和 Forge 1.12.2 / Cleanroom 0.3+，并上传三�
   的提交内容。
 - Release 资产由 GitHub Actions 在标签构建时生成；仓库不保存本地 JAR 和校验文件。
 - 页面中的版本号、Release 链接、JAR 下载链接必须同时更新中文和英文页面。
-- `worker/latest.json` 只能由已校验的 Worker JAR 生成；清单必须包含 SHA-256 和签名，签名未配置时只能保留 `pending-release` 占位状态。
+- `worker/latest.json` 正式清单只能由已校验的 Worker JAR 生成；清单必须包含 SHA-256 和签名。仓库中的 `pending-release` 文件仅供 Pages 合约校验占位，不代表已有可安装发布物。
 - 发布配置只引用 GitHub Actions Variables/Secrets，不把 CurseForge Token 或其他密钥写入文件。
 
 ## 给其他开发分支的清理 Prompt

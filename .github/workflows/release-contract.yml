@@ -45,7 +45,7 @@ jobs:
           PY
           git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
           while read -r ref; do git cat-file -e "$ref^{commit}"; done < /tmp/modpedia-release-refs.txt
-      - name: Build locked Java 8 client-core
+      - name: Build pinned client-core and verify HMAC challenge proof
         id: client-core
         shell: bash
         run: |
